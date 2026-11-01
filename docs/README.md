@@ -33,6 +33,7 @@
 | [macOS 发布启动与安全存储](validation/macos-release-startup.md) | ad-hoc 权限约束、传统 Keychain、同产物启动／跨进程凭据验证与升级验收 |
 | [macOS 双标签播放崩溃](validation/macos-dual-playback-crash.md) | 原生 multiview 断言、窗口能力检查、应用内双标签与验证边界 |
 | [API 与会话](api-design.md) | 协议边界、接口映射、鉴权、错误、缓存和降级 |
+| [搜索历史与热搜](validation/search-discovery-2026-11-01.md) | 居中搜索动效、宽窄屏入口、账号历史存储、热搜协议与自动验证边界 |
 | [密码、短信与移动登录窗口](validation/password-sms-login.md) | 三种 Web 登录、交互验证码、安全会话与小屏/键盘布局 |
 | [播放、直播与弹幕](playback-and-danmaku.md) | DASH 分轨、播放状态机、直播连接、渲染时钟与性能 |
 | [DLNA 投屏](validation/dlna-casting.md) | 视频／影视 TV 地址、设备发现与控制、生命周期及平台验收边界 |
@@ -60,6 +61,7 @@
 | [固定与滚动弹幕分层对照](validation/danmaku-layers-performance-2026-11-01.md) | 单一时钟、固定层保留、覆盖顺序及三类场景的 Profile 前后对照 |
 | [Windows 全屏弹幕与 Skia 对照](validation/windows-skia-playback-2026-11-01.md) | 实际硬解、PiliPlus 渲染后端差异、真实视频交叉对照及验证边界 |
 | [直通硬解调研与方案](hardware-decoding-plan-2026-11-01.md) | #44 发布追溯、Bili.Libre.Speed／Predidit 路径、各平台硬解设置与自有 fork 分阶段维护 |
+| [Windows ANGLE 直通硬解](validation/windows-angle-direct-hwdec-2026-11-01.md) | copy 回退修复、PiliPlus 实际链路差异、三组 Profile 交叉对照及原生验收边界 |
 | [听视频与音频控件](validation/listen-video.md) | 独立音轨、常驻响应式控件、切换／检查点及原生验证 |
 | [充电专属与付费视频](validation/video-access.md) | 权益分类、播放限制提示、官网入口与共享视频卡角标 |
 | [实施与验收](implementation-plan.md) | 技术验证、开发里程碑、测试、构建与发布要求 |
@@ -145,6 +147,7 @@
 | [用户页、倍速与标签播放](validation/profile-playback-rates.md) | 紧凑资料/工具条、固定倍速档位和普通标签继续播放 |
 | [应用会话内继承倍速与音量](validation/session-playback-rate.md) | 后续播放继承调速／音量、全局音量记忆开关、重启恢复与验证边界 |
 | [触摸长按临时倍速](validation/touch-hold-playback-rate.md) | 画面长按使用已有延迟／倍速、松开恢复、全屏与取消边界 |
+| [长按倍速的音频输出缓冲](validation/hold-rate-output-buffer-2026-11-01.md) | 剩余停顿原因、PiliPlus 对照、50 ms 输出队列与 Windows Profile ABBA 验证 |
 | [播放器滑动亮度与音量](validation/fullscreen-swipe-controls.md) | 普通／全屏左侧亮度与右侧音量、设置开关、窗口亮度恢复和验证边界 |
 | [首页刷新、自动分页与图片缓存](validation/feed-scroll-image-cache.md) | 悬浮刷新/回顶部、首屏补页、隐藏列表隔离和图片缓存设置 |
 | [列表滚动性能修复](validation/feed-scroll-performance.md) | Windows profile 对比、首页及搜索/历史虚拟化、局部重建和悬停生命周期 |
