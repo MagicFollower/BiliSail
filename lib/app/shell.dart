@@ -137,6 +137,7 @@ final class BiliAppShell extends StatefulWidget {
     this.navigationMode,
     this.sidebarStyle = SidebarStyle.automatic,
     this.navigationBarMode = NavigationBarMode.automatic,
+    this.dockGlassRefraction = true,
     this.sidebarCollapsed,
     this.onSidebarCollapsedChanged,
     this.accountIdentity,
@@ -149,6 +150,7 @@ final class BiliAppShell extends StatefulWidget {
   final WorkspaceNavigationMode? navigationMode;
   final SidebarStyle sidebarStyle;
   final NavigationBarMode navigationBarMode;
+  final bool dockGlassRefraction;
   final bool? sidebarCollapsed;
   final ValueChanged<bool>? onSidebarCollapsedChanged;
   final Object? accountIdentity;
@@ -1771,6 +1773,12 @@ final class _BiliAppShellState extends State<BiliAppShell>
       maxScaleFactor: 1.3,
       child: LiquidDockNavi(
         key: const ValueKey('workspace-bottom-navigation'),
+        // medium drops the rim refraction and the liquid lens but keeps the
+        // frosted glass and the selection capsule, for runtimes whose GPU
+        // hands the shader a backdrop it cannot map.
+        quality: widget.dockGlassRefraction
+            ? LiquidDockQuality.high
+            : LiquidDockQuality.medium,
         items: [
           for (final item in destinations)
             LiquidDockItem(

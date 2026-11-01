@@ -322,6 +322,12 @@ final class _SettingsCategoryPageState
                             '自动模式根据窗口宽度切换底栏和侧边栏；也可固定使用底栏或侧边栏。',
                             style: TextStyle(fontSize: 12),
                           ),
+                          _toggle(
+                            '底栏玻璃折射',
+                            s.dockGlassRefraction,
+                            controller.setDockGlassRefraction,
+                            '悬浮底栏沿边缘弯折背景，形成液态玻璃效果。个别安卓兼容运行环境（如鸿蒙卓易通）会把折射带画成错位的文字重影，可关闭本项，只保留磨砂玻璃与选中胶囊。',
+                          ),
                           _choices('侧栏样式', s.sidebarStyle, const {
                             SidebarStyle.automatic: '随窗口宽度',
                             SidebarStyle.expanded: '完整侧栏',
