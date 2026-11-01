@@ -29,21 +29,23 @@ class ApiFeedRepository
 
   // The rcmd sampler has no page number: fresh_idx is a pull index that must
   // keep rising, otherwise every refresh re-asks the same batch (visible signed
-  // out, where nothing else varies the request). A page whose last attempt
-  // yielded nothing keeps its index so an explicit retry does not skip a batch.
+  // out, where nothing else varies the request). Only a deeper page whose
+  // request never completed reuses its index, so an explicit retry cannot skip
+  // a batch; a refresh always means "pull again", even after the previous pull
+  // succeeded with an empty batch (ads or non-video cards filtered out).
   int _recommendationIndex = 0;
   int _recommendationPage = 0;
-  bool _recommendationFilled = false;
+  bool _recommendationSettled = false;
 
   int _recommendationPullIndex(int page) {
-    if (page == _recommendationPage && !_recommendationFilled) {
+    if (page > 1 && page == _recommendationPage && !_recommendationSettled) {
       return _recommendationIndex;
     }
     _recommendationIndex = page > _recommendationPage
         ? _recommendationIndex + (page - _recommendationPage)
         : _recommendationIndex + 1;
     _recommendationPage = page;
-    _recommendationFilled = false;
+    _recommendationSettled = false;
     return _recommendationIndex;
   }
 
@@ -352,7 +354,7 @@ class ApiFeedRepository
               ),
       );
       if (categoryId == null) {
-        _recommendationFilled = result.items.isNotEmpty;
+        _recommendationSettled = true;
       }
       return result;
     }, cancellation: cancellation);

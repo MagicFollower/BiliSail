@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:bili_api/bili_api.dart';
 import 'package:bilisail/core/network/api_requests.dart';
+import 'package:bilisail/domain/app_failure.dart';
 import 'package:bilisail/domain/request_cancellation.dart';
 import 'package:bilisail/features/feed/data/api_feed_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -73,7 +74,7 @@ void main() {
     },
   );
 
-  test('recommendation refresh advances fresh_idx and only a stalled page repeats it', () async {
+  test('recommendation refresh advances fresh_idx', () async {
     final transport = _Transport();
     final requests = ApiRequests();
     final api = BiliApiClient(transport: transport, sessionProvider: requests);
@@ -97,12 +98,25 @@ void main() {
     await pull(1);
     expect(pullIndex(), '4');
 
-    // 空批次不推进：显式重试沿用同一序号，不跳过没拿到的那一页。
+    // 成功但为空的批次（含过滤掉非视频卡片后为空）不能把后续刷新卡在同一个
+    // 序号上：刷新表达的是「再要一批」。
     transport.emptyForFreshIndex = '5';
-    await pull(2);
+    await pull(1);
     expect(pullIndex(), '5');
+    await pull(1);
+    expect(pullIndex(), '6');
+
+    // 深页请求失败时沿用同一序号，重试不会跳过没拿到的那一页。
+    transport.failForFreshIndex = '7';
+    await expectLater(pull(2), throwsA(isA<AppFailure>()));
+    expect(pullIndex(), '7');
+    await expectLater(pull(2), throwsA(isA<AppFailure>()));
+    expect(pullIndex(), '7');
+    transport.failForFreshIndex = null;
     await pull(2);
-    expect(pullIndex(), '5');
+    expect(pullIndex(), '7');
+    await pull(3);
+    expect(pullIndex(), '8');
 
     // 对照：分区列表是真分页，pn 直接跟随页码。
     await repository.loadFeed(
@@ -123,6 +137,9 @@ final class _Transport implements ApiTransport {
   /// When set, the rcmd sample answers that fresh_idx with an empty batch.
   String? emptyForFreshIndex;
 
+  /// When set, the rcmd sample answers that fresh_idx with a failure.
+  String? failForFreshIndex;
+
   @override
   Future<ApiHttpResponse> get(
     Uri uri, {
@@ -131,6 +148,10 @@ final class _Transport implements ApiTransport {
     ApiCancellation? cancellation,
   }) async {
     requests.add(uri);
+    if (uri.path == '/x/web-interface/index/top/feed/rcmd' &&
+        uri.queryParameters['fresh_idx'] == failForFreshIndex) {
+      throw const ApiFailure(ApiFailureCategory.protocol, 'recommended');
+    }
     final Object data;
     if (uri.path.endsWith('/nav')) {
       data = {
