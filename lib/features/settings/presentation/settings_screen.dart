@@ -676,6 +676,12 @@ final class _SettingsCategoryPageState
                       if (widget.category == SettingsCategory.about)
                         _section('关于', [
                           _toggle(
+                            '启动时检查更新',
+                            s.checkUpdatesOnStartup,
+                            controller.setCheckUpdatesOnStartup,
+                            '默认关闭：打开应用不联网查询版本。开启后每个自然日首次启动自动检查一次，发现新版本才弹窗。',
+                          ),
+                          _toggle(
                             '检查预发布更新',
                             s.checkPrereleaseUpdates,
                             controller.setCheckPrereleaseUpdates,
@@ -750,7 +756,10 @@ final class _AboutSettingsContent extends ConsumerWidget {
           label: Text(update.checking ? '正在检查更新…' : '检查更新'),
         ),
         const SizedBox(height: 8),
-        const Text('每天首次打开应用时会自动检查更新，同一版本仅自动提醒一次（不区分构建号）。'),
+        const Text(
+          '启动检查默认关闭；开启后每个自然日首次启动自动检查一次，同一版本仅自动提醒一次（不区分构建号）。'
+          '手动检查不受开关与日期限制，发现新版本时弹窗会列出发布详情与本次请求记录。',
+        ),
         if (update.message case final message?) ...[
           const SizedBox(height: 8),
           Text(message),

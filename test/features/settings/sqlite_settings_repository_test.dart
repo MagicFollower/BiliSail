@@ -82,7 +82,7 @@ void main() {
         final snapshot = jsonDecode(
           (await database.readSetting('preferences.v1'))!,
         );
-        expect(snapshot['schemaVersion'], 34);
+        expect(snapshot['schemaVersion'], 35);
         expect(snapshot['liveStreamPreference'], preference.toJson());
       }
       await repository.save(const AppSettings.defaults());
@@ -123,6 +123,46 @@ void main() {
     }
     expect(database.schemaVersion, 3);
   });
+  test(
+    'startup update checks default off, tolerate old snapshots and round-trip',
+    () async {
+      expect(AppSettings().checkUpdatesOnStartup, isFalse);
+      expect(const AppSettings.defaults().checkUpdatesOnStartup, isFalse);
+      expect((await repository.load()).checkUpdatesOnStartup, isFalse);
+      for (final snapshot in <Map<String, Object?>>[
+        {'schemaVersion': 34, 'theme': 'dark'},
+        for (final invalid in <Object?>[null, 'true', 1, <Object>[]])
+          {
+            'schemaVersion': 34,
+            'theme': 'dark',
+            'checkUpdatesOnStartup': invalid,
+          },
+      ]) {
+        await database.writeSetting('preferences.v1', jsonEncode(snapshot));
+        final loaded = await repository.load();
+        expect(loaded.checkUpdatesOnStartup, isFalse);
+        for (final enabled in [true, false]) {
+          await repository.save(loaded.copyWith(checkUpdatesOnStartup: enabled));
+          final reloaded = await SqliteSettingsRepository(database).load();
+          expect(reloaded.checkUpdatesOnStartup, enabled);
+        }
+      }
+      // Reset must return to the disabled default rather than the last choice.
+      await repository.save(
+        repository.defaults.copyWith(checkUpdatesOnStartup: true),
+      );
+      expect(
+        (await SqliteSettingsRepository(database).load()).checkUpdatesOnStartup,
+        isTrue,
+      );
+      await repository.save(repository.defaults);
+      expect(
+        (await SqliteSettingsRepository(database).load()).checkUpdatesOnStartup,
+        isFalse,
+      );
+      expect(database.schemaVersion, 3);
+    },
+  );
   for (final platform in [TargetPlatform.macOS, TargetPlatform.iOS]) {
     test(
       'Apple shortcut defaults persist, preserve custom bindings and reset on $platform',

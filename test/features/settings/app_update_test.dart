@@ -21,6 +21,7 @@ import 'package:bilisail/shared/ui/app_notice.dart';
 import 'package:bilisail/shared/ui/app_network_image.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -394,6 +395,7 @@ void main() {
               settings: _SettingsRepository()
                 ..settings = AppSettings(
                   checkPrereleaseUpdates: includePrereleases,
+                  checkUpdatesOnStartup: true,
                 ),
             );
             final controller = container.read(
@@ -456,7 +458,9 @@ void main() {
         container.read(appUpdateControllerProvider).pendingRelease,
         isNull,
       );
-      pending.complete(AppSettings(checkPrereleaseUpdates: true));
+      pending.complete(
+        AppSettings(checkPrereleaseUpdates: true, checkUpdatesOnStartup: true),
+      );
       await check;
       expect(
         container
@@ -591,6 +595,110 @@ void main() {
     );
     expect(second.schemaVersion, 3);
   });
+  test(
+    'startup stays offline while the opt-in is off and manual still checks',
+    () async {
+      final repository = _UpdateRepository()..release = _release('0.2.0');
+      final store = _CheckStore();
+      final container = _container(
+        repository,
+        store,
+        settings: _SettingsRepository()
+          ..settings = const AppSettings.defaults(),
+      );
+      final controller = container.read(appUpdateControllerProvider.notifier);
+      await controller.checkOnStartup();
+      expect(repository.calls, 0);
+      // The day must stay unclaimed, otherwise enabling the switch later in the
+      // same day would silently skip the check the user just asked for.
+      expect(store.day, isNull);
+      await controller.checkManually();
+      expect(repository.calls, 1);
+      expect(
+        container
+            .read(appUpdateControllerProvider)
+            .pendingRelease
+            ?.version
+            .label,
+        '0.2.0',
+      );
+    },
+  );
+
+  test(
+    'found release carries the request record shown in the prompt',
+    () async {
+      final repository = GitHubUpdateRepository(
+        versionLoader: () async => _version('0.1.0+1'),
+        fetcher: (_) async => jsonEncode([
+          {
+            ..._jsonRelease('v0.2.0'),
+            'published_at': '2026-11-01T08:30:00Z',
+            'assets': [
+              {
+                'name': 'BiliSail-0.2.0-windows-x64.exe',
+                'size': 71000000,
+                'browser_download_url': Uri.https(
+                  'github.com',
+                  '/CKopoer/BiliSail/releases/download/v0.2.0/BiliSail-0.2.0-windows-x64.exe',
+                ).toString(),
+              },
+              {
+                'name': 'forged',
+                'size': 'large',
+                'browser_download_url': 'http://evil.example/a.exe',
+              },
+            ],
+          },
+          _jsonRelease('v9.0.0', prerelease: true),
+          _jsonRelease('v0.1.0+1', draft: true),
+          _jsonRelease('not-a-version'),
+        ]),
+      );
+      addTearDown(repository.close);
+      final container = _container(repository, _CheckStore());
+      await container
+          .read(appUpdateControllerProvider.notifier)
+          .checkManually();
+      final release = container
+          .read(appUpdateControllerProvider)
+          .pendingRelease;
+      expect(release?.version.label, '0.2.0');
+      expect(release?.publishedAt?.toUtc(), DateTime.utc(2026, 11, 1, 8, 30));
+      // Malformed attachment rows are dropped; the URL must stay on this
+      // project's own release download tree.
+      expect(release?.assets.map((asset) => asset.name), [
+        'BiliSail-0.2.0-windows-x64.exe',
+      ]);
+      expect(release?.assets.single.sizeBytes, 71000000);
+      final report = release?.report;
+      expect(report?.endpoint, GitHubUpdateRepository.endpoint);
+      expect(report?.requestHeaders['user-agent'], 'BiliSail-update-check');
+      // An injected fetcher never touches the transport, so there is no status,
+      // body size or elapsed time to report.
+      expect(report?.statusCode, isNull);
+      expect(report?.responseBytes, isNull);
+      expect(report?.elapsed, isNull);
+      expect(report?.candidates, 4);
+      expect(report?.skippedDrafts, 1);
+      expect(report?.skippedPrereleases, 1);
+      expect(report?.skippedUnversionedTags, 1);
+      expect(
+        report?.toPlainText(
+          installedLabel: '0.1.0+1',
+          selected: release!.version,
+        ),
+        allOf(
+          contains(
+            'GET https://api.github.com/repos/CKopoer/BiliSail/releases',
+          ),
+          contains('候选 4 条'),
+          contains('本机版本 0.1.0+1'),
+        ),
+      );
+    },
+  );
+
   test(
     'automatic check runs once per local day, including failed attempts',
     () async {
@@ -822,6 +930,74 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('prompt expands into the full request record for reporting', (
+    tester,
+  ) async {
+    final repository = _UpdateRepository()
+      ..release = AppRelease(
+        version: _version('0.2.0'),
+        url: Uri.https('github.com', '/CKopoer/BiliSail/releases/tag/v0.2.0'),
+        notes: '修复播放问题',
+        publishedAt: DateTime.utc(2026, 11, 1, 12),
+        assets: [
+          AppReleaseAsset(
+            name: 'BiliSail-0.2.0-windows-x64.exe',
+            sizeBytes: 71000000,
+            url: Uri.parse(
+              'https://github.com/CKopoer/BiliSail/releases/download/v0.2.0/BiliSail-0.2.0-windows-x64.exe',
+            ),
+          ),
+        ],
+        report: UpdateCheckReport(
+          endpoint: GitHubUpdateRepository.endpoint,
+          requestHeaders: GitHubUpdateRepository.requestHeaders,
+          prereleaseChannelIncluded: false,
+          statusCode: 200,
+          responseBytes: 318442,
+          elapsed: const Duration(milliseconds: 1240),
+          candidates: 4,
+          skippedDrafts: 1,
+          skippedPrereleases: 1,
+          skippedUnversionedTags: 1,
+        ),
+      );
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    await tester.pumpWidget(_app(repository, _CheckStore(), <Uri>[]));
+    await tester.pumpAndSettle();
+    expect(find.text('发现新版本 0.2.0'), findsOneWidget);
+    expect(find.textContaining('2026-11-01'), findsOneWidget);
+    expect(find.textContaining('67.7 MB'), findsOneWidget);
+    // Transport detail stays collapsed until asked for.
+    expect(find.textContaining('318442 字节'), findsNothing);
+    await tester.tap(find.text('查看本次请求详情'));
+    await tester.pumpAndSettle();
+    expect(find.text('GET ${GitHubUpdateRepository.endpoint}'), findsOneWidget);
+    expect(find.textContaining('318442 字节'), findsOneWidget);
+    expect(find.textContaining('1.24 秒'), findsOneWidget);
+    expect(find.textContaining('草稿 1、预发布 1、非版本标签 1'), findsOneWidget);
+    expect(find.textContaining('BiliSail-update-check'), findsOneWidget);
+    await tester.ensureVisible(find.text('复制请求详情'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('复制请求详情'));
+    await tester.pumpAndSettle();
+    expect(find.text('请求详情已复制到剪贴板'), findsOneWidget);
+    expect(copied.single, contains('GET https://api.github.com'));
+    expect(copied.single, contains('状态码 200'));
+    expect(copied.single, contains('响应 318442 字节'));
+    expect(copied.single, contains('耗时 1.24 秒'));
+    expect(copied.single, contains('本机版本 0.1.0+1'));
+    expect(copied.single, contains('选中版本 0.2.0'));
+    expect(tester.takeException(), isNull);
+  });
   for (final brightness in Brightness.values) {
     testWidgets(
       'Markdown release notes fit narrow windows with large text: $brightness',
@@ -1097,7 +1273,9 @@ final class _CheckStore implements UpdateCheckStore {
 }
 
 final class _SettingsRepository implements SettingsRepository {
-  AppSettings settings = const AppSettings.defaults();
+  // Startup checks are opt-in in production. Most cases here describe that
+  // opted-in automatic path; the disabled default has its own case.
+  AppSettings settings = AppSettings(checkUpdatesOnStartup: true);
   Completer<AppSettings>? pending;
   bool failSave = false;
   @override

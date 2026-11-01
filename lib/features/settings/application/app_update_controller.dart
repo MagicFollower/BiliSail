@@ -86,7 +86,16 @@ final class AppUpdateController extends Notifier<AppUpdateState> {
   Future<void> _run(bool automatic, RequestCancellation cancellation) async {
     try {
       await (() async {
+        final settings = await ref.read(settingsControllerProvider.future);
+        if (!ref.mounted || cancellation.isCancelled) return;
         if (automatic) {
+          // Off by default: while it stays off the app never queries the release
+          // endpoint, and the calendar day is not consumed either, so enabling
+          // it later in the same day still performs that day's check.
+          if (!settings.checkUpdatesOnStartup) {
+            state = const AppUpdateState();
+            return;
+          }
           final now = ref.read(updateClockProvider)().toLocal();
           final day =
               '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -103,8 +112,6 @@ final class AppUpdateController extends Notifier<AppUpdateState> {
           ref.invalidate(installedAppVersionProvider);
         }
         final installed = await ref.read(installedAppVersionProvider.future);
-        if (!ref.mounted || cancellation.isCancelled) return;
-        final settings = await ref.read(settingsControllerProvider.future);
         if (!ref.mounted || cancellation.isCancelled) return;
         final release = await ref
             .read(appUpdateRepositoryProvider)

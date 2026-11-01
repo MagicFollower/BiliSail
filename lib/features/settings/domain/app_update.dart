@@ -85,17 +85,89 @@ final class AppVersion implements Comparable<AppVersion> {
   }
 }
 
+final class AppReleaseAsset {
+  const AppReleaseAsset({
+    required this.name,
+    required this.sizeBytes,
+    required this.url,
+  });
+
+  final String name;
+  final int sizeBytes;
+  final Uri url;
+}
+
+/// One update request as it actually happened, shown in the release prompt so a
+/// reported result is auditable without capturing the network.
+final class UpdateCheckReport {
+  const UpdateCheckReport({
+    required this.endpoint,
+    required this.requestHeaders,
+    required this.prereleaseChannelIncluded,
+    this.statusCode,
+    this.responseBytes,
+    this.elapsed,
+    this.candidates = 0,
+    this.skippedDrafts = 0,
+    this.skippedPrereleases = 0,
+    this.skippedUnversionedTags = 0,
+  });
+
+  final Uri endpoint;
+  final Map<String, String> requestHeaders;
+  final bool prereleaseChannelIncluded;
+  final int? statusCode;
+  final int? responseBytes;
+  final Duration? elapsed;
+  final int candidates;
+  final int skippedDrafts;
+  final int skippedPrereleases;
+  final int skippedUnversionedTags;
+
+  /// Plain text for the clipboard, so a user can paste the exact request record
+  /// into an issue report.
+  String toPlainText({String? installedLabel, AppVersion? selected}) {
+    final headers = requestHeaders.entries
+        .map((entry) => '${entry.key}: ${entry.value}')
+        .join('\n');
+    return [
+      '请求 GET $endpoint',
+      '请求头',
+      headers,
+      '状态码 ${statusCode ?? '未知（未走真实网络）'}',
+      '响应 ${responseBytes ?? 0} 字节',
+      '耗时 ${elapsed == null ? '未记录' : '${(elapsed!.inMilliseconds / 1000).toStringAsFixed(2)} 秒'}',
+      '预发布通道 ${prereleaseChannelIncluded ? '包含' : '排除'}',
+      '候选 $candidates 条：草稿 $skippedDrafts、预发布 $skippedPrereleases、'
+          '非版本标签 $skippedUnversionedTags 已排除',
+      '本机版本 ${installedLabel ?? '未知'}',
+      '选中版本 ${selected?.label ?? '无'}',
+    ].join('\n');
+  }
+}
+
 final class AppRelease {
   const AppRelease({
     required this.version,
     required this.url,
     this.notes = '',
     this.prerelease = false,
+    this.publishedAt,
+    this.assets = const [],
+    this.report,
   });
   final AppVersion version;
   final Uri url;
   final String notes;
   final bool prerelease;
+
+  /// UTC publication time from the host; null when the response omitted it.
+  final DateTime? publishedAt;
+  final List<AppReleaseAsset> assets;
+
+  /// Diagnostics of the request that produced this release. Absent when a
+  /// release was built without a transport round trip, such as in tests.
+  final UpdateCheckReport? report;
 }
 
 abstract interface class AppUpdateRepository {

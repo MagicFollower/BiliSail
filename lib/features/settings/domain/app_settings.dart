@@ -67,6 +67,7 @@ final class AppSettings {
     this.systemFontFamily = '',
     this.cacheImages = true,
     this.checkPrereleaseUpdates = false,
+    this.checkUpdatesOnStartup = false,
     this.wheelDampingRatio = 1.3,
     this.danmakuEnabled = true,
     this.danmakuOpacity = 0.8,
@@ -140,6 +141,7 @@ final class AppSettings {
        systemFontFamily = '',
        cacheImages = true,
        checkPrereleaseUpdates = false,
+       checkUpdatesOnStartup = false,
        wheelDampingRatio = 1.3,
        danmakuEnabled = true,
        danmakuOpacity = 0.8,
@@ -201,6 +203,10 @@ final class AppSettings {
   String? get fontFamily => font.resolveFamily(systemFontFamily);
   final bool cacheImages;
   final bool checkPrereleaseUpdates;
+
+  /// Startup update checks are opt-in: without it the app never queries the
+  /// release endpoint until the user presses “检查更新”.
+  final bool checkUpdatesOnStartup;
 
   /// Mouse-wheel spring damping ratio; 1 is critically damped.
   final double wheelDampingRatio;
@@ -281,6 +287,7 @@ final class AppSettings {
     String? systemFontFamily,
     bool? cacheImages,
     bool? checkPrereleaseUpdates,
+    bool? checkUpdatesOnStartup,
     double? wheelDampingRatio,
     bool? danmakuEnabled,
     double? danmakuOpacity,
@@ -346,6 +353,7 @@ final class AppSettings {
     cacheImages: cacheImages ?? this.cacheImages,
     checkPrereleaseUpdates:
         checkPrereleaseUpdates ?? this.checkPrereleaseUpdates,
+    checkUpdatesOnStartup: checkUpdatesOnStartup ?? this.checkUpdatesOnStartup,
     wheelDampingRatio: wheelDampingRatio ?? this.wheelDampingRatio,
     danmakuEnabled: danmakuEnabled ?? this.danmakuEnabled,
     danmakuOpacity: danmakuOpacity ?? this.danmakuOpacity,

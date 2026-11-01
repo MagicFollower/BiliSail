@@ -107,6 +107,10 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(cacheImages: value));
   Future<void> setCheckPrereleaseUpdates(bool value) =>
       update((current) => current.copyWith(checkPrereleaseUpdates: value));
+
+  /// Startup checks are opt-in; disabling it leaves manual checks untouched.
+  Future<void> setCheckUpdatesOnStartup(bool value) =>
+      update((current) => current.copyWith(checkUpdatesOnStartup: value));
   Future<void> setWheelDampingRatio(double value) =>
       update((current) => current.copyWith(wheelDampingRatio: value));
   Future<void> setDanmakuEnabled(bool value) =>
