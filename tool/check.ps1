@@ -40,13 +40,8 @@ try {
     & (Join-Path $PSScriptRoot 'test-android-signing.ps1')
     & (Join-Path $PSScriptRoot 'test-android-development.ps1')
     & (Join-Path $PSScriptRoot 'test-android-media-notification.ps1')
-    & (Join-Path $PSScriptRoot 'test-windows-installers.ps1')
-    & (Join-Path $PSScriptRoot 'test-windows-msix-identity.ps1')
-    & (Join-Path $PSScriptRoot 'test-macos-release-validation.ps1')
-    Invoke-Check python @('-m', 'unittest', 'discover', '-s', 'tool', '-p', 'test_macos_*.py')
-    & (Join-Path $PSScriptRoot 'test-ios-package-validation.ps1')
   }
-  # A cold Windows SDK can emit pub bootstrap output before the machine JSON.
+  # The first pub run can print bootstrap lines before the machine JSON.
   Invoke-Check flutter @('--version')
   $sdk = (& flutter --version --machine | ConvertFrom-Json)
   if ($sdk.frameworkVersion -ne '3.47.6') { throw 'This checkout is verified with Flutter 3.47.6.' }
@@ -66,7 +61,6 @@ try {
   }
   if ($runLint) {
     Invoke-Check dart @('format', '--output=none', '--set-exit-if-changed', 'lib', 'test', 'integration_test')
-    Invoke-Check dart @('format', '--output=none', '--set-exit-if-changed', 'linux/plugins/flutter_inappwebview_linux/lib')
     foreach ($package in $packages) {
       Push-Location (Join-Path $repoRoot "packages/$package")
       try {
@@ -74,9 +68,6 @@ try {
       } finally { Pop-Location }
     }
     Invoke-Check flutter @('analyze', '--no-pub')
-    # Flutter excludes generated platform trees from root analysis; this local
-    # Dart-only platform adapter is maintained source rather than a generated file.
-    Invoke-Check dart @('analyze', 'linux/plugins/flutter_inappwebview_linux/lib')
   }
   if ($runRootTests) {
     $testArgs = @('test', '--no-pub')

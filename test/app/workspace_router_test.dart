@@ -2508,7 +2508,7 @@ final class _HistoryRepository implements LibraryRepository {
 
 final class _AppIcons implements AppIconService {
   @override
-  AppIconSurface get surface => AppIconSurface.dock;
+  AppIconSurface get surface => AppIconSurface.launcher;
   @override
   Future<AppIconPreference> restore(AppIconPreference saved) async => saved;
   @override

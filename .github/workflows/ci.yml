@@ -11,22 +11,7 @@ on:
         type: string
         default: ''
       enable_android:
-        type: boolean
-        default: true
-      enable_windows:
-        description: Windows x64 MSIX / MSI / EXE 安装包
-        type: boolean
-        default: true
-      enable_macos:
-        description: macOS arm64 / Intel x64 DMG 安装文件
-        type: boolean
-        default: true
-      enable_ios:
-        description: iOS arm64 unsigned IPA
-        type: boolean
-        default: true
-      enable_linux:
-        description: Linux x64 Flatpak / AppImage
+        description: Android arm64 APK
         type: boolean
         default: true
   workflow_call:
@@ -40,22 +25,7 @@ on:
         type: string
         default: ''
       enable_android:
-        type: boolean
-        default: true
-      enable_windows:
-        description: Windows x64 MSIX / MSI / EXE installers.
-        type: boolean
-        default: true
-      enable_macos:
-        description: macOS arm64 / Intel x64 DMG installers.
-        type: boolean
-        default: true
-      enable_ios:
-        description: iOS arm64 unsigned IPA (requires signing before installation).
-        type: boolean
-        default: true
-      enable_linux:
-        description: Linux x64 Flatpak / AppImage.
+        description: Android arm64 APK.
         type: boolean
         default: true
     secrets:
@@ -66,10 +36,6 @@ on:
       ANDROID_KEY_ALIAS:
         required: false
       ANDROID_KEY_PASSWORD:
-        required: false
-      MSIX_CERTIFICATE_BASE64:
-        required: false
-      MSIX_CERTIFICATE_PASSWORD:
         required: false
     outputs:
       version:
@@ -102,10 +68,6 @@ jobs:
           BUILD_TARGETS: ${{ inputs.build_targets }}
           # Push/PR has no inputs; a reusable caller can explicitly pass false.
           ENABLE_ANDROID: ${{ !contains(toJSON(inputs), '"enable_android"') || inputs.enable_android }}
-          ENABLE_WINDOWS: ${{ !contains(toJSON(inputs), '"enable_windows"') || inputs.enable_windows }}
-          ENABLE_MACOS: ${{ !contains(toJSON(inputs), '"enable_macos"') || inputs.enable_macos }}
-          ENABLE_IOS: ${{ !contains(toJSON(inputs), '"enable_ios"') || inputs.enable_ios }}
-          ENABLE_LINUX: ${{ !contains(toJSON(inputs), '"enable_linux"') || inputs.enable_linux }}
         run: ./tool/ci-build-plan.ps1
 
   lint:
@@ -134,19 +96,11 @@ jobs:
           dart format lib test integration_test packages/*/lib packages/*/test
           git diff -- '*.dart'
 
-      - name: Check Apple frameworks, Linux packaging, apt mirrors and download caches
+      - name: Check the mux shell helpers used by the Android build
         shell: bash
         run: |
-          python3 -m unittest discover -s tool -p 'test_linux_*.py'
-          python3 -m unittest discover -s tool -p 'test_apple_*.py'
-          ruby -c ios/Podfile
-          ruby -c macos/Podfile
-          ruby -c tool/media-kit-apple-pods.rb
-          bash tool/test-linux-downloads.sh
-          bash packages/bili_mux/tool/test-apple-framework.sh
-          for script in tool/package-linux.sh tool/setup-linux-build.sh tool/linux-downloads.sh tool/linux-runtime-validation.sh; do
-            bash -n "$script"
-          done
+          bash -n packages/bili_mux/tool/build.sh
+          bash -n packages/bili_mux/tool/build-test-ffprobe.sh
 
   root-tests:
     name: Root app tests (shard ${{ matrix.shard }})
@@ -215,7 +169,7 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: [prepare, check, native-mux]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ startsWith(matrix.target, 'macos-') && 40 || 90 }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
@@ -244,109 +198,25 @@ jobs:
           architecture: ${{ matrix.arch }}
           cache: true
           pub-cache-key: 'flutter-pub-:os:-:arch:-:version:'
-      - name: Set up the Windows mux compiler
-        id: windows-mux
-        if: matrix.target == 'windows-x64'
-        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
-        with:
-          msystem: UCRT64
-          install: make mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-libarchive
-      - name: Set up LZMA support for Windows Native Assets
-        if: matrix.target == 'windows-x64'
-        shell: pwsh
-        env:
-          BILI_MUX_MSYS_ROOT: ${{ steps.windows-mux.outputs.msys2-location }}
-        run: ./tool/setup-windows-native-tar.ps1 -MsysRoot $env:BILI_MUX_MSYS_ROOT
       - name: Set up the Android mux compiler
         if: matrix.target == 'android-arm64'
         shell: bash
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
-      - name: Resolve Linux dependency cache epoch
-        id: linux-cache-epoch
-        if: matrix.target == 'linux-x64'
-        shell: bash
-        run: |
-          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
-      - name: Restore Linux apt packages and verified packaging tools
-        id: linux-downloads
-        if: matrix.target == 'linux-x64'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/bilisail/linux/apt/*.deb
-            ~/.cache/bilisail/linux/tools
-          key: linux-downloads-v1-ubuntu24.04-x64-${{ hashFiles('tool/setup-linux-build.sh', 'tool/linux-downloads.sh', 'tool/linux-apt-mirrors.py') }}-${{ steps.linux-cache-epoch.outputs.week }}
-          restore-keys: |
-            linux-downloads-v1-ubuntu24.04-x64-${{ hashFiles('tool/setup-linux-build.sh', 'tool/linux-downloads.sh', 'tool/linux-apt-mirrors.py') }}-
-      - name: Restore Linux Flatpak Runtime and SDK
-        id: linux-flatpak
-        if: matrix.target == 'linux-x64'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.local/share/flatpak
-          key: linux-flatpak-v1-ubuntu24.04-x64-${{ hashFiles('linux/packaging/dev.bilisail.bilisail.json', 'tool/setup-linux-build.sh') }}-${{ steps.linux-cache-epoch.outputs.week }}
-          restore-keys: |
-            linux-flatpak-v1-ubuntu24.04-x64-${{ hashFiles('linux/packaging/dev.bilisail.bilisail.json', 'tool/setup-linux-build.sh') }}-
-      - name: Set up Linux build and packaging dependencies
-        if: matrix.target == 'linux-x64'
-        shell: bash
-        run: bash tool/setup-linux-build.sh
-      # Save dependencies before building the app, so a packaging failure does
-      # not discard downloads. The Flatpak snapshot contains no built app.
-      - name: Save Linux apt packages and verified packaging tools
-        if: matrix.target == 'linux-x64' && steps.linux-downloads.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/bilisail/linux/apt/*.deb
-            ~/.cache/bilisail/linux/tools
-          key: ${{ steps.linux-downloads.outputs.cache-primary-key }}
-      - name: Save Linux Flatpak Runtime and SDK
-        if: matrix.target == 'linux-x64' && steps.linux-flatpak.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.local/share/flatpak
-          key: ${{ steps.linux-flatpak.outputs.cache-primary-key }}
-      - name: Check Apple toolchain
-        if: matrix.target == 'ios-arm64'
-        shell: bash
-        run: |
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-          pod --version
       - name: Build and package preview
-        timeout-minutes: ${{ startsWith(matrix.target, 'macos-') && 30 || 90 }}
+        timeout-minutes: 90
         shell: pwsh
         env:
           BUILD_TARGET: ${{ matrix.target }}
           BUILD_VERSION: ${{ needs.prepare.outputs.version }}
-          BILI_MUX_MSYS_ROOT: ${{ steps.windows-mux.outputs.msys2-location }}
-          ANDROID_PREVIEW_SIGNING: ${{ matrix.target == 'android-arm64' && github.event_name == 'pull_request' }}
-          ANDROID_KEYSTORE_BASE64: ${{ matrix.target == 'android-arm64' && github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ matrix.target == 'android-arm64' && github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
-          ANDROID_KEY_ALIAS: ${{ matrix.target == 'android-arm64' && github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
-          ANDROID_KEY_PASSWORD: ${{ matrix.target == 'android-arm64' && github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
-          ANDROID_SIGNING_CERTIFICATE_SHA256: ${{ matrix.target == 'android-arm64' && vars.ANDROID_SIGNING_CERTIFICATE_SHA256 || '' }}
-          MSIX_CERTIFICATE_BASE64: ${{ matrix.target == 'windows-x64' && github.event_name != 'pull_request' && secrets.MSIX_CERTIFICATE_BASE64 || '' }}
-          MSIX_CERTIFICATE_PASSWORD: ${{ matrix.target == 'windows-x64' && github.event_name != 'pull_request' && secrets.MSIX_CERTIFICATE_PASSWORD || '' }}
+          ANDROID_PREVIEW_SIGNING: ${{ github.event_name == 'pull_request' }}
+          ANDROID_KEYSTORE_BASE64: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
+          ANDROID_SIGNING_CERTIFICATE_SHA256: ${{ vars.ANDROID_SIGNING_CERTIFICATE_SHA256 || '' }}
         run: ./tool/build-release.ps1 -Target $env:BUILD_TARGET -Version $env:BUILD_VERSION -AndroidPreviewSigning:($env:ANDROID_PREVIEW_SIGNING -eq 'true')
-      - name: Collect Windows native build diagnostics
-        if: failure() && matrix.target == 'windows-x64'
-        shell: pwsh
-        env:
-          MSIX_CERTIFICATE_BASE64: ${{ secrets.MSIX_CERTIFICATE_BASE64 }}
-          MSIX_CERTIFICATE_PASSWORD: ${{ secrets.MSIX_CERTIFICATE_PASSWORD }}
-        run: ./tool/collect-build-diagnostics.ps1
-      - name: Upload Windows build diagnostics
-        if: failure() && matrix.target == 'windows-x64'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: BiliSail-windows-x64-build-diagnostics
-          path: artifacts/windows-x64/diagnostics/
-          if-no-files-found: warn
-          retention-days: 14
       - name: Upload packages and checksums
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -355,18 +225,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
-      - name: Upload macOS smoke results
-        if: (failure() || cancelled()) && startsWith(matrix.target, 'macos-')
-        timeout-minutes: 2
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: BiliSail-${{ matrix.target }}-smoke-diagnostics
-          path: |
-            artifacts/${{ matrix.target }}/validation/*.result.json
-            artifacts/${{ matrix.target }}/validation/*.crash.json
-            artifacts/${{ matrix.target }}/validation/*.sample.json
-          if-no-files-found: warn
-          retention-days: 14
 
   native-mux:
     name: MP4 and MKV native regression

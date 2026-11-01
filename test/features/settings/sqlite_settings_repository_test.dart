@@ -142,7 +142,9 @@ void main() {
         final loaded = await repository.load();
         expect(loaded.checkUpdatesOnStartup, isFalse);
         for (final enabled in [true, false]) {
-          await repository.save(loaded.copyWith(checkUpdatesOnStartup: enabled));
+          await repository.save(
+            loaded.copyWith(checkUpdatesOnStartup: enabled),
+          );
           final reloaded = await SqliteSettingsRepository(database).load();
           expect(reloaded.checkUpdatesOnStartup, enabled);
         }

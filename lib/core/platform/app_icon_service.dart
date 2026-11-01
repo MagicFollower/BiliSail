@@ -11,20 +11,16 @@ final class NativeAppIconService implements AppIconService {
   AppIconSurface get surface => kIsWeb
       ? AppIconSurface.unsupported
       : switch (defaultTargetPlatform) {
-          TargetPlatform.android ||
-          TargetPlatform.iOS => AppIconSurface.launcher,
-          TargetPlatform.windows ||
-          TargetPlatform.linux => AppIconSurface.window,
-          TargetPlatform.macOS => AppIconSurface.dock,
-          TargetPlatform.fuchsia => AppIconSurface.unsupported,
+          TargetPlatform.android => AppIconSurface.launcher,
+          _ => AppIconSurface.unsupported,
         };
 
   @override
   Future<AppIconPreference> restore(AppIconPreference saved) async {
     if (surface == AppIconSurface.unsupported) return saved;
     if (surface == AppIconSurface.launcher) {
-      // The OS retains mobile icons. Reading avoids an iOS change alert on launch
-      // and recovers a change interrupted before its SQLite commit.
+      // Android retains the enabled launcher alias. Reading avoids re-applying it
+      // on launch and recovers a change interrupted before its SQLite commit.
       final name = await channel
           .invokeMethod<String>('getIcon')
           .timeout(const Duration(seconds: 5));
@@ -42,24 +38,10 @@ final class NativeAppIconService implements AppIconService {
     if (surface == AppIconSurface.unsupported) {
       throw UnsupportedError('Application icons are unavailable');
     }
-    // macOS restores the installed default through AppKit. Only its alternate
-    // uses a Dock-specific ICNS with logical sizes and transparent padding.
-    final imageAsset = switch (defaultTargetPlatform) {
-      TargetPlatform.macOS when icon == AppIconPreference.bilibili =>
-        'assets/branding/bilibili_pink_macos.icns',
-      TargetPlatform.linux => icon.asset,
-      _ => null,
-    };
-    final image = imageAsset == null ? null : await rootBundle.load(imageAsset);
+    // The launcher alias carries its own mipmap artwork, so the native side only
+    // needs the preference name; no icon bytes cross the channel.
     await channel
-        .invokeMethod<void>('setIcon', {
-          'icon': icon.name,
-          if (image != null)
-            'image': image.buffer.asUint8List(
-              image.offsetInBytes,
-              image.lengthInBytes,
-            ),
-        })
+        .invokeMethod<void>('setIcon', {'icon': icon.name})
         .timeout(const Duration(seconds: 15));
   }
 }

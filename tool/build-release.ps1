@@ -1,5 +1,5 @@
 param(
-  [Parameter(Mandatory)][ValidateSet('android-arm64', 'windows-x64', 'macos-arm64', 'macos-x64', 'ios-arm64', 'linux-x64')][string]$Target,
+  [Parameter(Mandatory)][ValidateSet('android-arm64')][string]$Target,
   [Parameter(Mandatory)][string]$Version,
   [switch]$AndroidPreviewSigning
 )
@@ -9,10 +9,6 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'android-signing.ps1')
 . (Join-Path $PSScriptRoot 'android-version.ps1')
 . (Join-Path $PSScriptRoot 'android-media-notification.ps1')
-. (Join-Path $PSScriptRoot 'windows-installers.ps1')
-. (Join-Path $PSScriptRoot 'windows-msix-identity.ps1')
-. (Join-Path $PSScriptRoot 'macos-release-validation.ps1')
-. (Join-Path $PSScriptRoot 'ios-package-validation.ps1')
 
 function Invoke-BuildCommand([string]$Executable, [string[]]$Parameters) {
   & $Executable @Parameters

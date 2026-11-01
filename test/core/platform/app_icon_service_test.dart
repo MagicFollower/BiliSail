@@ -22,52 +22,35 @@ void main() {
         .setMockMethodCallHandler(NativeAppIconService.channel, null);
   });
 
-  for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
-    test(
-      '$platform restores OS icon without triggering an icon change',
-      () async {
-        debugDefaultTargetPlatformOverride = platform;
-        expect(
-          await service.restore(AppIconPreference.bilisail),
-          AppIconPreference.bilibili,
-        );
-        expect(calls.map((call) => call.method), ['getIcon']);
-        await service.apply(AppIconPreference.bilisail);
-        expect(calls.last.arguments, {'icon': 'bilisail'});
-      },
-    );
-  }
-  for (final platform in [
-    TargetPlatform.windows,
-    TargetPlatform.macOS,
-    TargetPlatform.linux,
-  ]) {
-    test('$platform reapplies saved desktop icon', () async {
-      debugDefaultTargetPlatformOverride = platform;
+  test(
+    'android restores the enabled launcher alias without re-applying it',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      expect(service.surface, AppIconSurface.launcher);
+      expect(
+        await service.restore(AppIconPreference.bilisail),
+        AppIconPreference.bilibili,
+      );
+      expect(calls.map((call) => call.method), ['getIcon']);
+      await service.apply(AppIconPreference.bilisail);
+      // The alias carries its own mipmap artwork: only the name crosses.
+      expect(calls.last.arguments, {'icon': 'bilisail'});
+    },
+  );
+  test(
+    'unsupported platforms keep the saved preference and refuse to apply',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.fuchsia;
+      expect(service.surface, AppIconSurface.unsupported);
       expect(
         await service.restore(AppIconPreference.bilibili),
         AppIconPreference.bilibili,
       );
-      expect(calls.single.method, 'setIcon');
-      expect((calls.single.arguments as Map)['icon'], 'bilibili');
-      if (platform != TargetPlatform.windows) {
-        expect((calls.single.arguments as Map)['image'], isA<Uint8List>());
-      }
-      if (platform == TargetPlatform.macOS) {
-        final bytes = (calls.single.arguments as Map)['image'] as Uint8List;
-        expect(String.fromCharCodes(bytes.take(4)), 'icns');
-      }
-    });
-  }
-  test(
-    'macOS restores the installed default without replacing it with PNG data',
-    () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-      for (var cycle = 0; cycle < 2; cycle++) {
-        await service.apply(AppIconPreference.bilibili);
-        await service.restore(AppIconPreference.bilisail);
-        expect(calls.last.arguments, {'icon': 'bilisail'});
-      }
+      expect(calls, isEmpty);
+      expect(
+        () => service.apply(AppIconPreference.bilisail),
+        throwsUnsupportedError,
+      );
     },
   );
 }

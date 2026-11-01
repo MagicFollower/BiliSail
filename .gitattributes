@@ -1,4 +1,2 @@
 packages/bili_mux/tool/*.sh text eol=lf
 tool/*.sh text eol=lf
-linux/packaging/AppRun text eol=lf
-linux/packaging/flatpak-launcher text eol=lf

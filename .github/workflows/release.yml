@@ -16,22 +16,6 @@ on:
         description: Android arm64 APK
         type: boolean
         default: true
-      enable_windows:
-        description: Windows x64 MSIX / MSI / EXE 安装包
-        type: boolean
-        default: true
-      enable_macos:
-        description: macOS arm64 / Intel x64 DMG 安装文件
-        type: boolean
-        default: true
-      enable_ios:
-        description: iOS arm64 未签名 IPA（安装前需自行签名）
-        type: boolean
-        default: true
-      enable_linux:
-        description: Linux x64 Flatpak / AppImage
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -64,10 +48,6 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
           ENABLE_ANDROID: ${{ inputs.enable_android }}
-          ENABLE_WINDOWS: ${{ inputs.enable_windows }}
-          ENABLE_MACOS: ${{ inputs.enable_macos }}
-          ENABLE_IOS: ${{ inputs.enable_ios }}
-          ENABLE_LINUX: ${{ inputs.enable_linux }}
         run: ./tool/ci-build-plan.ps1
       - name: Plan reused packages and missing platform builds
         id: reuse
@@ -103,17 +83,11 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       build_targets: ${{ needs.prepare.outputs.build_targets }}
       enable_android: ${{ inputs.enable_android }}
-      enable_windows: ${{ inputs.enable_windows }}
-      enable_macos: ${{ inputs.enable_macos }}
-      enable_ios: ${{ inputs.enable_ios }}
-      enable_linux: ${{ inputs.enable_linux }}
     secrets:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      MSIX_CERTIFICATE_BASE64: ${{ secrets.MSIX_CERTIFICATE_BASE64 }}
-      MSIX_CERTIFICATE_PASSWORD: ${{ secrets.MSIX_CERTIFICATE_PASSWORD }}
 
   draft:
     name: Create release draft
@@ -209,12 +183,8 @@ jobs:
           - 源码提交：$env:GITHUB_SHA
           - Flutter 3.47.6；各平台 SDK、签名信息及 mux 源码归档见 [Actions 构建记录]($env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID) 中所列的来源构建产物。
           - 仅包含本次选中的平台；包旁附 SHA-256 校验文件。
-          - Windows 同时提供 MSIX、MSI 和 EXE 安装包；EXE 内嵌同一 MSI，任选一种安装。MSI 向导可选择安装目录，EXE 通过 Options → Browse 选择，升级默认沿用原目录。三者复用同一签名证书，测试签名需先信任包旁的 .cer。
-          - Android 复用仓库配置的固定 release keystore；macOS 仅 ad-hoc 签名，未 notarize。
-          - macOS 分别提供 Apple Silicon arm64 与 Intel x64 DMG，按芯片选择；打开后将 BiliSail.app 拖到 Applications 安装。
-          - iOS 提供 arm64 未签名 IPA，安装前须使用自己的 Apple 证书及 provisioning profile 签名；GitHub Actions token 只用于上传产物和 Release。
-          - Linux x64 提供 AppImage 与 Flatpak。AppImage 基线为 Ubuntu 24.04，Flatpak 使用 Freedesktop 25.08 runtime；图形使用 X11／XWayland，登录需可用的系统 Secret Service。
-          - 构建成功不等于各平台播放验收；正式分发前仍需完成签名、资源许可和设备验证。
+          - Android arm64 APK 复用仓库配置的固定 release keystore，覆盖升级要求签名一致；本地开发测试包使用 dev.bilisail.bilisail.test，可与正式包共存。
+          - 构建成功不等于设备验收；正式分发前仍需完成签名、资源许可和设备验证。
           "@
           $notes | Set-Content release-notes.md -Encoding utf8
           gh release create $tag @assets THIRD_PARTY_NOTICES.md --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "BiliSail $env:RELEASE_VERSION preview" --notes-file release-notes.md --draft --prerelease

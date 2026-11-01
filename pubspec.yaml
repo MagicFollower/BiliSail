@@ -49,10 +49,6 @@ dependencies:
 dependency_overrides:
   # Retain the existing wakelock API and package_info_plus compatibility.
   wakelock_plus: 1.8.1
-  # Linux uses QR login until the experimental WPE WebKit implementation has
-  # a separately validated portable packaging path. No native WebView is linked.
-  flutter_inappwebview_linux:
-    path: linux/plugins/flutter_inappwebview_linux
   media_kit:
     git:
       url: https://github.com/My-Responsitories/media-kit.git
@@ -109,7 +105,6 @@ flutter:
     - assets/icons/
     - assets/branding/app_icon.png
     - assets/branding/bilibili_pink.png
-    - assets/branding/bilibili_pink_macos.icns
     - assets/branding/bilibili_LICENSE.md
     - assets/fonts/harmonyos_sans/LICENSE.txt
   fonts:
