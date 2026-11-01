@@ -1,4 +1,4 @@
-# Shared by CI preparation, packaging and offline version-boundary checks.
+﻿# Shared by CI preparation, packaging and offline version-boundary checks.
 function Get-AndroidVersionCode([string]$Version) {
   if ($Version -cnotmatch '^(0|[1-9][0-9]*)\.([0-9])\.([0-9])\+(0|[1-9][0-9]?)$') {
     throw 'Android version must be major.minor.patch+build: minor/patch 0..9, build 0..99.'
@@ -31,7 +31,9 @@ function Confirm-AndroidApkVersion([string]$Package, [string]$Version) {
   $tool = $versions | ForEach-Object { Join-Path $_.FullName $toolName } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
   if (!$tool) { throw 'Android SDK aapt was not found.' }
-  $report = & $tool dump badging $Package
-  if ($LASTEXITCODE -ne 0) { throw 'Could not read APK manifest version.' }
+  # aapt writes UTF-8; decode explicitly so versionName comparisons survive
+  # console codepages that would otherwise mangle non-ASCII values.
+  $report = Read-AndroidToolOutput $tool "dump badging `"$Package`""
+  if ($null -eq $report -or $LASTEXITCODE -ne 0) { throw 'Could not read APK manifest version.' }
   return ConvertFrom-AndroidApkBadging ($report -join [Environment]::NewLine) $Version
 }

@@ -1,4 +1,4 @@
-# audio_service resolves these icons by name. Dart references are invisible to
+﻿# audio_service resolves these icons by name. Dart references are invisible to
 # Android's resource shrinker, so validate the compiled APK before distribution.
 function Assert-AndroidMediaNotificationResources([string]$Report) {
   foreach ($name in @('ic_media_notification', 'audio_service_play_arrow', 'audio_service_pause', 'audio_service_stop', 'ic_media_rewind_10', 'ic_media_forward_10')) {
@@ -21,7 +21,9 @@ function Confirm-AndroidMediaNotificationResources([string]$Package, [string]$Aa
       Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
     if (!$Aapt) { throw 'Android SDK aapt is required to verify APK media notification resources.' }
   }
-  $report = & $Aapt dump resources $Package
-  if ($LASTEXITCODE -ne 0) { throw 'Could not inspect APK media notification resources.' }
+  # aapt writes UTF-8; decode explicitly so resource name checks survive console
+  # codepages that would otherwise mangle output before matching.
+  $report = Read-AndroidToolOutput $Aapt "dump resources `"$Package`""
+  if ($null -eq $report -or $LASTEXITCODE -ne 0) { throw 'Could not inspect APK media notification resources.' }
   Assert-AndroidMediaNotificationResources ($report -join [Environment]::NewLine)
 }

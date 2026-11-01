@@ -1,4 +1,4 @@
-# Local device validation must use this identity across every build mode.
+﻿# Local device validation must use this identity across every build mode.
 $AndroidDevelopmentPackageId = 'dev.bilisail.bilisail.test'
 $AndroidDevelopmentDisplayName = 'BiliSail 测试版'
 $AndroidDevelopmentBuildArgument = '--android-project-arg=bilisailDevelopmentBuild=true'
@@ -14,6 +14,31 @@ function Get-AndroidDevelopmentAapt {
     Select-Object -First 1
   if (!$tool) { throw 'Android SDK aapt is required to verify the development identity.' }
   return $tool
+}
+
+# aapt writes UTF-8 regardless of the console codepage. PowerShell decodes native
+# output with [Console]::OutputEncoding (OEM 936 on zh-CN hosts), which mangles the
+# non-ASCII display name before the identity comparison. Read through .NET with an
+# explicit UTF-8 decoder so the label check is codepage-independent.
+function Read-AndroidToolOutput([string]$Executable, [string]$Arguments) {
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $Executable
+  $psi.Arguments = $Arguments
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+  $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+  $process = [System.Diagnostics.Process]::Start($psi)
+  $stdout = $process.StandardOutput.ReadToEnd()
+  $stderr = $process.StandardError.ReadToEnd()
+  $process.WaitForExit()
+  if ($process.ExitCode -ne 0) {
+    $global:LASTEXITCODE = $process.ExitCode
+    return $null
+  }
+  $global:LASTEXITCODE = 0
+  return ($stdout -split "`r?`n")
 }
 
 function ConvertFrom-AndroidDevelopmentBadging([string]$Report, [string]$Mode = 'Release') {
@@ -38,8 +63,8 @@ function ConvertFrom-AndroidDevelopmentBadging([string]$Report, [string]$Mode = 
 
 function Confirm-AndroidDevelopmentApk([string]$Package, [string]$Mode = 'Release') {
   $aapt = Get-AndroidDevelopmentAapt
-  $report = & $aapt dump badging $Package
-  if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the development APK.' }
+  $report = Read-AndroidToolOutput $aapt "dump badging `"$Package`""
+  if ($null -eq $report -or $LASTEXITCODE -ne 0) { throw 'Could not inspect the development APK.' }
   return ConvertFrom-AndroidDevelopmentBadging ($report -join [Environment]::NewLine) $Mode
 }
 
