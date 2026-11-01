@@ -247,6 +247,13 @@ set "BUILD_RC=%errorlevel%"
 if not "%BUILD_RC%"=="0" (
     echo.
     echo [ERROR] APK build failed, exit code %BUILD_RC%. See the log above.
+    echo   A GitHub download timeout for the libmpv jars is handled before Gradle
+    echo   runs: tool\android-libmpv-assets.ps1 stages the three jars under the
+    echo   plugin build\20260906 directory after checking the SHA-256 pins that the
+    echo   plugin itself declares, and it forwards the Windows system proxy to
+    echo   Gradle only when a direct route fails on this machine.
+    echo   If no route works, copy those three jars into that directory by hand and
+    echo   run this script again; the checksums are verified either way.
     goto :fail
 )
 

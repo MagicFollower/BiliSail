@@ -113,6 +113,7 @@
 - 后续连接设备的本地开发测试统一使用独立包名 **`dev.bilisail.bilisail.test`**，桌面名称 **`BiliSail 测试版`**；Debug、Profile、Release 都使用这个身份。历史 `.primaryswitch` 临时包不再用于后续测试，不自动卸载或迁移它的数据。
 - 开发测试包可与正式包 `dev.bilisail.bilisail` 共存，私有账号、数据库和缓存按 Android 包隔离。除用户明确要求正式包安装/升级验收外，不将本地测试构建安装到正式包名，也不复制正式包凭据。
 - 构建入口为 `tool/build-android-development.ps1`，默认 **Release**，默认构建 Android arm64 mux；例如 `./tool/build-android-development.ps1 -Mode Release -Install -DeviceId <adb-device-id>`。Debug/Profile 仅在对应调试/采样需要时显式选择；普通入口固定 `lib/main.dart`。
+- 库插件在 Gradle 评估阶段直接下载三个 ABI 的 libmpv jar，单次 `openStream()` 无超时无重试，本机对 GitHub 的直连偶发不通即整次构建失败。入口先调用 `tool/android-libmpv-assets.ps1`，按插件自身声明的 SHA-256 把 jar 预置到 Flutter 重定位后的 `build/media_kit_libs_android_video/`；pin 只从插件 `build.gradle` 解析，不复制常量，插件仍自行校验。仅当直连失败且系统代理确实在监听时，才把代理以 `-D` 透传给 Gradle，参数不得含 `|` 等 cmd 元字符（Flutter 入口是 `.bat`）。不修改 Pub 缓存，也不放松哈希校验。
 - 底层构建参数固定 `--android-project-arg=bilisailDevelopmentBuild=true`，统一添加 `.test` 和测试版名称。参数默认关闭；CI/正式打包不传该参数，仍沿用现有正式包名、名称和签名边界。开发 Release 是实际 Release/AOT 构建，使用本机开发签名，仅供本地测试，不作为正式发布包上传。
 - 此构建入口不能加 `--no-pub`：Flutter 3.47.6 会同时跳过原生插件注册文件重生成，Profile/Debug 与 Release 切换时可能留下 integration_test 等 dev-only 注册，导致 Release 编译失败。使用 Flutter 自身生成流程，不手改 GeneratedPluginRegistrant。
 - 三种模式沿用同一本机 Android debug keystore；本机默认位于 `%USERPROFILE%/.android/debug.keystore`。不得删除、重新生成或随意更换已有开发签名，否则无法保持覆盖升级和数据。脚本记录证书指纹；跨机器签名不同须先厘清已有签名，不能通过卸载绕过。

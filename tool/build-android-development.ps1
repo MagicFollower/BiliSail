@@ -11,6 +11,7 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'android-signing.ps1')
 . (Join-Path $PSScriptRoot 'android-version.ps1')
 . (Join-Path $PSScriptRoot 'android-media-notification.ps1')
+. (Join-Path $PSScriptRoot 'android-libmpv-assets.ps1')
 if ($Install -and [string]::IsNullOrWhiteSpace($DeviceId)) { throw '-Install requires an explicit -DeviceId.' }
 
 Push-Location $repoRoot
@@ -28,12 +29,24 @@ try {
     & adb -s $DeviceId shell input keyevent KEYCODE_WAKEUP
   }
   if (!$SkipMuxBuild) { & (Join-Path $PSScriptRoot 'build-download-mux.ps1') -Target android-arm64 }
+  # Gradle fetches the libmpv runtime jars while the plugin project is evaluated,
+  # where a single lost GitHub connection aborts the whole build. Staging them
+  # here first makes the APK step independent of that flaky path.
+  $libmpvNetwork = Ensure-LibmpvAndroidJars -RepoRoot $repoRoot
+  foreach ($jar in $libmpvNetwork.Jars) {
+    Write-Output "      libmpv jar $($jar.Name): $($jar.Status) via $($jar.Transport)"
+  }
   $version = (Select-String -LiteralPath 'pubspec.yaml' -Pattern '^version:\s*(\S+)\s*$').Matches.Groups[1].Value
   $expectedCode = Get-AndroidVersionCode $version
   $buildMode = $Mode.ToLowerInvariant()
   $buildArgs = @('build', 'apk', "--$buildMode", '--target-platform', 'android-arm64', '--split-per-abi',
     '--target', 'lib/main.dart', $AndroidDevelopmentBuildArgument,
     "--dart-define=BILISAIL_RELEASE_VERSION=$version")
+  $gradleNetworkArgs = @(Get-AndroidGradleNetworkArguments -Network $libmpvNetwork)
+  if ($gradleNetworkArgs.Count) {
+    Write-Output "      gradle network: direct GitHub fetch failed here, routing Gradle through $($libmpvNetwork.ProxyEndpoint)."
+    $buildArgs += @('--') + $gradleNetworkArgs
+  }
   # Flutter 3.47.6 also skips plugin-registrant regeneration with --no-pub.
   # Switching Profile/Debug to Release must remove dev-only native plugins.
   & flutter @buildArgs
