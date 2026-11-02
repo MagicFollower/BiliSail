@@ -32,6 +32,19 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
   /// is invisible from Dart otherwise: the await simply never resumes.
   static const _waitThreshold = Duration(seconds: 20);
 
+  /// Calls whose work is bounded in bytes, so a provider that stops answering
+  /// has to become a reported failure instead of a spinner that never ends.
+  /// `publish` and `verify` are excluded: moving a media file legitimately takes
+  /// longer than any timeout worth waiting for.
+  static const _deadlineMethods = {
+    'listFolders',
+    'readText',
+    'copyPublished',
+    'adopt',
+  };
+
+  static const _deadline = Duration(seconds: 60);
+
   Future<T?> _call<T>(String method, [Map<String, Object?>? args]) async {
     final log = DiagnosticsLog.instance;
     final trace = log != null && _traced.contains(method);
@@ -50,9 +63,17 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
       });
     }
     try {
-      final value = await _channel.invokeMethod<T>(method, args);
+      final pending = _channel.invokeMethod<T>(method, args);
+      final value = _deadlineMethods.contains(method)
+          ? await pending.timeout(_deadline)
+          : await pending;
       if (trace) await log.note('原生 $method ←');
       return value;
+    } on TimeoutException {
+      if (trace) {
+        await log.note('原生 $method ✗ 超时 ${_deadline.inSeconds}s');
+      }
+      throw const AppFailure(AppFailureKind.storage, '公共下载目录没有响应，已放弃本次操作');
     } on PlatformException catch (e) {
       if (trace) {
         await log.note('原生 $method ✗ ${e.code} ${e.message ?? ''}');

@@ -421,6 +421,58 @@ void main() {
   });
 
   test(
+    'a second scan is refused while one is in flight and the gate is released',
+    () async {
+      await repository.close();
+      await db.close();
+      publicStorage = _PublicStorage();
+      await openRepository();
+      final storage = publicStorage!;
+      storage.folders = [
+        PublishedFolder(
+          key: 'Download/BiliSail/BV1234567890-P1 视频/',
+          name: 'BV1234567890-P1 视频',
+          files: const [
+            PublishedFile(
+              name: 'media.mp4',
+              uri: 'content://test/media',
+              bytes: 2048,
+              modifiedMs: 10,
+            ),
+            PublishedFile(
+              name: 'manifest.json',
+              uri: 'content://test/manifest',
+              bytes: 512,
+              modifiedMs: 11,
+            ),
+          ],
+        ),
+      ];
+      storage.texts['content://test/manifest'] = _publishedManifest();
+      storage.listGate = Completer<void>();
+      final first = repository.scanShared();
+      for (var attempt = 0; attempt < 200 && !storage.listReached; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(storage.listReached, isTrue);
+
+      final second = await repository.scanShared();
+      expect(second.alreadyRunning, isTrue);
+      expect(second.summary, '上一次扫描仍在进行中，本次未启动。');
+
+      storage.listGate!.complete();
+      expect((await first).imported, 1);
+
+      // The gate must not stay closed after a pass that threw, or every later
+      // scan would report "still running" forever.
+      storage.failList = true;
+      await expectLater(repository.scanShared(), throwsStateError);
+      storage.failList = false;
+      expect((await repository.scanShared()).unchanged, 1);
+    },
+  );
+
+  test(
     'download commits without media digests and keeps URL-free records',
     () async {
       await repository.enqueue([item], const DownloadSelection());
@@ -1330,12 +1382,20 @@ final class _PublicStorage implements PublicDownloadStorage {
   bool refuseAdopt = false;
   bool failList = false;
 
+  /// When set, the listing waits on it - the shape of a call that never returns.
+  /// [listReached] says the pass really got there, so a test does not have to
+  /// guess how many microtasks a scan needs.
+  Completer<void>? listGate;
+  bool listReached = false;
+
   @override
   Future<List<PublishedFolder>> listPublishedFolders() async {
     if (failList) {
       // Stands in for the container killing the process mid-call.
       throw StateError('listFolders never returned');
     }
+    listReached = true;
+    await listGate?.future;
     return folders;
   }
 

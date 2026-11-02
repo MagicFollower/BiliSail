@@ -129,6 +129,7 @@ final class DownloadScanResult {
     this.ownedElsewhere = 0,
     this.reasons = const [],
     this.aborted = false,
+    this.alreadyRunning = false,
   });
 
   /// Folders the listing returned.
@@ -158,9 +159,16 @@ final class DownloadScanResult {
   /// scan rather than imported under the wrong owner.
   final bool aborted;
 
+  /// Nothing was listed because a pass was already in flight when this one was
+  /// asked for - the manual button pressed again while the first still waited
+  /// on the shared directory. Two passes claiming the same folder is what the
+  /// single running flag prevents.
+  final bool alreadyRunning;
+
   /// One line for the settings dialog. Kept here so the wording is a domain
   /// judgement a test can pin, not something the widget layer invents.
   String get summary {
+    if (alreadyRunning) return '上一次扫描仍在进行中，本次未启动。';
     final parts = <String>['新增 $imported 条'];
     if (refreshed > 0) parts.add('更新 $refreshed 条');
     if (unchanged > 0) parts.add('跳过未变化 $unchanged 个');

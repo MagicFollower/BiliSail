@@ -228,3 +228,16 @@ BV1gDEUuUZA-P3 视频标题/
 - 验收：`diagnostics_log_test.dart` 6 项（新增"崩溃边界取的是更早进程的**最新**一条，不是最旧一条"）；`sqlite_download_repository_test.dart` 的扫描用例从第一次扫描就装日志，断言原生停点、目的地形态、清单已读/通过、入库、缓存命中都进了表且最后一行是 `扫描结束`。core + settings + downloads 613 通过、13 跳过；`flutter analyze` 无问题；`:app:compileDebugKotlin` 通过。
 - 下一版的判据：**copyPublished 究竟卡在哪一行**（`native-step` 会直接给出答案，最可疑的是 `resolver.openInputStream(file://…)` 与 `fd.sync()`/`renameTo` 在容器虚拟文件系统上的行为）；交叠扫描是否要在仓储侧加"同一时刻只跑一条"的闸门——本轮只记录，未改语义。
 
+### 2026-11-02（同日第三轮）：症状确认为悬挂，修复制副本、加超时、拒绝重入
+
+用户报出可复现症状，与第二轮读出的形状完全对上：**点「扫描下载目录并导入」后一直显示"正在扫描…"；关掉对话框后下载页能刷出视频；再进设置页显示"上次扫描未完成，停在…"**。三条各自说明一件事：视频能刷出来 = 认领与入库已经跑完（`_save` + `_emit` 在复制之前）；红字停着 = 扫描函数再没走到 `_clearScanStage()`；转圈不停 = 那条 `await` 永远不返回。所以这是**悬挂不是崩溃**，且悬挂点就是 `copyPublished`。顺带解释了上一轮的交叠：对话框每次重开都带着新的 `_scanning=false`，按钮于是可以反复按，每次都再起一条扫描。
+
+- **复制路径改直读**（根因候选，也是本就不该绕的路）：`file:` 目的地的附属文件以前用 `resolver.openInputStream(file://…)` 逐块拷，等于每 64 KB 走一次 binder；清单读取对同一种目的地早就走 `File.readText` 直路。现在 `copyPublished` 与它一致：`uri.scheme == "file"` 用 `File(...).inputStream()`，其余仍走 resolver。
+- **去掉 `fd.sync()`**：写入后强刷磁盘是容器数据目录（虚拟/FUSE 挂载）上另一个可能不返回的动作。这个文件是可重取的旁路副本，丢了下次扫描再抄一遍，不值得为它冒 fsync 的险；发布媒体文件的路径也没有 fsync。
+- **有界调用加 60 秒超时**：`listFolders` / `readText` / `copyPublished` / `adopt` 的数据量都有上限（清单 256 KB、旁路 32 MB），超时后翻成 `AppFailure(storage, '公共下载目录没有响应，已放弃本次操作')`，扫描按"弹幕字幕未能取回"降级继续跑完，红字与转圈都能结束。`publish` / `verify` **不加**：搬一个媒体文件本来就可能超过任何值得等的时限。20 秒的 watchdog 仍会先记一条"仍在等待，停在：<原生停点>"。
+- **仓储拒绝重入**：`_scanRunning` 为真时第二次 `scanShared` 直接返回 `DownloadScanResult(alreadyRunning: true)`，`summary` 说"上一次扫描仍在进行中，本次未启动。"；扫描本体挪进 `_scanPass`，外层 `try/finally` 放闸，**抛异常的那次也不会把闸永久关死**。没有另开一条"跳过扫描"的假失败路径，UI 也就拿不到第二份认领。
+
+验收：新用例 `a second scan is refused while one is in flight and the gate is released`（替身 `listPublishedFolders` 挂在一个 Completer 上，用 `listReached` 确认第一条真的到了那里，再断言第二条 `alreadyRunning` 与文案；随后放行第一条得到 `imported=1`，然后让列目录抛错，再跑第三次必须正常返回 `unchanged=1`，证明异常路径也会放闸）。core + settings + downloads 614 通过、13 跳过；`flutter analyze` 无问题；`:app:compileDebugKotlin` 通过。
+
+仍未验证：真机上 `file:` / MediaStore / SAF 三种目的地里挂住的那一种是哪一种（要看 `原生上次停在 …` 与 `目的地 …` 两行）；如果换成 SAF 目的地，`openInputStream` 直路改动帮不上，剩下的兜底就是 60 秒超时 + 不重入。`fd.sync()` 是不是真凶同样未经设备证实。
+

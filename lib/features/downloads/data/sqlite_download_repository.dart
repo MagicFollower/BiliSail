@@ -1033,8 +1033,31 @@ final class SqliteDownloadRepository implements DownloadRepository {
     return raw;
   }
 
+  /// Whether a shared-storage pass is in flight. One pass claims a folder,
+  /// writes the platform journal and saves rows; a second pass running the same
+  /// steps concurrently over the same task ids is how the dialog ended up
+  /// waiting on a copy that the first pass was already waiting on.
+  bool _scanRunning = false;
+
   @override
   Future<DownloadScanResult> scanShared({
+    RequestCancellation? cancellation,
+    void Function(DownloadTask task)? onTask,
+  }) async {
+    if (_publicStorage == null) return const DownloadScanResult();
+    if (_scanRunning) {
+      await _trace('扫描重入被拒');
+      return const DownloadScanResult(alreadyRunning: true);
+    }
+    _scanRunning = true;
+    try {
+      return await _scanPass(cancellation: cancellation, onTask: onTask);
+    } finally {
+      _scanRunning = false;
+    }
+  }
+
+  Future<DownloadScanResult> _scanPass({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
   }) async {

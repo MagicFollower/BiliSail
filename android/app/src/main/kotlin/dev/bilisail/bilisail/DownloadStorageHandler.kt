@@ -351,8 +351,15 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         val temp = File("${file.path}.tmp")
         try {
             step("copyPublished 打开输入流")
-            resolver.openInputStream(uri).use { input ->
-                input ?: throw java.io.FileNotFoundException()
+            // A `file:` child is a plain file. Pushing it through the resolver
+            // costs a binder round trip per chunk and was the step that never
+            // returned on the HarmonyOS container; the manifest reader already
+            // takes the direct path for the same destination shape.
+            val source = if (uri.scheme == "file")
+                File(uri.path ?: throw IllegalArgumentException()).inputStream()
+            else
+                resolver.openInputStream(uri) ?: throw java.io.FileNotFoundException()
+            source.use { input ->
                 step("copyPublished 写入临时文件")
                 temp.outputStream().use { output ->
                     val buffer = ByteArray(64 * 1024)
@@ -366,7 +373,10 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     }
                     step("copyPublished 落盘 $total 字节")
                     output.flush()
-                    (output as? java.io.FileOutputStream)?.fd?.sync()
+                    // No fd.sync(): this file is a re-fetchable sidecar, and an
+                    // fsync on the container's data mount was a second candidate
+                    // for the call that never came back. Losing it only means the
+                    // next scan copies it again.
                 }
             }
             step("copyPublished 替换正式文件")
