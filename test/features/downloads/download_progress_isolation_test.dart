@@ -502,6 +502,11 @@ final class _Repository implements DownloadRepository {
   @override
   Future<void> sessionChanged() async {}
   @override
+  Future<DownloadScanResult> scanShared({
+    RequestCancellation? cancellation,
+    void Function(DownloadTask task)? onTask,
+  }) async => const DownloadScanResult();
+  @override
   Future<void> updatePreferences(DownloadPreferences preferences) async {}
 }
 

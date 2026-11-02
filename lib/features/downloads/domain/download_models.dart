@@ -118,6 +118,59 @@ final class DownloadMergedMedia {
   String get fileName => output.fileName;
 }
 
+/// What one pass over the published folders found.
+final class DownloadScanResult {
+  const DownloadScanResult({
+    this.folders = 0,
+    this.imported = 0,
+    this.refreshed = 0,
+    this.unchanged = 0,
+    this.rejected = 0,
+    this.ownedElsewhere = 0,
+    this.reasons = const [],
+    this.aborted = false,
+  });
+
+  /// Folders the listing returned.
+  final int folders;
+
+  /// New queue rows created from a manifest.
+  final int imported;
+
+  /// Known rows whose published URIs were refreshed (folder moved or renamed).
+  final int refreshed;
+
+  /// Folders skipped without reading the manifest, thanks to the scan cache.
+  final int unchanged;
+
+  /// Folders refused: no manifest, unreadable, or bytes that do not match.
+  final int rejected;
+
+  /// Parts already owned by another account on this device; ownership does not
+  /// move because someone opened the downloads tab.
+  final int ownedElsewhere;
+
+  /// Short refusal reasons, capped so one messy directory cannot produce an
+  /// unbounded list in the UI.
+  final List<String> reasons;
+
+  /// The account or session changed mid-pass; the rest was left to the next
+  /// scan rather than imported under the wrong owner.
+  final bool aborted;
+
+  /// One line for the settings dialog. Kept here so the wording is a domain
+  /// judgement a test can pin, not something the widget layer invents.
+  String get summary {
+    final parts = <String>['新增 $imported 条'];
+    if (refreshed > 0) parts.add('更新 $refreshed 条');
+    if (unchanged > 0) parts.add('跳过未变化 $unchanged 个');
+    if (rejected > 0) parts.add('无法识别 $rejected 个');
+    if (ownedElsewhere > 0) parts.add('已由其他账号下载 $ownedElsewhere 个');
+    if (aborted) parts.add('账号已切换，剩余项留到下次');
+    return parts.join('，');
+  }
+}
+
 final class DownloadPreferences {
   const DownloadPreferences({this.directory, this.concurrency = 2});
 

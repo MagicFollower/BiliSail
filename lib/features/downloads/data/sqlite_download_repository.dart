@@ -15,6 +15,7 @@ import '../../../domain/request_cancellation.dart';
 import '../../../domain/video.dart';
 import '../../../domain/video_codec.dart';
 import '../domain/download_folder_name.dart';
+import '../domain/download_manifest_scan.dart';
 import '../domain/download_repository.dart';
 import '../domain/download_muxer.dart';
 import '../domain/public_download_storage.dart';
@@ -980,6 +981,236 @@ final class SqliteDownloadRepository implements DownloadRepository {
     _failure = null;
     _emit();
     _pump();
+  }
+
+  @override
+  Future<DownloadScanResult> scanShared({
+    RequestCancellation? cancellation,
+    void Function(DownloadTask task)? onTask,
+  }) async {
+    final storage = _publicStorage;
+    if (storage == null) return const DownloadScanResult();
+    await initialize();
+    final cancel = cancellation ?? RequestCancellation();
+    final scope = _scope;
+    final epoch = _epoch;
+    final destination = await storage.destination();
+    final folders = await storage.listPublishedFolders();
+    final cached = await _scanCacheEntries();
+    var imported = 0,
+        refreshed = 0,
+        unchanged = 0,
+        rejected = 0,
+        ownedElsewhere = 0;
+    var aborted = false;
+    final reasons = <String>[];
+    final visited = <String>{};
+
+    void note(String reason) {
+      if (reasons.length < 8) reasons.add(reason);
+    }
+
+    void refuse(String reason) {
+      rejected++;
+      note(reason);
+    }
+
+    // Sequential on purpose. The reads are platform round-trips, and keeping
+    // the counters, the session guard and the cache writes single-threaded is
+    // what makes a half-finished pass safe to resume. The scan cache - not
+    // parallelism - is what makes the second and later passes cheap.
+    for (final folder in folders) {
+      if (cancel.isCancelled || scope != _scope || epoch != _epoch) {
+        aborted = true;
+        break;
+      }
+      visited.add(folder.key);
+      final manifest = folder.named('manifest.json');
+      if (manifest == null) {
+        refuse('${folder.name}: 清单不可读');
+        continue;
+      }
+      final hit = cached[folder.key];
+      if (hit != null &&
+          hit.bytes == manifest.bytes &&
+          hit.modifiedMs == manifest.modifiedMs) {
+        final known = _tasks[hit.taskId];
+        if (known != null && known.status == DownloadStatus.completed) {
+          unchanged++;
+          continue;
+        }
+      }
+      final String text;
+      try {
+        text = await storage.readPublishedText(
+          folder: folder.key,
+          uri: manifest.uri,
+        );
+      } on AppFailure catch (error) {
+        refuse('${folder.name}: ${error.message}');
+        continue;
+      }
+      final listed = {for (final file in folder.files) file.name: file.bytes};
+      final parsed = parsePublishedManifest(
+        manifestText: text,
+        listedBytes: listed,
+      );
+      final data = parsed.manifest;
+      if (data == null) {
+        refuse('${folder.name}: ${parsed.reason}');
+        continue;
+      }
+      final existing = _tasks[data.id];
+      if (existing != null && existing.scope != scope) {
+        // Another account claimed this part first; ownership does not move
+        // just because this device opened the tab.
+        ownedElsewhere++;
+        continue;
+      }
+      final publicFiles = <String, String>{
+        for (final file in folder.files)
+          if (_publishedNames.contains(file.name)) file.name: file.uri,
+      };
+      final task = DownloadTask(
+        id: data.id,
+        scope: scope,
+        item: data.item,
+        selection: data.selection,
+        status: DownloadStatus.completed,
+        directory:
+            existing?.directory ??
+            await _files.createTaskDirectory(await _scanRoot(), scope, data.id),
+        publicDestination: destination,
+        publicFiles: publicFiles,
+        createdAt: data.createdAt,
+        updatedAt: _clock(),
+        tracks: data.tracks,
+        mergedMedia: data.mergedBytes == null
+            ? null
+            : DownloadMergedMedia(
+                bytes: data.mergedBytes!,
+                sha256: data.mergedSha256,
+                output: data.selection.output,
+              ),
+      );
+      try {
+        await storage.adoptPublishedFolder(
+          task: task,
+          folder: folder.key,
+          files: publicFiles,
+        );
+      } on AppFailure catch (error) {
+        refuse('${folder.name}: ${error.message}');
+        continue;
+      }
+      await _save(task);
+      _tasks[task.id] = task;
+      await _rememberScan(
+        folderKey: folder.key,
+        taskId: task.id,
+        bytes: manifest.bytes,
+        modifiedMs: manifest.modifiedMs,
+      );
+      final sidecar = folder.named('extras.json');
+      if (sidecar != null) {
+        try {
+          await storage.copyPublishedSidecar(
+            folder: folder.key,
+            uri: sidecar.uri,
+            targetPath: (await _files.taskFile(task, 'extras.json')).path,
+          );
+        } on AppFailure catch (error) {
+          // The media still plays; losing the sidecar is a degradation the scan
+          // reports, not a reason to refuse the part.
+          note('${folder.name}: 弹幕字幕未能取回（${error.message}）');
+        }
+      }
+      if (existing == null) {
+        imported++;
+      } else {
+        refreshed++;
+      }
+      onTask?.call(task);
+      _emit();
+    }
+    // A partial pass must not forget the folders it never reached.
+    if (!aborted) {
+      await _forgetScans(visited);
+    }
+    return DownloadScanResult(
+      folders: folders.length,
+      imported: imported,
+      refreshed: refreshed,
+      unchanged: unchanged,
+      rejected: rejected,
+      ownedElsewhere: ownedElsewhere,
+      reasons: reasons,
+      aborted: aborted,
+    );
+  }
+
+  static const _publishedNames = {
+    'video.m4s',
+    'audio.m4s',
+    'media.mp4',
+    'media.mkv',
+    'extras.json',
+    'cover.img',
+    'manifest.json',
+  };
+
+  /// The same root new downloads use, so an imported row's private directory
+  /// sits where every other row's does.
+  Future<String> _scanRoot() async =>
+      _preferences.directory ?? await _defaultDirectory();
+
+  Future<Map<String, ({int bytes, int modifiedMs, String taskId})>>
+  _scanCacheEntries() async {
+    final rows = await db
+        .customSelect(
+          'SELECT folder_key, task_id, manifest_bytes, manifest_modified_ms '
+          'FROM download_scan_cache',
+        )
+        .get();
+    return {
+      for (final row in rows)
+        row.read<String>('folder_key'): (
+          bytes: row.read<int>('manifest_bytes'),
+          modifiedMs: row.read<int>('manifest_modified_ms'),
+          taskId: row.read<String>('task_id'),
+        ),
+    };
+  }
+
+  Future<void> _rememberScan({
+    required String folderKey,
+    required String taskId,
+    required int bytes,
+    required int modifiedMs,
+  }) => db.customStatement(
+    'INSERT INTO download_scan_cache'
+    '(folder_key,task_id,manifest_bytes,manifest_modified_ms,scanned_at_ms) '
+    'VALUES (?,?,?,?,?) '
+    'ON CONFLICT(folder_key) DO UPDATE SET task_id=excluded.task_id,'
+    'manifest_bytes=excluded.manifest_bytes,'
+    'manifest_modified_ms=excluded.manifest_modified_ms,'
+    'scanned_at_ms=excluded.scanned_at_ms',
+    [folderKey, taskId, bytes, modifiedMs, _clock().millisecondsSinceEpoch],
+  );
+
+  Future<void> _forgetScans(Set<String> visited) async {
+    final rows = await db
+        .customSelect('SELECT folder_key FROM download_scan_cache')
+        .get();
+    for (final row in rows) {
+      final key = row.read<String>('folder_key');
+      if (!visited.contains(key)) {
+        await db.customStatement(
+          'DELETE FROM download_scan_cache WHERE folder_key = ?',
+          [key],
+        );
+      }
+    }
   }
 
   @override

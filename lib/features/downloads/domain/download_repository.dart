@@ -34,6 +34,15 @@ abstract interface class DownloadRepository {
   Future<void> resumeAll();
   Future<void> remove(String id, {required bool deleteFiles});
   Future<void> refresh();
+
+  /// Rebuilds the queue from the folders this app published in shared storage.
+  ///
+  /// Cheap on repeat runs: a folder whose manifest size and timestamp are
+  /// unchanged, and whose task row is already loaded, is not read again.
+  Future<DownloadScanResult> scanShared({
+    RequestCancellation? cancellation,
+    void Function(DownloadTask task)? onTask,
+  });
   Future<void> updatePreferences(DownloadPreferences preferences);
 
   /// Cancel old work synchronously before waiting for file handles to close.

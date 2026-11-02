@@ -83,6 +83,26 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   String _shownQuery = '';
   List<DownloadTaskEntry> _shown = const [];
   Map<String, int> _shownIndices = const {};
+  bool _autoScanned = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // A reinstall keeps the published folders but wipes the queue database, so
+    // one pass on first open puts them back. Once per screen instance, and only
+    // where a shared download location exists at all.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoScan());
+  }
+
+  void _autoScan() {
+    if (_autoScanned || !mounted) return;
+    _autoScanned = true;
+    if (ref.read(publicDownloadStorageProvider) == null) return;
+    ref
+        .read(downloadControllerProvider.notifier)
+        .scanShared()
+        .catchError((Object _) => null);
+  }
 
   List<DownloadTaskEntry> _shownEntries(DownloadQueueStructure structure) {
     if (identical(_shownStructure, structure) &&
@@ -817,6 +837,8 @@ final class _DownloadSettingsDialogState
   String? _error;
   String? _publicDestination;
   String? _defaultDirectory;
+  DownloadScanResult? _scan;
+  bool _scanning = false;
 
   @override
   void initState() {
@@ -874,6 +896,23 @@ final class _DownloadSettingsDialogState
       return custom;
     }
     return _defaultDirectory;
+  }
+
+  Future<void> _runScan() async {
+    setState(() {
+      _scanning = true;
+      _error = null;
+    });
+    try {
+      final result = await ref
+          .read(downloadControllerProvider.notifier)
+          .scanShared();
+      if (mounted) setState(() => _scan = result);
+    } on AppFailure catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
   }
 
   Future<void> _openLocation() async {
@@ -975,7 +1014,7 @@ final class _DownloadSettingsDialogState
                 : (value) => setState(() => _concurrency = value.first),
           ),
           const SizedBox(height: 16),
-          if (ref.watch(publicDownloadStorageProvider) != null)
+          if (ref.watch(publicDownloadStorageProvider) != null) ...[
             TextButton.icon(
               onPressed: _saving
                   ? null
@@ -993,6 +1032,22 @@ final class _DownloadSettingsDialogState
               icon: const Icon(Icons.folder_open),
               label: const Text('更改公共下载位置'),
             ),
+            TextButton.icon(
+              onPressed: _saving || _scanning ? null : _runScan,
+              icon: const Icon(Icons.refresh),
+              label: const Text('扫描下载目录并导入'),
+            ),
+            if (_scanning)
+              Text('正在扫描共享目录…', style: Theme.of(context).textTheme.bodySmall),
+            if (_scan case final result?) ...[
+              Text(
+                result.summary,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              for (final reason in result.reasons)
+                Text('· $reason', style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ],
           if (widget.allowCustomDirectory) ...[
             const SizedBox(height: 12),
             TextField(

@@ -173,3 +173,28 @@ BV1gDEUuUZA-P3 视频标题/
 - 桌面（Windows/macOS）且位置是真实路径时提供"打开目录"，走既有 `FileAccessService.openDirectory`；MediaStore 与 SAF 位置没有可交给 shell 的路径，因此不显示该按钮。
 - 按钮文案改为"更改公共下载位置"，并删除与新增说明重复的旧兜底文案。
 - 验收：`test/features/downloads/download_destination_label_test.dart` 8 项（空值、哨兵、Android 路径、Windows 盘符、SAF 主卷与可移除卷、**中文目录名在 `file:` 与 SAF 两种形态下都解码**、非法 `%` 转义退回原串、无 tree 段与未知 scheme 兜底）；`download_presentation_test.dart` 1 项断言对话框按 key 显示已保存的自定义目录（同文本也出现在下方输入框，因此按 `ValueKey` 定位而非文本）。下载目录共 108 项通过、13 项跳过（上一节 99 项为 P1 提交时数字），`flutter analyze` 无问题。**Android 上"已选公共位置"的实际显示文本未在设备验证**（widget 测试里公共存储为 null）。
+
+## 2026-11-02：下载 tab 从共享目录扫描并导入离线内容
+
+按用户要求，下载页要能"快速高效地从下载目录解析离线的数据显示"。此前 `refresh()` 只逐条核对数据库里已有的任务，共享目录中新出现的文件夹永远不会被发现；而重装后数据库是空的，列表就什么都没有。
+
+新增 `DownloadRepository.scanShared()`：列出共享目录里的每个分 P 文件夹 → 读清单 → 校验 → 认领入库 → 把弹幕字幕取回私有目录。设置对话框加"扫描下载目录并导入"按钮并显示结果摘要，下载 tab 首次打开自动扫一次（仅当存在共享存储位置）。
+
+快在哪里：
+
+- **不是靠并发，是靠缓存**。`download_scan_cache(folder_key PRIMARY KEY, task_id, manifest_bytes, manifest_modified_ms, scanned_at_ms)`（数据库 `schemaVersion` 3 → 4，迁移步骤改为可链式：v1 补列 → v2 建下载表 → v3 建缓存表，`to` 非当前版本直接抛错）。二次扫描时，某文件夹的清单字节数与修改时间都没变、且该任务已在列表中且 completed，就**完全不读清单**，只做一次列表查询。
+- 扫描按顺序执行是刻意的：读的是平台往返，而计数、会话守卫和缓存写入单线程才好恢复；半途中断（切账号、取消）只置 `aborted`，且**不裁剪缓存**，避免把没走到的文件夹的快路信息抹掉。
+- 清单解析是纯函数（`download_manifest_scan.dart`，不碰网络/数据库/通道），需要时可整批丢进 isolate。
+
+安全与归属边界：
+
+- 只列目的地**下一层**、且必须含我们自己的 `manifest.json` 的目录；绝不递归用户其他子树。
+- 清单里的媒体字节数必须与平台实际列出的**逐一对上**，对不上只拒绝并给原因，不会把截断/被替换的文件夹当成可播。`sha256` 只在长度完整时接受，截断的按"无摘要"处理。
+- 三个新通道方法（`listFolders`、`readText`、`copyPublished`）共用 `requirePublishedSidecar`：证明目标 URI 确实是刚列出的那个目录的直接子项、且名字在 `manifest.json`/`extras.json` 之内——通道不能变成"调用方给什么路径就读什么"的通用文件读取器。
+- **认领（adopt）**：`verify`/`openMedia`/`delete` 都依赖应用偏好里的 journal，而 journal 随卸载消失。扫描读到的 URI 会先逐个按目的地复检，再写回 journal，之后播放与删除沿用既有路径，不需要为导入项单开一套。复检失败则整条撤销，不留半截 journal。
+- 归属：导入项记在当前账号名下；该 id 已属于别的账号时跳过并计入 `ownedElsewhere`，**不因为谁打开了 tab 就转移所有权**。
+- 弹幕字幕以流式复制取回私有 `extras.json`（清单允许到 32 MB，读成字符串会造成几十 MB 瞬时占用），复制失败只降级报告，不影响已导入的媒体。
+
+验收：`download_manifest_scan_test.dart` 6 项（合并/分轨接受、字节被截断拒绝、v2 清单与坏标识拒绝、轨道列表不完整拒绝、截断摘要按无摘要处理）；`sqlite_download_repository_test.dart` 新增 2 项端到端（导入一次后二次扫描 `unchanged=1` 且**清单读取请求数仍为 1**，证明快路真的没重读；字节不符则 `rejected=1` 且不入库不认领），并断言 `extras.json` 落回私有目录；`download_presentation_test.dart` 断言扫描按钮存在、点击后显示领域层措辞的摘要。数据库迁移新增 v3→v4 用例，既有 23 处 `schemaVersion` 断言随之抬到 4。下载目录 116 项通过、13 项跳过；`:app:compileDebugKotlin` 通过。
+
+未验证：Android 真机上三种目的地（MediaStore / SAF / `file:`）的实际扫描与认领、可移除存储拔出时的表现、几百个文件夹时的首扫耗时；SAF provider 不支持子目录列举时的降级未取样。

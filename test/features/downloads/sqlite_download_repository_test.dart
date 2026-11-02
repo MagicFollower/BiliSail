@@ -187,6 +187,107 @@ void main() {
   );
 
   test(
+    'scan imports a published folder once, then skips it without reading',
+    () async {
+      await repository.close();
+      await db.close();
+      publicStorage = _PublicStorage();
+      await openRepository();
+      final storage = publicStorage!;
+      storage.folders = [
+        PublishedFolder(
+          key: 'Download/BiliSail/BV1234567890-P1 视频/',
+          name: 'BV1234567890-P1 视频',
+          files: const [
+            PublishedFile(
+              name: 'media.mp4',
+              uri: 'content://test/media',
+              bytes: 2048,
+              modifiedMs: 10,
+            ),
+            PublishedFile(
+              name: 'manifest.json',
+              uri: 'content://test/manifest',
+              bytes: 512,
+              modifiedMs: 11,
+            ),
+            PublishedFile(
+              name: 'extras.json',
+              uri: 'content://test/extras',
+              bytes: 64,
+              modifiedMs: 12,
+            ),
+          ],
+        ),
+      ];
+      storage.texts['content://test/manifest'] = _publishedManifest();
+      const extras = '{"version":1,"comments":[],"subtitles":[],"warnings":[]}';
+      storage.texts['content://test/extras'] = extras;
+
+      final first = await repository.scanShared();
+      expect(first.imported, 1, reason: '${first.reasons}');
+      final task = repository.current.tasks.single;
+      expect(task.status, DownloadStatus.completed);
+      expect(task.item.video.title, '扫描到的视频');
+      expect(task.publicFiles['media.mp4'], 'content://test/media');
+      expect(task.publicFiles['extras.json'], 'content://test/extras');
+      // The sidecar comes back into the private directory, which is where
+      // offline playback already looks for danmaku and subtitles.
+      expect(
+        await File('${task.directory}/extras.json').readAsString(),
+        extras,
+      );
+      expect(storage.adopted.single.$1, _scannedId);
+      expect(storage.readRequests, hasLength(1));
+
+      final second = await repository.scanShared();
+      expect(second.unchanged, 1);
+      expect(second.imported, 0);
+      expect(
+        storage.readRequests,
+        hasLength(1),
+        reason: 'the cache must skip the read, not just the insert',
+      );
+    },
+  );
+
+  test('scan refuses a folder whose media bytes no longer match', () async {
+    await repository.close();
+    await db.close();
+    publicStorage = _PublicStorage();
+    await openRepository();
+    final storage = publicStorage!;
+    storage.folders = [
+      PublishedFolder(
+        key: 'Download/BiliSail/truncated/',
+        name: 'truncated',
+        files: const [
+          PublishedFile(
+            name: 'media.mp4',
+            uri: 'content://test/media',
+            bytes: 999,
+            modifiedMs: 10,
+          ),
+          PublishedFile(
+            name: 'manifest.json',
+            uri: 'content://test/manifest',
+            bytes: 512,
+            modifiedMs: 11,
+          ),
+        ],
+      ),
+    ];
+    storage.texts['content://test/manifest'] = _publishedManifest();
+
+    final result = await repository.scanShared();
+    expect(result.imported, 0);
+    expect(result.rejected, 1);
+    expect(result.reasons.single, contains('media.mp4'));
+    expect(repository.current.tasks, isEmpty);
+    expect(storage.adopted, isEmpty);
+  });
+
+  test(
     'download commits without media digests and keeps URL-free records',
     () async {
       await repository.enqueue([item], const DownloadSelection());
@@ -905,6 +1006,49 @@ Future<void> _waitFor(
   );
 }
 
+const _scannedId = '7d0f1a2b3c4d5e6f708192a3b4c5d6e7';
+
+/// A v3 manifest for a merged part, matching the file listing the scan tests
+/// hand back from the fake public storage.
+String _publishedManifest() => jsonEncode({
+  'version': 3,
+  'id': _scannedId,
+  'itemKey': 'video:BV1234567890:1',
+  'createdAtMs': 1730000000000,
+  'video': {
+    'id': 'BV1234567890',
+    'title': '扫描到的视频',
+    'author': '扫描UP',
+    'durationMs': 60000,
+  },
+  'part': {'cid': '1', 'page': 1, 'title': 'P1', 'durationMs': 60000},
+  'aid': '99',
+  'quality': 80,
+  'codec': 'h264',
+  'output': 'mp4',
+  'merged': {'fileName': 'media.mp4', 'bytes': 2048, 'sha256': null},
+  'tracks': [
+    {
+      'kind': 'video',
+      'identity': 'v1',
+      'fileName': 'video.m4s',
+      'codec': 'avc1',
+      'bandwidth': 1000,
+      'bytes': 1200,
+      'sha256': null,
+    },
+    {
+      'kind': 'audio',
+      'identity': 'a1',
+      'fileName': 'audio.m4s',
+      'codec': 'mp4a',
+      'bandwidth': 128,
+      'bytes': 848,
+      'sha256': null,
+    },
+  ],
+});
+
 final item = DownloadItem(
   video: const VideoSummary(
     id: VideoId('BV1234567890'),
@@ -1017,6 +1161,59 @@ final class _PublicStorage implements PublicDownloadStorage {
   Future<void> verify(DownloadTask task) async {
     if (!available) throw const AppFailure(AppFailureKind.permission, '授权已撤销');
     expect(task.publicFiles, published[task.id]);
+  }
+
+  /// Folders the scan sees, in platform shape.
+  List<PublishedFolder> folders = const [];
+  final Map<String, String> texts = {};
+  final List<String> readRequests = [];
+
+  @override
+  Future<List<PublishedFolder>> listPublishedFolders() async => folders;
+
+  /// Folders the fake accepted through adopt, so a test can prove the scan
+  /// claims what it imported.
+  final List<(String, Map<String, String>)> adopted = [];
+
+  @override
+  Future<void> adoptPublishedFolder({
+    required DownloadTask task,
+    required String folder,
+    required Map<String, String> files,
+  }) async {
+    if (refuseAdopt) {
+      throw const AppFailure(AppFailureKind.storage, '公共文件已不可访问');
+    }
+    adopted.add((task.id, files));
+  }
+
+  bool refuseAdopt = false;
+
+  @override
+  Future<void> copyPublishedSidecar({
+    required String folder,
+    required String uri,
+    required String targetPath,
+  }) async {
+    final value = texts[uri];
+    if (value == null) {
+      throw const AppFailure(AppFailureKind.storage, '附属文件已不可读');
+    }
+    await File(targetPath).writeAsString(value);
+  }
+
+  @override
+  Future<String> readPublishedText({
+    required String folder,
+    required String uri,
+    int maxBytes = 262144,
+  }) async {
+    readRequests.add('$folder|$uri');
+    final value = texts[uri];
+    if (value == null) {
+      throw const AppFailure(AppFailureKind.storage, '无法读取下载清单');
+    }
+    return value;
   }
 
   @override

@@ -3,6 +3,7 @@ package dev.bilisail.bilisail
 import android.app.Activity
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -45,6 +46,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
     private val requestCode = 5714
     private val mediaNames = setOf("video.m4s", "audio.m4s", "media.mp4", "media.mkv")
     private val sidecarNames = setOf("manifest.json", "extras.json", "cover.img")
+    private val textNames = setOf("manifest.json", "extras.json")
     private val mimes = mapOf(
         "audio.m4s" to "audio/mp4",
         "media.mkv" to "video/x-matroska",
@@ -100,6 +102,330 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         return names
     }
 
+    /**
+     * Lists the published per-part folders one level under the destination.
+     * A folder qualifies only when it holds our own `manifest.json`, so a
+     * user's unrelated subtree is never treated as downloadable content, and
+     * the walk never recurses.
+     */
+    private fun listFolders(call: MethodCall): Map<String, Any?> {
+        val destination = call.argument<String>("destination")
+            ?: prefs.getString("destination", null)
+            ?: throw IllegalArgumentException()
+        val folders = when {
+            destination.startsWith("file:") ->
+                fileFolders(externalDirectory(Uri.parse(destination).path!!))
+            destination == "downloads" -> mediaStoreFolders()
+            else -> treeFolders(root(destination))
+        }
+        return mapOf("destination" to destination, "folders" to folders)
+    }
+
+    private fun fileInfo(
+        name: String,
+        uri: String,
+        bytes: Long,
+        modifiedMs: Long,
+    ) = mapOf(
+        "name" to name,
+        "uri" to uri,
+        "bytes" to bytes,
+        "modifiedMs" to modifiedMs,
+    )
+
+    private fun isLink(file: File): Boolean = try {
+        OsConstants.S_ISLNK(Os.lstat(file.path).st_mode)
+    } catch (_: java.io.FileNotFoundException) {
+        true
+    }
+
+    private fun fileFolders(parent: File): List<Map<String, Any?>> {
+        val children = parent.listFiles()?.sortedBy { it.name.lowercase() } ?: return emptyList()
+        return children.filter {
+            it.isDirectory && !isLink(it) && File(it, "manifest.json").isFile
+        }.map { folder ->
+            val files = folder.listFiles()?.filter { it.isFile && !isLink(it) }?.map { file ->
+                fileInfo(
+                    file.name,
+                    Uri.fromFile(file).toString(),
+                    file.length(),
+                    file.lastModified(),
+                )
+            } ?: emptyList()
+            mapOf("key" to folder.absolutePath, "name" to folder.name, "files" to files)
+        }
+    }
+
+    private fun mediaStoreFolders(): List<Map<String, Any?>> {
+        val columns = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.RELATIVE_PATH,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_MODIFIED,
+        )
+        val grouped = LinkedHashMap<String, MutableList<Map<String, Any?>>>()
+        resolver.query(
+            MediaStore.Files.getContentUri("external"), columns,
+            "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+            arrayOf("${Environment.DIRECTORY_DOWNLOADS}/BiliSail/%"), null,
+        )?.use { cursor ->
+            val id = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+            val relative = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+            val name = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+            val size = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+            val modified = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+            while (cursor.moveToNext()) {
+                val uri = ContentUris.withAppendedId(
+                    MediaStore.Files.getContentUri("external"), cursor.getLong(id),
+                )
+                grouped.getOrPut(cursor.getString(relative) ?: "") { mutableListOf() }.add(
+                    fileInfo(
+                        cursor.getString(name) ?: "",
+                        uri.toString(),
+                        if (cursor.isNull(size)) 0L else cursor.getLong(size),
+                        (if (cursor.isNull(modified)) 0L else cursor.getLong(modified)) * 1000,
+                    ),
+                )
+            }
+        }
+        return grouped.entries.filter { entry ->
+            entry.value.any { it["name"] == "manifest.json" }
+        }.map { entry ->
+            mapOf(
+                "key" to entry.key,
+                "name" to entry.key.trimEnd('/').substringAfterLast('/'),
+                "files" to entry.value,
+            )
+        }
+    }
+
+    private fun treeFolders(tree: Uri): List<Map<String, Any?>> {
+        val treeId = DocumentsContract.getTreeDocumentId(tree)
+        val folders = ArrayList<Map<String, Any?>>()
+        val childColumns = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        val entries = ArrayList<Pair<String, String>>()
+        resolver.query(
+            DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId),
+            childColumns, null, null, null,
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                if (cursor.getString(2) != DocumentsContract.Document.MIME_TYPE_DIR) continue
+                val documentId = cursor.getString(0) ?: continue
+                entries.add(documentId to (cursor.getString(1) ?: ""))
+            }
+        }
+        val fileColumns = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
+        for ((documentId, display) in entries) {
+            val files = ArrayList<Map<String, Any?>>()
+            resolver.query(
+                DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId),
+                fileColumns, null, null, null,
+            )?.use { child ->
+                while (child.moveToNext()) {
+                    val childId = child.getString(0) ?: continue
+                    files.add(
+                        fileInfo(
+                            child.getString(1) ?: "",
+                            DocumentsContract.buildDocumentUriUsingTree(tree, childId).toString(),
+                            if (child.isNull(2)) 0L else child.getLong(2),
+                            if (child.isNull(3)) 0L else child.getLong(3),
+                        ),
+                    )
+                }
+            }
+            if (files.any { it["name"] == "manifest.json" }) {
+                folders.add(mapOf("key" to documentId, "name" to display, "files" to files))
+            }
+        }
+        return folders
+    }
+
+    /**
+     * Proves [uri] is one of our own text sidecars directly inside [folder],
+     * under the destination the caller claims. Shared by the manifest reader and
+     * the sidecar copy so neither can be pointed at an arbitrary file.
+     */
+    private fun requirePublishedSidecar(
+        destination: String,
+        folder: String,
+        uri: Uri,
+    ) {
+        if (destination.startsWith("file:")) {
+            require(uri.scheme == "file")
+            val directory = File(folder)
+            externalDirectory(directory.parentFile?.path ?: throw IllegalArgumentException())
+            val file = File(uri.path ?: throw IllegalArgumentException())
+            require(file.parentFile?.absolutePath == directory.absolutePath)
+            require(file.name in textNames)
+            require(!isLink(file) && file.isFile)
+            return
+        }
+        if (destination == "downloads") {
+            require(uri.authority == MediaStore.AUTHORITY)
+            resolver.query(
+                uri,
+                arrayOf(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                ),
+                null, null, null,
+            )?.use {
+                if (!it.moveToFirst()) throw java.io.FileNotFoundException()
+                require(it.getString(0) == folder)
+                require((it.getString(1) ?: "") in textNames)
+            } ?: throw java.io.FileNotFoundException()
+            return
+        }
+        val tree = Uri.parse(destination)
+        require(uri.authority == tree.authority)
+        val folderUri = DocumentsContract.buildDocumentUriUsingTree(tree, folder)
+        require(DocumentsContract.isChildDocument(resolver, folderUri, uri))
+        resolver.query(
+            uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null,
+        )?.use {
+            if (!it.moveToFirst()) throw java.io.FileNotFoundException()
+            require((it.getString(0) ?: "") in textNames)
+        } ?: throw java.io.FileNotFoundException()
+    }
+
+    /**
+     * Streams a published sidecar back into the task's private directory, so an
+     * imported part plays with its danmaku and subtitles exactly like a part
+     * this install downloaded. Copied rather than read into a string because the
+     * sidecar is allowed to reach tens of megabytes.
+     */
+    private fun copyPublished(call: MethodCall) {
+        val destination = call.argument<String>("destination") ?: throw IllegalArgumentException()
+        val folder = call.argument<String>("folder") ?: throw IllegalArgumentException()
+        val raw = call.argument<String>("uri") ?: throw IllegalArgumentException()
+        val target = call.argument<String>("targetPath") ?: throw IllegalArgumentException()
+        val limit = (call.argument<Int>("maxBytes") ?: 33554432).toLong()
+        val uri = Uri.parse(raw)
+        requirePublishedSidecar(destination, folder, uri)
+        if (destination == "downloads") {
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null)?.use {
+                if (it.moveToFirst() && !it.isNull(0)) require(it.getLong(0) <= limit)
+            }
+        }
+        val file = File(target)
+        require(file.parentFile?.isDirectory == true && file.name in textNames)
+        val temp = File("${file.path}.tmp")
+        try {
+            resolver.openInputStream(uri).use { input ->
+                input ?: throw java.io.FileNotFoundException()
+                temp.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > limit) throw IOException("附属文件过大，已放弃复制")
+                        output.write(buffer, 0, read)
+                    }
+                    output.flush()
+                    (output as? java.io.FileOutputStream)?.fd?.sync()
+                }
+            }
+            if (file.exists() && !file.delete()) throw IOException("替换离线附属文件失败")
+            if (!temp.renameTo(file)) throw IOException("写入离线附属文件失败")
+        } catch (e: Exception) {
+            temp.delete()
+            throw e
+        }
+    }
+
+    /**
+     * Reads one published text file after re-proving it is a direct child of a
+     * folder that [listFolders] just returned, and that its name is one of the
+     * two text sidecars. The channel must not turn into a general file reader
+     * for anything the caller can name.
+     */
+    private fun readPublishedText(call: MethodCall): String {
+        val destination = call.argument<String>("destination") ?: throw IllegalArgumentException()
+        val folder = call.argument<String>("folder") ?: throw IllegalArgumentException()
+        val raw = call.argument<String>("uri") ?: throw IllegalArgumentException()
+        val limit = call.argument<Int>("maxBytes") ?: 262144
+        require(limit in 1..1048576)
+        val uri = Uri.parse(raw)
+        requirePublishedSidecar(destination, folder, uri)
+        if (destination.startsWith("file:")) {
+            val file = File(uri.path ?: throw IllegalArgumentException())
+            require(file.length() <= limit)
+            return file.readText()
+        }
+        if (destination == "downloads") {
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null)?.use {
+                if (it.moveToFirst() && !it.isNull(0)) require(it.getLong(0) <= limit)
+            }
+        }
+        resolver.openInputStream(uri).use { input ->
+            input ?: throw java.io.FileNotFoundException()
+            val buffer = ByteArray(limit + 1)
+            var total = 0
+            while (total <= limit) {
+                val read = input.read(buffer, total, buffer.size - total)
+                if (read < 0) break
+                total += read
+            }
+            if (total > limit) throw IOException("清单文件过大")
+            return String(buffer, 0, total, Charsets.UTF_8)
+        }
+    }
+
+    /**
+     * Re-adopts a folder this app published under an earlier install. The media
+     * and sidecars are still there, but the journal that made them ours lived
+     * in app preferences and is gone with the app data, so verification,
+     * playback and deletion would all fail. The scan supplies the listing it
+     * just read; every URI is re-checked against the destination exactly as
+     * publish would before the journal is written, so a file the user moved or
+     * truncated is refused rather than trusted.
+     */
+    private fun adopt(call: MethodCall) {
+        val key = key(call)
+        val destination = call.argument<String>("destination") ?: throw IllegalArgumentException()
+        val folder = call.argument<String>("folder") ?: throw IllegalArgumentException()
+        val files = call.argument<Map<String, String>>("files") ?: throw IllegalArgumentException()
+        require(files.keys.all { it in mediaNames || it in sidecarNames })
+        require(files.keys.any { it in mediaNames })
+        val existing = read(key)
+        if (existing != null && existing.getBoolean("ready") && items(existing) == files) return
+        if (existing != null) deleteRecord(key, existing)
+        val record = JSONObject()
+            .put("destination", destination)
+            .put("taskId", call.argument<String>("id")!!)
+            .put("ready", true)
+            .put("items", JSONObject(files))
+        when {
+            destination.startsWith("file:") -> record.put("folderPath", folder)
+            destination == "downloads" -> record.put("relativePath", folder)
+            else -> record.put("folderDocId", folder)
+        }
+        save(key, record)
+        try {
+            for ((_, value) in files) {
+                val uri = Uri.parse(value)
+                checkBoundary(record, uri)
+                readable(uri).close()
+            }
+        } catch (e: Exception) {
+            // Leave no half-adopted journal behind.
+            deleteRecord(key, record)
+            throw e
+        }
+    }
+
     init { channel.setMethodCallHandler(::call) }
 
     private fun call(call: MethodCall, result: MethodChannel.Result) {
@@ -125,6 +451,10 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             try {
                 val value: Any? = when (call.method) {
                     "listDirectories" -> listDirectories(call.argument<String>("directory"))
+                    "listFolders" -> listFolders(call)
+                    "readText" -> readPublishedText(call)
+                    "copyPublished" -> copyPublished(call)
+                    "adopt" -> synchronized(taskLocks.getOrPut(key(call)) { Any() }) { adopt(call); null }
                     "choose" -> {
                         val folder = externalDirectory(call.argument<String>("directory") ?: throw IllegalArgumentException())
                         val probe = File.createTempFile(".bilisail-access-", ".tmp", folder)

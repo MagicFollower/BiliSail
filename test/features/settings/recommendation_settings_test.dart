@@ -84,7 +84,7 @@ void main() {
       expect(restored.recommendations.toJson(), selected.toJson());
       expect(restored.theme, AppThemePreference.dark);
       expect(restored.navigationMode, WorkspaceNavigationMode.singlePage);
-      expect(database.schemaVersion, 3);
+      expect(database.schemaVersion, 4);
       final container = ProviderContainer(
         overrides: [settingsRepositoryProvider.overrideWithValue(repository)],
       );

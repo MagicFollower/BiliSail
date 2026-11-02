@@ -20,7 +20,7 @@ class AppDatabase extends GeneratedDatabase {
   }
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   Iterable<TableInfo<Table, Object?>> get allTables => const [];
@@ -54,18 +54,25 @@ class AppDatabase extends GeneratedDatabase {
         'CREATE INDEX progress_scope_time ON playback_progress(scope, updated_at_ms DESC)',
       );
       await _createDownloads();
+      await _createScanCache();
     },
     onUpgrade: (migrator, from, to) async {
+      if (to != schemaVersion) {
+        throw StateError('Unsupported database migration $from → $to');
+      }
+      // Steps chain: a v1 database still has to gain the PGC column, the
+      // download tables and the scan cache in that order.
       if (from == 1) {
         await customStatement(
           'ALTER TABLE playback_progress ADD COLUMN pgc_episode_id TEXT',
         );
       }
-      if (from <= 2 && to == 3) {
+      if (from <= 2) {
         await _createDownloads();
-        return;
       }
-      throw StateError('Unsupported database migration $from → $to');
+      if (from <= 3) {
+        await _createScanCache();
+      }
     },
   );
 
@@ -78,6 +85,25 @@ class AppDatabase extends GeneratedDatabase {
     )''');
     await customStatement(
       'CREATE INDEX download_tasks_scope ON download_tasks(scope)',
+    );
+  }
+
+  /// Folders the offline scan has already looked at.
+  ///
+  /// `manifest_bytes` and `manifest_modified_ms` together are the cheap change
+  /// detector: when both match the previous visit and the task row is still
+  /// there, the scan skips reading that manifest at all. That is what keeps
+  /// opening the downloads tab fast once the shared folder holds many parts.
+  Future<void> _createScanCache() async {
+    await customStatement('''CREATE TABLE download_scan_cache (
+      folder_key TEXT NOT NULL PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      manifest_bytes INTEGER NOT NULL,
+      manifest_modified_ms INTEGER NOT NULL,
+      scanned_at_ms INTEGER NOT NULL
+    )''');
+    await customStatement(
+      'CREATE INDEX download_scan_cache_task ON download_scan_cache(task_id)',
     );
   }
 

@@ -226,6 +226,8 @@ final class DownloadFileStore {
                   'kind': track.kind.name,
                   'identity': track.identity,
                   'fileName': track.fileName,
+                  'codec': track.codec,
+                  'bandwidth': track.bandwidth,
                   'bytes': track.bytes,
                   'sha256': track.sha256,
                 },

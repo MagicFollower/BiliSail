@@ -445,6 +445,11 @@ final class _FakeDownloads implements DownloadRepository {
   @override
   Stream<DownloadQueueState> get changes => const Stream.empty();
   @override
+  Future<DownloadScanResult> scanShared({
+    RequestCancellation? cancellation,
+    void Function(DownloadTask task)? onTask,
+  }) async => const DownloadScanResult();
+  @override
   Future<DownloadTask> offlineTask(String id) async {
     offlineReads++;
     if (!started.isCompleted) started.complete();

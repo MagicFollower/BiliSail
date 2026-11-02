@@ -172,6 +172,7 @@ void main() {
       repository,
       _SourceRepository(),
       size: const Size(1000, 1800),
+      storage: _SharedStorage(),
     );
     await tester.tap(find.byTooltip('下载设置'));
     await tester.pumpAndSettle();
@@ -187,6 +188,12 @@ void main() {
       'D:/BiliSail 下载',
     );
     expect(find.textContaining('每个分 P 存一个子目录'), findsOneWidget);
+    // The scan affordance exists only where there is a shared location, and
+    // running it reports what the pass found in the domain's own wording.
+    expect(find.text('扫描下载目录并导入'), findsOneWidget);
+    await tester.tap(find.text('扫描下载目录并导入'));
+    await tester.pumpAndSettle();
+    expect(find.text('新增 0 条'), findsOneWidget);
     await repository.close();
   });
 
@@ -567,6 +574,15 @@ final class _SourceRepository implements DownloadSourceRepository {
   }) => throw UnimplementedError();
 }
 
+/// Enough of the shared-storage contract for the dialog to offer the scan; the
+/// queue fake answers the scan itself.
+final class _SharedStorage extends Fake implements PublicDownloadStorage {
+  @override
+  Future<bool> hasDestination() async => true;
+  @override
+  Future<String> destination() async => 'downloads';
+}
+
 final class _DownloadRepository implements DownloadRepository {
   _DownloadRepository({
     List<DownloadTask> tasks = const [],
@@ -622,6 +638,11 @@ final class _DownloadRepository implements DownloadRepository {
       removed.add((id, deleteFiles));
   @override
   Future<void> refresh() async {}
+  @override
+  Future<DownloadScanResult> scanShared({
+    RequestCancellation? cancellation,
+    void Function(DownloadTask task)? onTask,
+  }) async => const DownloadScanResult();
   @override
   Future<void> updatePreferences(DownloadPreferences preferences) async {}
   @override

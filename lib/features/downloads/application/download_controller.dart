@@ -206,6 +206,19 @@ final class DownloadController extends Notifier<DownloadQueueState> {
   Future<void> remove(String id, {required bool deleteFiles}) =>
       _repository.remove(id, deleteFiles: deleteFiles);
   Future<void> refresh() => _repository.refresh();
+
+  /// Rebuilds the queue from folders this app published in shared storage.
+  /// Returns null when this platform has no shared location to scan, so the
+  /// caller can hide the affordance instead of reporting an empty result.
+  Future<DownloadScanResult?> scanShared({
+    void Function(DownloadTask task)? onTask,
+  }) {
+    if (ref.read(publicDownloadStorageProvider) == null) {
+      return Future.value();
+    }
+    return _repository.scanShared(onTask: onTask);
+  }
+
   Future<void> updatePreferences(DownloadPreferences preferences) =>
       _repository.updatePreferences(preferences);
 }
@@ -240,6 +253,11 @@ final class _UnavailableDownloadRepository implements DownloadRepository {
   Future<void> remove(String id, {required bool deleteFiles}) async {}
   @override
   Future<void> refresh() async {}
+  @override
+  Future<DownloadScanResult> scanShared({
+    RequestCancellation? cancellation,
+    void Function(DownloadTask task)? onTask,
+  }) async => const DownloadScanResult();
   @override
   Future<void> updatePreferences(DownloadPreferences preferences) async {
     _state = DownloadQueueState(preferences: preferences, initialized: true);

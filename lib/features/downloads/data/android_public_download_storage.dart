@@ -109,4 +109,91 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
   Future<void> verify(DownloadTask task) => _call<void>('verify', _task(task));
   @override
   Future<void> delete(DownloadTask task) => _call<void>('delete', _task(task));
+
+  @override
+  Future<List<PublishedFolder>> listPublishedFolders() async {
+    final destination = await this.destination();
+    final value = await _call<Map<Object?, Object?>>('listFolders', {
+      'destination': destination,
+    });
+    if (value?['folders'] case final List<Object?> folders) {
+      return [
+        for (final folder in folders)
+          if (folder case {
+            'key': final String key,
+            'name': final String name,
+            'files': final List<Object?> files,
+          })
+            PublishedFolder(
+              key: key,
+              name: name,
+              files: [
+                for (final file in files)
+                  if (file case {
+                    'name': final String fileName,
+                    'uri': final String uri,
+                    'bytes': final int bytes,
+                    'modifiedMs': final int modifiedMs,
+                  })
+                    PublishedFile(
+                      name: fileName,
+                      uri: uri,
+                      bytes: bytes,
+                      modifiedMs: modifiedMs,
+                    ),
+              ],
+            ),
+      ];
+    }
+    throw const AppFailure(AppFailureKind.storage, '无法读取下载目录');
+  }
+
+  @override
+  Future<String> readPublishedText({
+    required String folder,
+    required String uri,
+    int maxBytes = 262144,
+  }) async {
+    final destination = await this.destination();
+    final value = await _call<String>('readText', {
+      'destination': destination,
+      'folder': folder,
+      'uri': uri,
+      'maxBytes': maxBytes,
+    });
+    if (value == null) {
+      throw const AppFailure(AppFailureKind.storage, '无法读取下载清单');
+    }
+    return value;
+  }
+
+  @override
+  Future<void> adoptPublishedFolder({
+    required DownloadTask task,
+    required String folder,
+    required Map<String, String> files,
+  }) async {
+    final destination = await this.destination();
+    await _call<void>('adopt', {
+      ..._task(task),
+      'destination': destination,
+      'folder': folder,
+      'files': files,
+    });
+  }
+
+  @override
+  Future<void> copyPublishedSidecar({
+    required String folder,
+    required String uri,
+    required String targetPath,
+  }) async {
+    final destination = await this.destination();
+    await _call<void>('copyPublished', {
+      'destination': destination,
+      'folder': folder,
+      'uri': uri,
+      'targetPath': targetPath,
+    });
+  }
 }

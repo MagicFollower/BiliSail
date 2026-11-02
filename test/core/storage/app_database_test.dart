@@ -112,7 +112,7 @@ void main() {
       expect(
         (await database.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        3,
+        4,
       );
     },
   );
@@ -157,7 +157,7 @@ void main() {
       expect(
         (await database.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        3,
+        4,
       );
       await database.close();
       await directory.delete(recursive: true);
@@ -221,7 +221,77 @@ void main() {
       expect(
         (await database.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        3,
+        4,
+      );
+    },
+  );
+
+  test(
+    'v3 migration adds the scan cache and retains download rows',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'bilisail_v3_migration',
+      );
+      final file = File('${directory.path}/client.sqlite');
+      final database = AppDatabase(
+        NativeDatabase(
+          file,
+          setup: (sqlite) {
+            sqlite.execute(
+              'CREATE TABLE settings(key TEXT NOT NULL PRIMARY KEY,value TEXT NOT NULL)',
+            );
+            sqlite.execute("INSERT INTO settings VALUES ('probe','kept')");
+            sqlite.execute('''CREATE TABLE playback_progress (
+        scope TEXT NOT NULL,bvid TEXT NOT NULL,cid TEXT NOT NULL,title TEXT NOT NULL,
+        cover_url TEXT NOT NULL,author TEXT NOT NULL,duration_ms INTEGER NOT NULL,
+        part_title TEXT NOT NULL,part_number INTEGER NOT NULL,position_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,pgc_episode_id TEXT,PRIMARY KEY(scope,bvid,cid))''');
+            sqlite.execute(
+              'CREATE INDEX progress_scope_time ON playback_progress(scope,updated_at_ms DESC)',
+            );
+            sqlite.execute('''CREATE TABLE download_tasks (
+        id TEXT NOT NULL PRIMARY KEY,scope TEXT NOT NULL,item_key TEXT NOT NULL,
+        record_json TEXT NOT NULL)''');
+            sqlite.execute(
+              'CREATE INDEX download_tasks_scope ON download_tasks(scope)',
+            );
+            sqlite.execute(
+              "INSERT INTO download_tasks VALUES ('a','guest','item','{}')",
+            );
+            sqlite.execute('PRAGMA user_version = 3');
+          },
+        ),
+      );
+      addTearDown(() async {
+        await database.close();
+        await directory.delete(recursive: true);
+      });
+      expect(await database.readSetting('probe'), 'kept');
+      expect(
+        (await database
+                .customSelect('SELECT COUNT(*) AS count FROM download_tasks')
+                .getSingle())
+            .read<int>('count'),
+        1,
+      );
+      // The cache arrives empty: it is a change detector, never a source of
+      // truth, so a migration must not invent entries.
+      expect(
+        (await database
+                .customSelect(
+                  'SELECT COUNT(*) AS count FROM download_scan_cache',
+                )
+                .getSingle())
+            .read<int>('count'),
+        0,
+      );
+      await database.customStatement(
+        "INSERT INTO download_scan_cache VALUES ('k','a',120,3000,4000)",
+      );
+      expect(
+        (await database.customSelect('PRAGMA user_version').getSingle())
+            .read<int>('user_version'),
+        4,
       );
     },
   );
