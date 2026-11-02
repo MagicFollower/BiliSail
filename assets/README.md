@@ -24,7 +24,7 @@ SHA-256 见 [来源哈希](fonts/alibaba_puhuiti/source_hashes.json)。用户目
 
 视觉参考取自 [Bilibili 官网](https://www.bilibili.com/)及其[官方下载中心](https://app.bilibili.com/)公开加载的图标，官网原图没有内置到应用。参考 URL、采用范围、生成提示词、最终 SHA-256 与浅色／深色多尺寸预览见 [品牌资源说明](branding/README.md)。本记录不表示取得 Bilibili 品牌授权。
 
-Windows ICO、Android 各密度 PNG 和 macOS AppIcon PNG 由品牌原图等比缩放生成；复现命令：`uv run --with pillow==12.3.0 --with resvg-py==0.5.0 python tool/generate_app_icons.py`。2026-10-30 增加可选粉红小电视，使用固定提交的 Simple Icons Bilibili SVG（CC0），保留源图、许可、1254px 渲染图与平台尺寸；不提供蓝色版本，详见[品牌说明](branding/README.md#可选图标2026-10-30)。MSIX 打包沿用 `tool/build-release.ps1`，从默认品牌原图生成普通及两种主题的 unplated 资源。生成工具仅为开发工具，不新增应用运行依赖。
+Android 各密度 PNG 由品牌原图等比缩放生成；复现命令：`uv run --with pillow==12.3.0 --with resvg-py==0.5.0 python tool/generate_app_icons.py`。2026-10-30 增加可选粉红小电视，使用固定提交的 Simple Icons Bilibili SVG（CC0），保留源图、许可、1254px 渲染图与平台尺寸；不提供蓝色版本，详见[品牌说明](branding/README.md#可选图标2026-10-30)。2026-11-02 增加可选禁闭图标（用户提供的 ICO，取最大帧光栅化为 256px PNG 源图），同日 `f8e5506` 平台收敛后生成与校验脚本不再产出 Windows ICO、macOS AppIcon、iOS appiconset 与 Linux 图标。生成工具仅为开发工具，不新增应用运行依赖。
 
 ## UWP 业务图标
 

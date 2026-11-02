@@ -14,6 +14,14 @@ class AppIconHandler(private val activity: Activity, messenger: BinaryMessenger)
     private val aliases = mapOf(
         "bilisail" to ComponentName(activity.packageName, "dev.bilisail.bilisail.LauncherDefault"),
         "bilibili" to ComponentName(activity.packageName, "dev.bilisail.bilisail.LauncherBilibili"),
+        "dsconfinement" to ComponentName(activity.packageName, "dev.bilisail.bilisail.LauncherDsconfinement"),
+    )
+
+    /** Recent-tasks bitmap per icon; the alias list above only drives the launcher. */
+    private val taskIcons = mapOf(
+        "bilisail" to R.mipmap.ic_launcher,
+        "bilibili" to R.mipmap.ic_launcher_bilibili,
+        "dsconfinement" to R.mipmap.ic_launcher_dsconfinement,
     )
 
     init {
@@ -41,8 +49,12 @@ class AppIconHandler(private val activity: Activity, messenger: BinaryMessenger)
     }
 
     private fun currentIcon(): String {
-        val state = activity.packageManager.getComponentEnabledSetting(aliases.getValue("bilibili"))
-        return if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) "bilibili" else "bilisail"
+        val manager = activity.packageManager
+        // An untouched install reports DEFAULT for every alias - the manifest
+        // value is not echoed back - so no match means the default icon is live.
+        return aliases.entries.firstOrNull {
+            manager.getComponentEnabledSetting(it.value) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        }?.key ?: "bilisail"
     }
 
     private fun select(icon: String) {
@@ -62,8 +74,10 @@ class AppIconHandler(private val activity: Activity, messenger: BinaryMessenger)
         }
         activity.setTaskDescription(android.app.ActivityManager.TaskDescription(
             activity.applicationInfo.loadLabel(manager).toString(),
-            android.graphics.BitmapFactory.decodeResource(activity.resources,
-                if (icon == "bilibili") R.mipmap.ic_launcher_bilibili else R.mipmap.ic_launcher),
+            android.graphics.BitmapFactory.decodeResource(
+                activity.resources,
+                taskIcons.getValue(icon),
+            ),
         ))
     }
 

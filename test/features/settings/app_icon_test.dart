@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:bilisail/core/storage/app_database.dart';
 import 'package:bilisail/features/settings/application/settings_controller.dart';
@@ -24,13 +25,75 @@ void main() {
         );
         expect((await repository.load()).appIcon, AppIconPreference.bilisail);
       }
-      await repository.save(AppSettings(appIcon: AppIconPreference.bilibili));
-      expect((await repository.load()).appIcon, AppIconPreference.bilibili);
+      for (final icon in AppIconPreference.values) {
+        await repository.save(AppSettings(appIcon: icon));
+        expect((await repository.load()).appIcon, icon, reason: icon.name);
+      }
       await repository.save(const AppSettings.defaults());
       expect((await repository.load()).appIcon, AppIconPreference.bilisail);
       expect(database.schemaVersion, 6);
     },
   );
+
+  test('every icon has a launcher alias, a native entry and five densities', () {
+    // These lists live in three languages and nothing but this test keeps
+    // them in step: a missing alias leaves the icon selectable in the
+    // settings page and inert on the device, and an alias nobody maps to
+    // keeps `currentIcon()` reading a stale pair.
+    final manifest = File('android/app/src/main/AndroidManifest.xml')
+        .readAsStringSync();
+    final handler = File(
+      'android/app/src/main/kotlin/dev/bilisail/bilisail/AppIconHandler.kt',
+    ).readAsStringSync();
+    final aliasClasses = RegExp(
+      r'android:name="(dev\.bilisail\.bilisail\.Launcher\w+)"',
+    ).allMatches(manifest).map((match) => match.group(1)!).toSet();
+    final mappedClasses =
+        RegExp(
+              r'"(\w+)" to ComponentName\(activity\.packageName, "(dev\.bilisail\.bilisail\.Launcher\w+)"\)',
+            )
+            .allMatches(handler)
+            .fold<Map<String, String>>(
+              {},
+              (map, match) => map..[match.group(1)!] = match.group(2)!,
+            );
+    final taskIcons = RegExp(r'"(\w+)" to R\.mipmap\.(\w+)')
+        .allMatches(handler)
+        .fold<Map<String, String>>(
+          {},
+          (map, match) => map..[match.group(1)!] = match.group(2)!,
+        );
+    final names = AppIconPreference.values.map((item) => item.name).toSet();
+
+    expect(mappedClasses.keys.toSet(), names);
+    expect(taskIcons.keys.toSet(), names);
+    expect(aliasClasses, mappedClasses.values.toSet());
+    for (final icon in AppIconPreference.values) {
+      expect(
+        aliasClasses,
+        contains(mappedClasses[icon.name]),
+        reason: icon.name,
+      );
+      for (final (density, size) in const [
+        ('mdpi', 48),
+        ('hdpi', 72),
+        ('xhdpi', 96),
+        ('xxhdpi', 144),
+        ('xxxhdpi', 192),
+      ]) {
+        final file = File(
+          'android/app/src/main/res/mipmap-$density/${taskIcons[icon.name]}.png',
+        );
+        expect(file.existsSync(), isTrue, reason: file.path);
+        // PNG IHDR width is bytes 16..20, big-endian.
+        final width = file
+            .readAsBytesSync()
+            .sublist(16, 20)
+            .fold<int>(0, (value, byte) => (value << 8) | byte);
+        expect(width, size, reason: file.path);
+      }
+    }
+  });
 
   late _Icons icons;
   late _Repository repository;

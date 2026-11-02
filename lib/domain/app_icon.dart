@@ -1,6 +1,7 @@
 enum AppIconPreference {
   bilisail('哔帆', 'assets/branding/app_icon.png'),
-  bilibili('粉红小电视', 'assets/branding/bilibili_pink.png');
+  bilibili('粉红小电视', 'assets/branding/bilibili_pink.png'),
+  dsconfinement('禁闭', 'assets/branding/dsconfinement_icon.png');
 
   const AppIconPreference(this.label, this.asset);
   final String label;
