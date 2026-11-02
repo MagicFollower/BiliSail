@@ -29,8 +29,7 @@ final class DiagnosticsEntry {
 /// than no diagnostic, so a failing insert is dropped silently.
 final class DiagnosticsLog {
   DiagnosticsLog(this._database, {String? runId, DateTime Function()? clock})
-    : runId =
-          runId ?? '$pid-${DateTime.now().millisecondsSinceEpoch}',
+    : runId = runId ?? '$pid-${DateTime.now().millisecondsSinceEpoch}',
       _clock = clock ?? DateTime.now;
 
   /// Rows kept after a start-up trim. The trace is a sliding window, not a log
@@ -164,6 +163,18 @@ final class DiagnosticsLog {
     } catch (_) {
       // A device whose storage is broken must keep working without a trace.
     }
+  }
+
+  /// The last event of the process before this one - i.e. where the app died -
+  /// or null when nothing older than the current run is recorded.
+  static String? previousProcessTail(
+    List<DiagnosticsEntry> entries,
+    String runId,
+  ) {
+    for (final entry in entries.reversed) {
+      if (entry.runId != runId) return entry.message;
+    }
+    return null;
   }
 
   /// Text as the viewer shows it: one line per event, a blank line between

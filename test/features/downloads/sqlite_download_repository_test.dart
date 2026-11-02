@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 
+import 'package:bilisail/core/diagnostics/diagnostics_log.dart';
 import 'package:bilisail/core/storage/app_database.dart';
 import 'package:bilisail/domain/app_failure.dart';
 import 'package:bilisail/domain/request_cancellation.dart';
@@ -344,65 +345,80 @@ void main() {
     );
   });
 
-  test(
-    'the scan breadcrumb names the step a failed pass did not return from',
-    () async {
-      await repository.close();
-      await db.close();
-      publicStorage = _PublicStorage();
-      await openRepository();
-      final storage = publicStorage!;
-      expect(await repository.lastScanStage(), isNull);
+  test('the scan breadcrumb names the step a failed pass did not return from', () async {
+    await repository.close();
+    await db.close();
+    publicStorage = _PublicStorage();
+    await openRepository();
+    final storage = publicStorage!;
+    // Traced from the first pass on, so the anchors of an import, a wedge and a
+    // cache hit all land in the same durable log.
+    DiagnosticsLog.install(DiagnosticsLog(db));
+    storage.nativeStep = '1700000000000 copyPublished 落盘 12 字节';
+    expect(await repository.lastScanStage(), isNull);
 
-      storage.folders = [
-        PublishedFolder(
-          key: 'Download/BiliSail/BV1234567890-P1 视频/',
-          name: 'BV1234567890-P1 视频',
-          files: const [
-            PublishedFile(
-              name: 'media.mp4',
-              uri: 'content://test/media',
-              bytes: 2048,
-              modifiedMs: 10,
-            ),
-            PublishedFile(
-              name: 'manifest.json',
-              uri: 'content://test/manifest',
-              bytes: 512,
-              modifiedMs: 11,
-            ),
-          ],
-        ),
-      ];
-      storage.texts['content://test/manifest'] = _publishedManifest();
-      expect(await repository.scanShared(), isA<DownloadScanResult>());
-      expect(
-        await repository.lastScanStage(),
-        isNull,
-        reason: 'a pass that finished must leave no breadcrumb',
-      );
+    storage.folders = [
+      PublishedFolder(
+        key: 'Download/BiliSail/BV1234567890-P1 视频/',
+        name: 'BV1234567890-P1 视频',
+        files: const [
+          PublishedFile(
+            name: 'media.mp4',
+            uri: 'content://test/media',
+            bytes: 2048,
+            modifiedMs: 10,
+          ),
+          PublishedFile(
+            name: 'manifest.json',
+            uri: 'content://test/manifest',
+            bytes: 512,
+            modifiedMs: 11,
+          ),
+        ],
+      ),
+    ];
+    storage.texts['content://test/manifest'] = _publishedManifest();
+    expect(await repository.scanShared(), isA<DownloadScanResult>());
+    expect(
+      await repository.lastScanStage(),
+      isNull,
+      reason: 'a pass that finished must leave no breadcrumb',
+    );
 
-      // A step that never returns - the process-dying case - must leave the
-      // name of that step behind, which is the whole point of the breadcrumb.
-      storage.failList = true;
-      await expectLater(repository.scanShared(), throwsStateError);
-      expect(await repository.lastScanStage(), 'listFolders');
+    // A step that never returns - the process-dying case - must leave the
+    // name of that step behind, which is the whole point of the breadcrumb.
+    storage.failList = true;
+    await expectLater(repository.scanShared(), throwsStateError);
+    expect(await repository.lastScanStage(), 'listFolders');
 
-      storage.failList = false;
-      final recovered = await repository.scanShared();
-      expect(
-        recovered.unchanged,
-        1,
-        reason:
-            'the failed pass must not have lost the cache row it already had',
-      );
-      expect(
-        await repository.lastScanStage(),
-        isNull,
-        reason: 'the next completed pass clears it',
-      );
-    },
-  );
+    storage.failList = false;
+    final recovered = await repository.scanShared();
+    expect(
+      recovered.unchanged,
+      1,
+      reason: 'the failed pass must not have lost the cache row it already had',
+    );
+    expect(
+      await repository.lastScanStage(),
+      isNull,
+      reason: 'the next completed pass clears it',
+    );
+
+    // The trace is what outlives a completed pass - the breadcrumb is cleared -
+    // and it opens with where the *previous* process died inside the native
+    // handler, which is the only clue a killed process leaves behind.
+    final traced = (await DiagnosticsLog.instance!.recent())
+        .map((entry) => entry.message)
+        .toList();
+    expect(traced, contains('原生上次停在 1700000000000 copyPublished 落盘 12 字节'));
+    expect(traced, contains('目的地 系统下载库'));
+    expect(traced.any((line) => line.startsWith('清单已读')), isTrue);
+    expect(traced.any((line) => line.startsWith('清单通过')), isTrue);
+    expect(traced.any((line) => line.startsWith('入库')), isTrue);
+    expect(traced.any((line) => line.startsWith('缓存命中')), isTrue);
+    expect(traced.last, startsWith('扫描结束'));
+    DiagnosticsLog.reset();
+  });
 
   test(
     'download commits without media digests and keeps URL-free records',
@@ -1288,6 +1304,13 @@ final class _PublicStorage implements PublicDownloadStorage {
   /// Folders the fake accepted through adopt, so a test can prove the scan
   /// claims what it imported.
   final List<(String, Map<String, String>)> adopted = [];
+
+  /// What the fake reports as the last native step; the scan traces it, so a
+  /// test can prove the marker reaches the durable log.
+  String? nativeStep;
+
+  @override
+  Future<String?> lastNativeStep() async => nativeStep;
 
   @override
   Future<void> adoptPublishedFolder({

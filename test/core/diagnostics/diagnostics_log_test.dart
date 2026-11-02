@@ -44,6 +44,37 @@ void main() {
     },
   );
 
+  test(
+    'the crash boundary is the newest event of the earlier process',
+    () async {
+      final database = _database();
+      final first = DiagnosticsLog(database, runId: 'old');
+      await first.note('旧进程 第一条');
+      await first.note('原生 copyPublished →');
+      final current = DiagnosticsLog(database, runId: 'new');
+      await current.note('进程启动');
+      final entries = await current.recent();
+      expect(
+        DiagnosticsLog.previousProcessTail(entries, 'new'),
+        '原生 copyPublished →',
+      );
+      // A run with no older process has no crash boundary to name.
+      expect(
+        DiagnosticsLog.previousProcessTail(
+          [
+            DiagnosticsEntry(
+              runId: 'only',
+              at: DateTime(2026),
+              message: '进程启动',
+            ),
+          ],
+          'only',
+        ),
+        isNull,
+      );
+    },
+  );
+
   test('scrubbing removes queries, credential shapes and opaque tokens', () {
     expect(
       DiagnosticsLog.scrub(

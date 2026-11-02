@@ -47,13 +47,13 @@ final class _DiagnosticsLogDialogState extends State<_DiagnosticsLogDialog> {
             if (entries.isEmpty) {
               return const Center(child: Text('暂无记录。'));
             }
+            final tail = DiagnosticsLog.previousProcessTail(entries, log.runId);
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '共 ${entries.length} 条，按时间从上到下；每个进程以「进程启动」分隔。'
-                  '最后一条停在哪个动作，就是那次闪退前做到的那一步。',
-                ),
+                Text(tail == null ? '本进程之前没有别的进程记录，说明还没崩过。' : '上一个进程停在：$tail'),
+                const SizedBox(height: 8),
+                Text('共 ${entries.length} 条，按时间从上到下；每个进程以「进程启动」分隔。'),
                 const SizedBox(height: 8),
                 Expanded(
                   child: ListView.builder(

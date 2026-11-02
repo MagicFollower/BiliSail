@@ -27,10 +27,28 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
     'delete',
   };
 
+  /// How long a traced call may stay outstanding before the log records that it
+  /// is still waiting and asks the handler where it is. A provider that blocks
+  /// is invisible from Dart otherwise: the await simply never resumes.
+  static const _waitThreshold = Duration(seconds: 20);
+
   Future<T?> _call<T>(String method, [Map<String, Object?>? args]) async {
     final log = DiagnosticsLog.instance;
     final trace = log != null && _traced.contains(method);
-    if (trace) await log.note('原生 $method →');
+    Timer? watchdog;
+    if (trace) {
+      await log.note('原生 $method →');
+      watchdog = Timer(_waitThreshold, () {
+        unawaited(
+          lastNativeStep().then(
+            (step) => log.note(
+              '原生 $method 等待超过 ${_waitThreshold.inSeconds}s'
+              '${step == null || step.isEmpty ? '' : '，停在：$step'}',
+            ),
+          ),
+        );
+      });
+    }
     try {
       final value = await _channel.invokeMethod<T>(method, args);
       if (trace) await log.note('原生 $method ←');
@@ -45,6 +63,21 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
             : AppFailureKind.storage,
         e.message ?? '公共下载位置不可用，请重新授权或连接存储设备',
       );
+    } finally {
+      watchdog?.cancel();
+    }
+  }
+
+  /// Where the previous process left the native side, or the step it is in right
+  /// now. Kept in preferences, so it survives being killed.
+  @override
+  Future<String?> lastNativeStep() async {
+    try {
+      return await _channel.invokeMethod<String>('lastNativeStep');
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
     }
   }
 

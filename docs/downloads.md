@@ -211,3 +211,20 @@ BV1gDEUuUZA-P3 视频标题/
 - 验收：`test/core/diagnostics/diagnostics_log_test.dart` 5 项（顺序与 run 归属、`limit` 取尾部而非头部、早于数据库的事件在 install 时补进表、`scrub` 四类、`describeError` 不带秘密）；`app_database_test.dart` 新增 v4→v5 用例，断言下载表与扫描缓存原样保留、新表初始为空、`user_version` 到 5；既有 23 处 `schemaVersion` 断言抬到 5。core + settings + downloads 共 612 项通过、13 项跳过，`flutter analyze` 无问题，`:app:compileDebugKotlin` 通过。
 - 未验证：**崩溃原因仍未定位**，本轮交付的是观测手段与原生兜底；卓易通上的实际事件序列要等这一版装上后由「诊断日志」页面读出。MediaStore/SAF 两条目的地在真机上各扫一次的停点也尚未取样。
 
+### 2026-11-02（同日第二轮）：日志读出的事实，与新增的原生停点
+
+设备回读了 17:05 版的事件序列（从「诊断日志」页复制），三条事实：
+
+1. **`原生 copyPublished →` 三次都没有配对的 `←`**：附属文件 `extras.json` 的复制调用从未返回。前两个进程并没有崩，只是这条 await 永久悬挂、扫描卡在那一步；队列与界面照常，所以看着像"什么都没发生"。
+2. **同进程内两次扫描交叠**：第一次仍挂在 copyPublished 上，期间用户改过下载位置（日志里有 `原生 choose →/←`）并手动按了「扫描下载目录并导入」，第二次扫描完整跑完并打出 `扫描结束 目录=1 … 跳过=1 完成`。两条扫描共用同一个仓储、同一批 `taskLocks` 与同一个认领流程——这是可复现的交叠，不是设计里的并发。
+3. **崩的那次停在 `原生 readText ←` 之后**：Dart 侧到 `扫描 adopt` 之间只剩解析清单、构造任务、建私有目录，这些杀不掉进程（Release 无 zone/`exit`，且 `Throwable` 兜底已在上一版生效）。所以要么读数被截图截尾，要么真死在原生调用里而日志还没写到位。
+
+针对这三条补仪器，不猜修法：
+
+- **原生停点**：`DownloadStorageHandler.step()` 把"现在做到哪一行"写进 `SharedPreferences`（`commit()` 同步落盘，进程被杀仍在），新增 `lastNativeStep` **在主线程直接回答、不进 worker 队列**——五条 worker 全卡住时仍然问得到。`listFolders` / `readText` / `copyPublished`（校验归属→查询大小→打开输入流→写临时文件→落盘→替换正式文件）/ `adopt`（写 journal→逐个校验 N/M→完成）/ `delete` 都打了点。
+- Dart 侧：`scanShared` 开头把上一次的原生停点写进日志（`原生上次停在 …`），这是被杀进程唯一还能拿到的证据；被追踪的通道调用超过 20 秒未返回时，watchdog 记一条"仍在等待"并顺带再问一次当前停点。`PublicDownloadStorage` 因此多了 `lastNativeStep()`（无原生侧的平台返回 null）。
+- 锚点补细到能判读窗口：`目的地 私有路径/系统下载库/SAF 树`、`缓存命中`、`清单已读 <目录> <字符数>`、`清单通过 <id>`、`清单拒绝`、`他号已认领`、`入库 <id>`、`附属文件已复制`、`已通知界面`。
+- 查看口第一行改成 **「上一个进程停在：X」**——不再依赖滚动和肉眼找进程边界，也避免截图截尾丢掉关键行。
+- 验收：`diagnostics_log_test.dart` 6 项（新增"崩溃边界取的是更早进程的**最新**一条，不是最旧一条"）；`sqlite_download_repository_test.dart` 的扫描用例从第一次扫描就装日志，断言原生停点、目的地形态、清单已读/通过、入库、缓存命中都进了表且最后一行是 `扫描结束`。core + settings + downloads 613 通过、13 跳过；`flutter analyze` 无问题；`:app:compileDebugKotlin` 通过。
+- 下一版的判据：**copyPublished 究竟卡在哪一行**（`native-step` 会直接给出答案，最可疑的是 `resolver.openInputStream(file://…)` 与 `fd.sync()`/`renameTo` 在容器虚拟文件系统上的行为）；交叠扫描是否要在仓储侧加"同一时刻只跑一条"的闸门——本轮只记录，未改语义。
+
