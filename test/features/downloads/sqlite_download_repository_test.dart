@@ -288,6 +288,71 @@ void main() {
   });
 
   test(
+    'scanning again right after deleting an imported task stays in-process safe',
+    () async {
+      await repository.close();
+      await db.close();
+      publicStorage = _PublicStorage();
+      await openRepository();
+      final storage = publicStorage!;
+      storage.folders = [
+        PublishedFolder(
+          key: 'Download/BiliSail/BV1234567890-P1 视频/',
+          name: 'BV1234567890-P1 视频',
+          files: const [
+            PublishedFile(
+              name: 'media.mp4',
+              uri: 'content://test/media',
+              bytes: 2048,
+              modifiedMs: 10,
+            ),
+            PublishedFile(
+              name: 'manifest.json',
+              uri: 'content://test/manifest',
+              bytes: 512,
+              modifiedMs: 11,
+            ),
+          ],
+        ),
+      ];
+      storage.texts['content://test/manifest'] = _publishedManifest();
+
+      expect((await repository.scanShared()).imported, 1);
+      final task = repository.current.tasks.single;
+      await repository.remove(task.id, deleteFiles: true);
+      expect(repository.current.tasks, isEmpty);
+
+      // The folder is still on disk: deleting the media leaves the directory
+      // behind on MediaStore, and the cache row survives until a full pass.
+      final second = await repository.scanShared();
+      expect(second.imported, 1, reason: '${second.reasons}');
+      final again = repository.current.tasks.single;
+      expect(again.id, task.id);
+      // The private directory was deleted with the task, so the rescan must
+      // have recreated it rather than writing into a removed path.
+      expect(
+        await File('${again.directory}/.bilisail-task').exists(),
+        isTrue,
+      );
+
+      // And once the folder is really gone, the cache entry must not keep
+      // claiming the part is still there.
+      storage.folders = const [];
+      final third = await repository.scanShared();
+      expect(third.folders, 0);
+      expect(
+        (await db
+                .customSelect(
+                  'SELECT COUNT(*) AS count FROM download_scan_cache',
+                )
+                .getSingle())
+            .read<int>('count'),
+        0,
+      );
+    },
+  );
+
+  test(
     'download commits without media digests and keeps URL-free records',
     () async {
       await repository.enqueue([item], const DownloadSelection());
@@ -1184,6 +1249,9 @@ final class _PublicStorage implements PublicDownloadStorage {
     if (refuseAdopt) {
       throw const AppFailure(AppFailureKind.storage, '公共文件已不可访问');
     }
+    // The real channel writes the journal here, so `verify` must see the same
+    // URI set afterwards - otherwise the fake diverges from the platform.
+    published[task.id] = Map.of(files);
     adopted.add((task.id, files));
   }
 
@@ -1219,6 +1287,9 @@ final class _PublicStorage implements PublicDownloadStorage {
   @override
   Future<void> delete(DownloadTask task) async {
     await verify(task);
+    // Mirrors the native journal removal: a later adopt must not be compared
+    // against the URIs of a deleted generation.
+    published.remove(task.id);
     deleted = true;
   }
 }
