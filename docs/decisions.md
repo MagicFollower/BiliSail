@@ -607,3 +607,11 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 **验收：** 新测试 `test/shared/ui/liquid_pull_refresh_test.dart` 4 项——短拉只报百分比（1–99）且松手不发请求；拉满进入 `松手刷新`、**按住不放不触发**、抬指后调用一次并显示 `正在刷新`；刷新中再做一次完整手势不产生第二次调用；减少动画时仍能刷新且圆环不转。测试里用 `startGesture` + `moveBy` 保持手指按下（`dragFrom`/`drag` 会连抬手一起做完，等它返回时指示器已回到 idle），抬指后推进若干帧再断言——`ScrollEndNotification` 要等回弹结束才到，关掉动画时则是即时。全量 `flutter test` 4056 通过、13 跳过；`flutter analyze` 无问题。
 
 **未验证：** 真机手感（96 像素的阈值是否偏手紧、圆环跟随是否掉帧）；首页顶部有搜索栏与词条 tab，指示器目前画在视口顶部（`edgeOffset = 0`），会不会被 header 盖住需实机确认；动态/热门/历史三处只换了组件，未各自调 `edgeOffset`。
+
+**D74 追加（同日调优）：** 三处按真机反馈调整，其中一处是缺陷。
+
+- **回推必须减进度。** 原先累加用的是 `overscroll.abs()`，上划反而继续加进度；而且只算 overscroll 不够——从半程往回推时列表是**正常滚动**，那部分位移走 `ScrollUpdateNotification.scrollDelta`。现在两条通道都按同一符号规则计入（`down → -delta`、`up → +delta`，与 `RefreshIndicator` 的读法一致），`_pulled` 下限夹在 0。新用例 `pushing back up unwinds the ring and disarms it` 就是这条的判据：拉满进入 armed 后回推 120 像素，必须退回百分比态且松手不发请求。
+- **闭合距离 96 → 140 逻辑像素**（圆环不再太快要满），直径 44 → 46，描边 3 → 3.5。
+- **对比度**：磨砂盘改成有明确底色（浅色页面用黑 0.46、暗色用白 0.24）+ 左上高光 + 1.4px 由亮到暗的渐变亮边 + 一圈渐变接触阴影（**不用 `MaskFilter`**，那会给每帧加一次 saveLayer）+ 弧端一个亮点，保证在任何页面底色上都读得出进度。
+- **顺滑**：绘制进度用 `TweenAnimationBuilder`（110ms、easeOutCubic）追手指，圆盘位置跟同一个值，二者不错位；未闭合松手不再瞬间消失，而是走退场（`Timer` 220ms 后收起，`dispose` 里取消）。语义播报仍取**真实**进度而非平滑值。
+- 复验：`test/shared/ui/liquid_pull_refresh_test.dart` 5 项通过；全量 `flutter test` 4057 通过、13 跳过；`flutter analyze` 无问题。真机手感仍未验证，140 像素与 110ms 都是可单点调的参数。

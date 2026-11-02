@@ -106,6 +106,24 @@ void main() {
     expect(semanticsValue(tester), isNull);
   });
 
+  testWidgets('pushing back up unwinds the ring and disarms it', (
+    tester,
+  ) async {
+    var calls = 0;
+    await mount(tester, onRefresh: () async => calls++);
+    final gesture = await pull(tester, 200);
+    expect(semanticsValue(tester), '松手刷新');
+    // Travelling back must subtract: an absolute delta would keep winding the
+    // ring up and arm a refresh the user just walked away from.
+    await gesture.moveBy(const Offset(0, -120));
+    await tester.pump();
+    final value = semanticsValue(tester);
+    expect(value, isNot('松手刷新'));
+    expect(int.parse(value!.replaceAll('%', '')), inInclusiveRange(1, 99));
+    await lift(tester, gesture);
+    expect(calls, 0);
+  });
+
   testWidgets('a gesture during a running refresh starts no second one', (
     tester,
   ) async {
