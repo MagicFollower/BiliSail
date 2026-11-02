@@ -12,7 +12,9 @@ import '../../../shared/ui/page_tab_style.dart';
 import '../../../shared/ui/paging_tab_strip.dart';
 import '../../../shared/ui/smooth_scroll_behavior.dart';
 import '../../../shared/ui/state_view.dart';
+import '../../../core/platform/file_access_service.dart';
 import '../application/download_controller.dart';
+import '../domain/download_destination_label.dart';
 import '../domain/download_models.dart';
 import 'download_destination_dialog.dart';
 
@@ -813,6 +815,76 @@ final class _DownloadSettingsDialogState
   );
   bool _saving = false;
   String? _error;
+  String? _publicDestination;
+  String? _defaultDirectory;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadLocations());
+  }
+
+  /// Reads the two locations the platform owns. Both are best-effort: an
+  /// unchosen shared folder and a missing path_provider plugin are normal
+  /// states, not errors to show the user.
+  Future<void> _loadLocations() async {
+    String? publicDestination;
+    try {
+      publicDestination = await ref
+          .read(publicDownloadStorageProvider)
+          ?.destination();
+    } on AppFailure {
+      publicDestination = null;
+    }
+    String? defaultDirectory;
+    try {
+      defaultDirectory = await const FileAccessService()
+          .defaultDownloadDirectory();
+    } on Object {
+      defaultDirectory = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _publicDestination = publicDestination;
+      _defaultDirectory = defaultDirectory;
+    });
+  }
+
+  /// Where the next task will go. Reads the saved preferences rather than the
+  /// text field so the label describes the configuration, not a draft edit.
+  String locationText({required bool hasPublicStorage}) {
+    final custom = widget.preferences.directory;
+    if (widget.allowCustomDirectory && (custom?.isNotEmpty ?? false)) {
+      return custom!;
+    }
+    final shared = _publicDestination;
+    if (shared != null && shared.isNotEmpty) {
+      return describeDownloadDestination(shared);
+    }
+    if (hasPublicStorage) return '未选择公共下载位置，首次下载前会让你选择';
+    return _defaultDirectory ?? '读取中…';
+  }
+
+  /// Only a real filesystem path can be handed to the desktop shell;
+  /// MediaStore and SAF grants have no path the app may open.
+  String? get openablePath {
+    if (!const FileAccessService().canOpenDirectory) return null;
+    final custom = widget.preferences.directory;
+    if (widget.allowCustomDirectory && (custom?.isNotEmpty ?? false)) {
+      return custom;
+    }
+    return _defaultDirectory;
+  }
+
+  Future<void> _openLocation() async {
+    final path = openablePath;
+    if (path == null) return;
+    try {
+      await const FileAccessService().openDirectory(path);
+    } on AppFailure catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
+  }
 
   @override
   void dispose() {
@@ -868,6 +940,27 @@ final class _DownloadSettingsDialogState
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
+          const Text('当前下载位置'),
+          const SizedBox(height: 4),
+          SelectableText(
+            key: const ValueKey('download-settings-location'),
+            locationText(
+              hasPublicStorage:
+                  ref.watch(publicDownloadStorageProvider) != null,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '每个分 P 存一个子目录，媒体与弹幕、字幕清单放在同一目录里；改位置只影响之后新增的任务。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (openablePath != null)
+            TextButton.icon(
+              onPressed: _saving ? null : _openLocation,
+              icon: const Icon(Icons.folder_open),
+              label: const Text('打开目录'),
+            ),
+          const SizedBox(height: 16),
           const Text('同时下载任务数'),
           const SizedBox(height: 8),
           SegmentedButton<int>(
@@ -898,10 +991,8 @@ final class _DownloadSettingsDialogState
                       }
                     },
               icon: const Icon(Icons.folder_open),
-              label: const Text('公共下载位置（更改仅影响新任务）'),
-            )
-          else
-            const Text('默认保存在应用文档目录的离线文件夹。目录变更只影响之后新增的任务。'),
+              label: const Text('更改公共下载位置'),
+            ),
           if (widget.allowCustomDirectory) ...[
             const SizedBox(height: 12),
             TextField(

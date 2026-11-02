@@ -160,6 +160,36 @@ void main() {
     },
   );
 
+  testWidgets('download settings show the configured directory', (
+    tester,
+  ) async {
+    final repository = _DownloadRepository(
+      preferences: const DownloadPreferences(directory: 'D:/BiliSail 下载'),
+    );
+    await _pump(
+      tester,
+      const DownloadsScreen(allowCustomDirectory: true),
+      repository,
+      _SourceRepository(),
+      size: const Size(1000, 1800),
+    );
+    await tester.tap(find.byTooltip('下载设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('当前下载位置'), findsOneWidget);
+    // The same string also fills the editable field below it, so assert the
+    // read-only line by key rather than by text.
+    expect(
+      tester
+          .widget<SelectableText>(
+            find.byKey(const ValueKey('download-settings-location')),
+          )
+          .data,
+      'D:/BiliSail 下载',
+    );
+    expect(find.textContaining('每个分 P 存一个子目录'), findsOneWidget);
+    await repository.close();
+  });
+
   testWidgets('selection remains explicit and includes chosen episodes only', (
     tester,
   ) async {
@@ -541,10 +571,12 @@ final class _DownloadRepository implements DownloadRepository {
   _DownloadRepository({
     List<DownloadTask> tasks = const [],
     bool canMerge = false,
+    DownloadPreferences preferences = const DownloadPreferences(),
   }) : _state = DownloadQueueState(
          tasks: tasks,
          initialized: true,
          canMerge: canMerge,
+         preferences: preferences,
        );
   DownloadQueueState _state;
   final _stream = StreamController<DownloadQueueState>.broadcast();

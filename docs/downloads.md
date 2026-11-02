@@ -162,3 +162,13 @@ BV1gDEUuUZA-P3 视频标题/
 - MediaStore 的空目录不计入冲突判定（只查有没有条目），所以同一分 P 重新下载且旧目录已空时可能复用同名目录；同名文件由系统加 `(1)` 后缀，不会覆盖，但会在同一目录里留下两份。
 - SAF 的云盘类 provider 可能不支持建子目录，此时发布直接失败并提示改用其他位置，未做"回退平铺"。
 - 验收：目录命名规则由 `test/features/downloads/download_folder_name_test.dart` 6 项钉住（形状、非法字符、空白折叠、结尾点/空格、字节上限与码点完整性、冲突后缀余量）；清单 version 3、不含 `scope`、含 `extras` 字节数，以及发布集合含 sidecars，由 `sqlite_download_repository_test.dart` 断言；"只发布真正落地的附属文件（含 `cover.img`）"由 `download_file_store_test.dart` 断言。下载目录共 99 项通过、13 项跳过（Windows 建链权限），根应用全量 3935 项通过、13 项跳过。原生 `:app:compileDebugKotlin` 编译通过。**Android 真机上三种目的地的实际目录形态、旧任务兼容与删除行为未验收**，需重新出包后在设备上确认；原生里"旧平铺 journal 回落推导"只有编译与代码走查覆盖，没有仪器测试。
+
+## 2026-11-02：下载设置显示当前配置的目录
+
+按用户要求，「下载设置」对话框此前只有一个"公共下载位置（更改仅影响新任务）"按钮，看不出当前到底配到哪儿，桌面端也只笼统说"默认保存在应用文档目录的离线文件夹"。现在对话框顶部显示**当前下载位置**一行，并说明每个分 P 一个子目录、媒体与弹幕字幕清单同放其中。
+
+- 生效优先级与仓储一致：自定义目录（仅 `allowCustomDirectory` 且非空）→ 已选公共位置 → 应用默认目录；未选公共位置的 Android 显示"未选择公共下载位置，首次下载前会让你选择"。显示的是**已保存**的配置，不跟随输入框里的草稿改动，避免"看着改了其实没存"。
+- 公共位置的三种存储形态统一由 `lib/features/downloads/domain/download_destination_label.dart` 翻译，否则用户会看到 `content://…/tree/primary%3ADownload…`：`downloads` 哨兵 → "系统下载目录（Download/BiliSail）"；`file:` URI → 去掉 `file://` 与 Windows 盘符前的多余斜杠；SAF 树 URI → 解码文档 id 成"内部存储/…"或"存储卷 <uuid>/…"。无法识别的形态原样显示，不抛异常。
+- 桌面（Windows/macOS）且位置是真实路径时提供"打开目录"，走既有 `FileAccessService.openDirectory`；MediaStore 与 SAF 位置没有可交给 shell 的路径，因此不显示该按钮。
+- 按钮文案改为"更改公共下载位置"，并删除与新增说明重复的旧兜底文案。
+- 验收：`test/features/downloads/download_destination_label_test.dart` 7 项（空值、哨兵、Android 路径、Windows 盘符、SAF 主卷与可移除卷、无 tree 段与未知 scheme 的兜底）；`download_presentation_test.dart` 1 项断言对话框按 key 显示已保存的自定义目录（同文本也出现在下方输入框，因此按 `ValueKey` 定位而非文本）。下载目录共 107 项通过、13 项跳过（上一节 99 项为 P1 提交时数字），`flutter analyze` 无问题。**Android 上"已选公共位置"的实际显示文本未在设备验证**（widget 测试里公共存储为 null）。
