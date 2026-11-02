@@ -593,3 +593,17 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 自动合并且无需判定的还有 `README.md`、`docs/api-design.md`、`docs/validation/api-endpoints.md`、`settings/{application, domain, presentation}`、`packages/bili_api/lib/src/api_client.dart`、`test/app/workspace_shell_test.dart`。
 
 验收：合并后 `flutter analyze` 无问题；`flutter test` 全量 **4052 通过、13 跳过**（含上游新增的导航、搜索建议、弹幕发送样式、playurl 清晰度与 Web 推荐刷新用例）；组件仓库 `flutter test` 20 项通过（新增 2 项覆盖开关的默认关闭与开启）。**未验证**：真机上从稍后再看/收藏页点高亮的"我的"是否跳回 `/me`，以及上游这批改动在卓易通容器上的表现。
+
+## D74：下拉刷新改为闭合圆环手势，首页/动态/热门/历史四处统一
+
+**为什么不能用 `RefreshIndicator`。** 3.47 的实现里，拖拽阶段圆环 value 被 `_threeQuarterTween` 钉在 0–0.75 圈（拖到底也不会闭合），触发阈值是私有常量 `_kDragSizeFactorLimit`（容器高度的 0.1），且没有 `shouldTriggerRefresh` 这类钩子。"圆环全部闭合才触发"必须自绘，Material 那个整体替换掉。
+
+**新组件 `lib/shared/ui/liquid_pull_refresh.dart`。** 监听 `OverscrollNotification`（要求 `dragDetails != null` 且在前缘）累加**未阻尼的手指位移**，`progress = 已拉 / triggerDistance`（默认 96 逻辑像素）；圆环扫过角度就是 progress，满一圈进入 armed，`ScrollEndNotification` 到达时 armed 才调 `onRefresh`，未闭合则回弹且不发请求。刷新中圆盘停在 `settleOffset` 显示四分之一圈行进弧，完成后收起。`_running` 保证一次刷新进行中任何新手势都不起第二次。
+
+**玻璃质感用分层填充，不用 `BackdropFilter`。** 指示器每跟手一帧都要重绘，模糊层正好落在这个手势最需要掉帧的窗口上（D69 在卓易通的 GLES 上已吃过 backdrop 的亏）。现在画的是：径向渐变的磨砂盘 + 1px 亮边 + 轨道环 + 进度弧（armed 换 tertiary 色）。真 blur 若要做，应当只在静止态（armed / refreshing）启用，并复用「底栏玻璃折射」那类质量闸门。
+
+**保留的即时入口。** 键盘刷新快捷键与右下角浮动刷新按钮仍直接调 `controller.refresh()`，是"立刻刷新"；下拉手势是"闭合才刷新"。两者语义不同是有意的：前者是给知道自己在做什么的入口，后者要防的是误触。
+
+**验收：** 新测试 `test/shared/ui/liquid_pull_refresh_test.dart` 4 项——短拉只报百分比（1–99）且松手不发请求；拉满进入 `松手刷新`、**按住不放不触发**、抬指后调用一次并显示 `正在刷新`；刷新中再做一次完整手势不产生第二次调用；减少动画时仍能刷新且圆环不转。测试里用 `startGesture` + `moveBy` 保持手指按下（`dragFrom`/`drag` 会连抬手一起做完，等它返回时指示器已回到 idle），抬指后推进若干帧再断言——`ScrollEndNotification` 要等回弹结束才到，关掉动画时则是即时。全量 `flutter test` 4056 通过、13 跳过；`flutter analyze` 无问题。
+
+**未验证：** 真机手感（96 像素的阈值是否偏手紧、圆环跟随是否掉帧）；首页顶部有搜索栏与词条 tab，指示器目前画在视口顶部（`edgeOffset = 0`），会不会被 header 盖住需实机确认；动态/热门/历史三处只换了组件，未各自调 `edgeOffset`。

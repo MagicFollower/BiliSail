@@ -7,6 +7,9 @@ import '../../../shared/ui/app_cover_image.dart';
 import '../../../shared/ui/paged_scroll_viewport.dart';
 
 import 'package:flutter/material.dart';
+
+import '../../../shared/ui/liquid_pull_refresh.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -185,7 +188,7 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
         contentVersion: feed,
         onLoadMore: controller.loadMore,
         onRefresh: controller.refresh,
-        builder: (scrollController) => RefreshIndicator(
+        builder: (scrollController) => LiquidPullRefresh(
           onRefresh: controller.refresh,
           child: CustomScrollView(
             key: PageStorageKey(

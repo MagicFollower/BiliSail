@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../../shared/ui/liquid_pull_refresh.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -162,7 +165,7 @@ final class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       onLoadMore: controller.loadMore,
       onRefresh: controller.refresh,
       refreshTooltip: '刷新云端观看历史',
-      builder: (scrollController) => RefreshIndicator(
+      builder: (scrollController) => LiquidPullRefresh(
         onRefresh: controller.refresh,
         child: CustomScrollView(
           controller: scrollController,

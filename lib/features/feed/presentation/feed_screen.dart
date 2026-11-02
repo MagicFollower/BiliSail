@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../../shared/ui/liquid_pull_refresh.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/app_failure.dart';
@@ -522,7 +525,7 @@ final class _HomeChannelPageState extends ConsumerState<_HomeChannelPage> {
                   },
                   onRefresh: _refreshFeed,
                   refreshTooltip: '刷新视频',
-                  builder: (scrollController) => RefreshIndicator(
+                  builder: (scrollController) => LiquidPullRefresh(
                     onRefresh: _refreshFeed,
                     child: CustomScrollView(
                       key: PageStorageKey('feed-${channel.name}'),
