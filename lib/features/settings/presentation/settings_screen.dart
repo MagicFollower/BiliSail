@@ -13,6 +13,8 @@ import '../../../shared/ui/danmaku_settings_controls.dart';
 import '../../../shared/ui/player_controls_mode_setting.dart';
 import '../../../shared/ui/app_notice.dart';
 import '../../../shared/ui/app_dialog.dart';
+import '../../../core/diagnostics/diagnostics_log.dart';
+import '../../../core/diagnostics/diagnostics_log_view.dart';
 import '../../../domain/playback_rates.dart';
 import '../application/settings_controller.dart';
 import '../application/app_update_controller.dart';
@@ -695,6 +697,8 @@ final class _SettingsCategoryPageState
                           ),
                           const _AboutSettingsContent(),
                           const SizedBox(height: 12),
+                          const _DiagnosticsLogTile(),
+                          const SizedBox(height: 12),
                           ..._usageNotice,
                         ]),
                     ],
@@ -771,6 +775,28 @@ final class _AboutSettingsContent extends ConsumerWidget {
           Text(message),
         ],
       ],
+    );
+  }
+}
+
+/// The reader for the local event trace. A device that closes the app without
+/// a word and exposes no log channel can only be diagnosed from inside the app,
+/// so the test build shows its own history here.
+final class _DiagnosticsLogTile extends StatelessWidget {
+  const _DiagnosticsLogTile();
+
+  @override
+  Widget build(BuildContext context) {
+    if (DiagnosticsLog.instance == null) return const SizedBox.shrink();
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: const Text('诊断日志'),
+      subtitle: const Text(
+        '本机记录的最近事件：进入下载页、扫描的每一步、每次原生调用有没有返回。'
+        '只存在这台设备的数据库里，不联网，写入前已过滤 URL 参数和凭据形状的内容。',
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => showDiagnosticsLogDialog(context),
     );
   }
 }

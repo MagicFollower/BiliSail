@@ -198,3 +198,16 @@ BV1gDEUuUZA-P3 视频标题/
 验收：`download_manifest_scan_test.dart` 6 项（合并/分轨接受、字节被截断拒绝、v2 清单与坏标识拒绝、轨道列表不完整拒绝、截断摘要按无摘要处理）；`sqlite_download_repository_test.dart` 新增 2 项端到端（导入一次后二次扫描 `unchanged=1` 且**清单读取请求数仍为 1**，证明快路真的没重读；字节不符则 `rejected=1` 且不入库不认领），并断言 `extras.json` 落回私有目录；`download_presentation_test.dart` 断言扫描按钮存在、点击后显示领域层措辞的摘要。数据库迁移新增 v3→v4 用例，既有 23 处 `schemaVersion` 断言随之抬到 4。下载目录 116 项通过、13 项跳过；`:app:compileDebugKotlin` 通过。
 
 未验证：Android 真机上三种目的地（MediaStore / SAF / `file:`）的实际扫描与认领、可移除存储拔出时的表现、几百个文件夹时的首扫耗时；SAF provider 不支持子目录列举时的降级未取样。
+
+## 2026-11-02：崩溃面包屑升级为跨进程诊断日志（schema 4→5）
+
+现象（鸿蒙卓易通）：删除一条任务 → 清后台 → 重开 → 点下载 tab 就闪退；重开后再读是成功的。上一节的 `download-scan-breadcrumb` 单行没给出答案，**原因是它自己把证据擦了**：扫描成功收尾会 `_clearScanStage()`，而一次守卫是进程级的，崩后重开必然再扫一次并把上一个进程的停点覆盖掉——用户看到的"没有红色内容"正好是一次成功扫描的必然结果，不构成任何信息。另外 Release 里未捕获的 Dart 异常并不结束进程（`lib/main.dart` 只在 macOS smoke 分支接管错误，正常路径没有 zone/`exit`），所以"闪退"只可能来自原生层，只记 Dart 侧停点的红字本来就记不到它。
+
+- 新增 `lib/core/diagnostics/diagnostics_log.dart` + 表 `diagnostics_events(id, run_id, at_ms, message)`（`schemaVersion` 4→5，`onUpgrade` 里 `from <= 4` 建表；v3 老库沿链路一并补齐）。每事件一条 `INSERT`，**不做整行读回再改写**：一次扫描要落几十条，重写一个几十 KB 的 settings 值会把被观察的那条路径本身拖慢，观察行为改变了被观察对象。启动时 `trim()` 只保留最近 3000 行；所有写入 `await`（还没提交就死的行等于没记），`_run` 吞掉自身异常，诊断不能把本来能用的操作弄坏。
+- 锚点按"能不能跨过进程死"排：`进程启动` → `下载页进入` → `下载页首帧后` → `扫描请求` → `扫描 <stage> [目录]` → 每次公共存储调用 `原生 <method> →` / `←` / `✗ <code> <message>`。判据是那条 `→` 有没有配对的 `←`：调用没回来就死，死在 Kotlin 侧；只到 `下载页进入` 而没有 `扫描请求`，死在首帧构建/绘制；两者都没有，则与下载 tab 无关。
+- 文本先洗后存：`scrub()` 去掉 URL query、凭据形状（`bili_jct` / `SESSDATA` / `access_key` / `cookie=` / `token=` 等）与 ≥24 位不透明串并截到 400 字；`describeError` 只留 `runtimeType` 与前 6 帧。Dart 侧 `FlutterError.onError` 与 `PlatformDispatcher.onError` 都写这里，早于数据库就绪的条目先进缓冲、`install()` 时补写。
+- 查看口：设置 → 关于 → 「诊断日志」，弹窗按时间列出最近 600 条、每个进程以「进程启动」分隔，支持复制全部 / 刷新 / 清空。`DiagnosticsLog.instance == null`（单元测试、未走 `main` 的入口）时该行不渲染。日志只在本机 SQLite 里，不联网。
+- 原生封口（顺手把两个能打死进程的口子堵上）：`DownloadStorageHandler` 的 worker 兜底从 `catch (Exception)` 抬到 `catch (Throwable)`，回投改成 `main.post { runCatching { result.* } }`。Android 上任一线程的未捕获 throwable 都会结束整个进程，`OutOfMemoryError` 与虚拟 provider 抛出的 `NoClassDefFoundError` 以前会从旧写法漏出去；现在翻成一次可见的 storage 失败并带上类名。
+- 验收：`test/core/diagnostics/diagnostics_log_test.dart` 5 项（顺序与 run 归属、`limit` 取尾部而非头部、早于数据库的事件在 install 时补进表、`scrub` 四类、`describeError` 不带秘密）；`app_database_test.dart` 新增 v4→v5 用例，断言下载表与扫描缓存原样保留、新表初始为空、`user_version` 到 5；既有 23 处 `schemaVersion` 断言抬到 5。core + settings + downloads 共 612 项通过、13 项跳过，`flutter analyze` 无问题，`:app:compileDebugKotlin` 通过。
+- 未验证：**崩溃原因仍未定位**，本轮交付的是观测手段与原生兜底；卓易通上的实际事件序列要等这一版装上后由「诊断日志」页面读出。MediaStore/SAF 两条目的地在真机上各扫一次的停点也尚未取样。
+

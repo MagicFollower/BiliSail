@@ -477,16 +477,25 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     "closeMedia" -> { leases.remove(call.argument<String>("lease"))?.close(); null }
                     else -> throw IllegalArgumentException("不支持的存储操作")
                 }
-                main.post { result.success(value) }
-            } catch (e: Exception) {
+                main.post { runCatching { result.success(value) } }
+            } catch (e: Throwable) {
+                // Throwable, not Exception: an OutOfMemoryError or a
+                // NoClassDefFoundError from a virtualized provider used to
+                // escape here, and an uncaught throwable on any thread closes
+                // the whole process. The caller gets a storage failure it can
+                // show instead of an app that disappears.
                 val message = when (e) {
                     is SecurityException -> "下载位置授权已失效，请在设置中重新选择原目录"
                     is java.io.FileNotFoundException -> "公共音视频文件不存在，或存储设备已离线"
                     is UnsupportedOperationException -> "此位置不支持本地视频随机读取，请选择设备上的目录"
                     is IllegalArgumentException -> "下载文件归属或保存位置无效"
-                    else -> e.message ?: "公共保存失败，请检查剩余空间、目录授权和存储设备"
+                    else -> e.message ?: e.javaClass.simpleName
                 }
-                main.post { result.error(if (e is SecurityException) "permission" else "storage", message, null) }
+                main.post {
+                    runCatching {
+                        result.error(if (e is SecurityException) "permission" else "storage", message, null)
+                    }
+                }
             } finally {
                 if (cancel != null) cancellations.remove(key(call), cancel)
             }

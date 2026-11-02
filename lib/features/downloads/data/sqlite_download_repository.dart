@@ -9,6 +9,7 @@ import 'dart:math';
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/diagnostics/diagnostics_log.dart';
 import '../../../core/storage/app_database.dart';
 import '../../../domain/app_failure.dart';
 import '../../../domain/request_cancellation.dart';
@@ -988,17 +989,31 @@ final class SqliteDownloadRepository implements DownloadRepository {
   /// Records the step about to run so a pass that takes the process down can
   /// still be located afterwards. The HarmonyOS Android-compatibility container
   /// gives no logcat, and the failure only shows up as the app closing.
-  Future<void> _noteScanStage(String stage, {String folder = ''}) =>
-      db.writeSetting(
-        _scanBreadcrumbKey,
-        jsonEncode({
-          'stage': stage,
-          'folder': folder,
-          'atMs': _clock().millisecondsSinceEpoch,
-        }),
-      );
+  ///
+  /// The settings row is what the downloads dialog can colour red, and it is
+  /// cleared on a clean pass. The trace keeps every pass, because the next
+  /// successful scan would otherwise erase the crashed one.
+  Future<void> _noteScanStage(String stage, {String folder = ''}) async {
+    await db.writeSetting(
+      _scanBreadcrumbKey,
+      jsonEncode({
+        'stage': stage,
+        'folder': folder,
+        'atMs': _clock().millisecondsSinceEpoch,
+      }),
+    );
+    await _trace('扫描 $stage${folder.isEmpty ? '' : ' $folder'}');
+  }
 
   Future<void> _clearScanStage() => db.writeSetting(_scanBreadcrumbKey, '');
+
+  /// The durable trace is a separate record from the breadcrumb row: the
+  /// breadcrumb is cleared by a clean pass, and the next pass is exactly what
+  /// would otherwise erase the crashed one.
+  Future<void> _trace(String message) async {
+    final log = DiagnosticsLog.instance;
+    if (log != null) await log.note(message);
+  }
 
   @override
   Future<String?> lastScanStage() async {
@@ -1025,6 +1040,9 @@ final class SqliteDownloadRepository implements DownloadRepository {
   }) async {
     final storage = _publicStorage;
     if (storage == null) return const DownloadScanResult();
+    // Ahead of the queue load: a pass that dies inside `initialize` would
+    // otherwise leave no trace of ever having been asked.
+    await _trace('扫描请求');
     await initialize();
     final cancel = cancellation ?? RequestCancellation();
     final scope = _scope;
@@ -1033,6 +1051,7 @@ final class SqliteDownloadRepository implements DownloadRepository {
     final destination = await storage.destination();
     await _noteScanStage('listFolders');
     final folders = await storage.listPublishedFolders();
+    await _trace('扫描到 ${folders.length} 个已发布目录');
     final cached = await _scanCacheEntries();
     var imported = 0,
         refreshed = 0,
@@ -1179,6 +1198,11 @@ final class SqliteDownloadRepository implements DownloadRepository {
       await _forgetScans(visited);
     }
     await _clearScanStage();
+    await _trace(
+      '扫描结束 目录=${folders.length} 导入=$imported 刷新=$refreshed '
+      '跳过=$unchanged 拒绝=$rejected 他号=$ownedElsewhere '
+      '${aborted ? '中止' : '完成'}',
+    );
     return DownloadScanResult(
       folders: folders.length,
       imported: imported,

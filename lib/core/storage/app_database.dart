@@ -20,7 +20,7 @@ class AppDatabase extends GeneratedDatabase {
   }
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   Iterable<TableInfo<Table, Object?>> get allTables => const [];
@@ -55,6 +55,7 @@ class AppDatabase extends GeneratedDatabase {
       );
       await _createDownloads();
       await _createScanCache();
+      await _createDiagnostics();
     },
     onUpgrade: (migrator, from, to) async {
       if (to != schemaVersion) {
@@ -72,6 +73,9 @@ class AppDatabase extends GeneratedDatabase {
       }
       if (from <= 3) {
         await _createScanCache();
+      }
+      if (from <= 4) {
+        await _createDiagnostics();
       }
     },
   );
@@ -104,6 +108,20 @@ class AppDatabase extends GeneratedDatabase {
     )''');
     await customStatement(
       'CREATE INDEX download_scan_cache_task ON download_scan_cache(task_id)',
+    );
+  }
+
+  /// Sliding event trace used to locate a process kill on devices that expose
+  /// no log channel. Never holds credentials: see `DiagnosticsLog.scrub`.
+  Future<void> _createDiagnostics() async {
+    await customStatement('''CREATE TABLE diagnostics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      at_ms INTEGER NOT NULL,
+      message TEXT NOT NULL
+    )''');
+    await customStatement(
+      'CREATE INDEX diagnostics_events_run ON diagnostics_events(run_id,id)',
     );
   }
 

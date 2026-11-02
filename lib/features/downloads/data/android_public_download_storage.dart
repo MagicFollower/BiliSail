@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../../../core/diagnostics/diagnostics_log.dart';
 import '../../../domain/app_failure.dart';
 import '../../../domain/request_cancellation.dart';
 import '../domain/download_models.dart';
@@ -11,10 +12,33 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
   const AndroidPublicDownloadStorage();
   static const _channel = MethodChannel('dev.bilisail/download_storage');
 
+  /// Coarse round trips only. The byte traffic of a download does not come
+  /// through [_call], so bracketing these keeps a row per storage operation -
+  /// which is what tells a call that never returned from one that did.
+  static const _traced = {
+    'destination',
+    'choose',
+    'listFolders',
+    'readText',
+    'copyPublished',
+    'adopt',
+    'publish',
+    'verify',
+    'delete',
+  };
+
   Future<T?> _call<T>(String method, [Map<String, Object?>? args]) async {
+    final log = DiagnosticsLog.instance;
+    final trace = log != null && _traced.contains(method);
+    if (trace) await log.note('原生 $method →');
     try {
-      return await _channel.invokeMethod<T>(method, args);
+      final value = await _channel.invokeMethod<T>(method, args);
+      if (trace) await log.note('原生 $method ←');
+      return value;
     } on PlatformException catch (e) {
+      if (trace) {
+        await log.note('原生 $method ✗ ${e.code} ${e.message ?? ''}');
+      }
       throw AppFailure(
         e.code == 'permission'
             ? AppFailureKind.permission

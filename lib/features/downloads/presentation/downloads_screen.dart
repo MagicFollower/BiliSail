@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/ui/app_dialog.dart';
+import '../../../core/diagnostics/diagnostics_log.dart';
 import '../../../core/presentation/workspace_activity.dart';
 import '../../../shared/ui/scroll_collapsing_header.dart';
 import '../../../domain/app_failure.dart';
@@ -87,6 +88,7 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   @override
   void initState() {
     super.initState();
+    DiagnosticsLog.instance?.note('下载页进入');
     // A reinstall keeps the published folders but wipes the queue database, so
     // one pass on first open puts them back. Once per screen instance, and only
     // where a shared download location exists at all.
@@ -95,6 +97,7 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
   void _autoScan() {
     if (!mounted) return;
+    DiagnosticsLog.instance?.note('下载页首帧后');
     // The once-per-process guard lives in the controller, because this screen's
     // state is not retained across tab switches.
     ref.read(downloadControllerProvider.notifier).autoScanOnce();
