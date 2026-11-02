@@ -624,3 +624,10 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 - **外观**：底盘改固定深灰 `#21252B`（alpha 0.86，明暗两套同色，浅色 feed 与夜间页都压得住）；轨道环换成白 0.22；弧端**圆点换成沿切向的箭头**（指向继续拉的方向）；**闭合时圆心画绿色对钩**（`#7BE38B`），表示"松手就刷新"。
 - 判据：`test/shared/ui/liquid_pull_refresh_test.dart` 6 项通过——新增 `a pull that reaches the top mid-gesture counts from there`（先滚进内容 300 像素，再按 25 像素分步下拉：前 250 像素圆环必须不出现，越过顶部后才武装，松手刷新一次）；`pushing back up unwinds the ring and disarms it` 仍在。全量 `flutter test` 4058 通过、13 跳过；`flutter analyze` 无问题。
 - 仍待真机确认：绿色对钩出现在**闭合（armed）**这一刻——如果用户要的其实是"刷新完成"那一刻出现，是一处单点改动。
+
+**D74 第三次追加（同日，撤回第二次追加里的三项）：** 上一条追加的三个决定被真机反馈推翻，这里显式更正，不要按上一条实现。
+
+- **撤回"回推必须减进度"。** 第一次追加要求回推减进度、第二次追加把它改成跟指针 1:1（上划就退）。现在改为**棘轮**：一次手势内进度只增不减，`_pulled = max(_pulled, travel)`。理由是回推会让指示器和"已经发生的那次下拉"互相矛盾——用户看不出松手到底按哪个值算。对应的用例 `pushing back up unwinds the ring and disarms it` 已删除，换成 `travelling back up keeps what the ring already reached`（拉满 armed 后回推 120 像素仍是 `松手刷新`，松手刷新一次）。
+- **撤回"退场用 180ms 控制器降 `_drawn`"。** 回推取消后没有需要收的中间态：松手未闭合直接置 idle，圆盘当帧消失。`_retreat` / `_retreatValue` / `_stepRetreat` / `_retreatToIdle` / `_drawn` 五个成员一起删掉，`TickerProviderStateMixin` 降级为 `SingleTickerProviderStateMixin`（只剩刷新用的 `_spin`）。
+- **撤回"弧端圆点换成沿切向的箭头"。** `_drawHeadArrow` 整个删除；圆环进度色改**绿色** `#7BE38B`（与闭合对钩同色，不再用 `colorScheme.primary`），因此 `armed` 也不再改变弧色，`_RingPainter` 去掉 `armed`/`arc`/`check` 三个入参。
+- 判据：`test/shared/ui/liquid_pull_refresh_test.dart` 6 项通过（数量不变，一项换语义）；`flutter analyze` 无问题。真机手感未验证。
