@@ -241,3 +241,5 @@ BV1gDEUuUZA-P3 视频标题/
 
 仍未验证：真机上 `file:` / MediaStore / SAF 三种目的地里挂住的那一种是哪一种（要看 `原生上次停在 …` 与 `目的地 …` 两行）；如果换成 SAF 目的地，`openInputStream` 直路改动帮不上，剩下的兜底就是 60 秒超时 + 不重入。`fd.sync()` 是不是真凶同样未经设备证实。
 
+收窄范围的一条既有证据：17:05 版的日志里出现过 `原生 choose →/←`，而 `choose` 只有"选一个文件夹"这条路径会调用（MediaStore 与 SAF 各有自己的入口），所以那台设备的公共目的地应是 `file:`。同一目的地下的媒体发布走 `File.inputStream()` → `File.outputStream()` → `fd.sync()` 并成功了（视频就在目录里），说明 fsync 在那台机器上不像是阻塞点；而 `resolver.openInputStream(file://…)` 恰好是扫描路径里唯一把普通文件当 content URI 交给 provider 的调用。下一版的 `目的地 私有路径` 与 `原生 copyPublished ←` 两行会把这条推断证实或推翻。
+
