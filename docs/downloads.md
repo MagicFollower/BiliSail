@@ -168,7 +168,8 @@ BV1gDEUuUZA-P3 视频标题/
 按用户要求，「下载设置」对话框此前只有一个"公共下载位置（更改仅影响新任务）"按钮，看不出当前到底配到哪儿，桌面端也只笼统说"默认保存在应用文档目录的离线文件夹"。现在对话框顶部显示**当前下载位置**一行，并说明每个分 P 一个子目录、媒体与弹幕字幕清单同放其中。
 
 - 生效优先级与仓储一致：自定义目录（仅 `allowCustomDirectory` 且非空）→ 已选公共位置 → 应用默认目录；未选公共位置的 Android 显示"未选择公共下载位置，首次下载前会让你选择"。显示的是**已保存**的配置，不跟随输入框里的草稿改动，避免"看着改了其实没存"。
-- 公共位置的三种存储形态统一由 `lib/features/downloads/domain/download_destination_label.dart` 翻译，否则用户会看到 `content://…/tree/primary%3ADownload…`：`downloads` 哨兵 → "系统下载目录（Download/BiliSail）"；`file:` URI → 去掉 `file://` 与 Windows 盘符前的多余斜杠；SAF 树 URI → 解码文档 id 成"内部存储/…"或"存储卷 <uuid>/…"。无法识别的形态原样显示，不抛异常。
+- 公共位置的三种存储形态统一由 `lib/features/downloads/domain/download_destination_label.dart` 翻译，否则用户会看到 `content://…/tree/primary%3ADownload…`：`downloads` 哨兵 → "系统下载目录（Download/BiliSail）"；`file:` URI → 去掉 `file://`、**解码 `%xx`**、去掉 Windows 盘符前的多余斜杠；SAF 树 URI → 解码文档 id 成"内部存储/…"或"存储卷 <uuid>/…"。无法识别的形态原样显示，不抛异常。
+  - 中文目录名踩到的坑：`Uri.path` 返回的是**百分号编码**形式，且 `Uri.parse` 会把非 ASCII 自行编码成 `%E4%B8%8B…`，所以直接显示 `uri.path` 会让"下载"变成一串 `%xx`（`Uri.pathSegments` 才是解码的）。改用显式解码；不用 `Uri.toFilePath()` 是因为它还会按宿主平台重写分隔符，显示串不该随运行测试的机器变。解码失败（`Uri.decodeComponent` 对非法 `%` 抛的是 `ArgumentError`，不是 `FormatException`）时退回原串，只兜这两类，其余照抛。
 - 桌面（Windows/macOS）且位置是真实路径时提供"打开目录"，走既有 `FileAccessService.openDirectory`；MediaStore 与 SAF 位置没有可交给 shell 的路径，因此不显示该按钮。
 - 按钮文案改为"更改公共下载位置"，并删除与新增说明重复的旧兜底文案。
-- 验收：`test/features/downloads/download_destination_label_test.dart` 7 项（空值、哨兵、Android 路径、Windows 盘符、SAF 主卷与可移除卷、无 tree 段与未知 scheme 的兜底）；`download_presentation_test.dart` 1 项断言对话框按 key 显示已保存的自定义目录（同文本也出现在下方输入框，因此按 `ValueKey` 定位而非文本）。下载目录共 107 项通过、13 项跳过（上一节 99 项为 P1 提交时数字），`flutter analyze` 无问题。**Android 上"已选公共位置"的实际显示文本未在设备验证**（widget 测试里公共存储为 null）。
+- 验收：`test/features/downloads/download_destination_label_test.dart` 8 项（空值、哨兵、Android 路径、Windows 盘符、SAF 主卷与可移除卷、**中文目录名在 `file:` 与 SAF 两种形态下都解码**、非法 `%` 转义退回原串、无 tree 段与未知 scheme 兜底）；`download_presentation_test.dart` 1 项断言对话框按 key 显示已保存的自定义目录（同文本也出现在下方输入框，因此按 `ValueKey` 定位而非文本）。下载目录共 108 项通过、13 项跳过（上一节 99 项为 P1 提交时数字），`flutter analyze` 无问题。**Android 上"已选公共位置"的实际显示文本未在设备验证**（widget 测试里公共存储为 null）。

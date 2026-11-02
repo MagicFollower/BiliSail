@@ -54,8 +54,38 @@ void main() {
     );
   });
 
+  test('decodes Chinese folder names in file: and SAF destinations', () {
+    // Two shapes reach us: Android's Uri.fromFile keeps the raw characters,
+    // while Uri.parse escapes non-ASCII into percent form.
+    expect(
+      describeDownloadDestination('file:///storage/emulated/0/Download/下载'),
+      '/storage/emulated/0/Download/下载',
+    );
+    expect(
+      describeDownloadDestination(
+        'file:///storage/emulated/0/Download/%E4%B8%8B%E8%BD%BD',
+      ),
+      '/storage/emulated/0/Download/下载',
+    );
+    expect(
+      describeDownloadDestination(
+        'content://com.android.externalstorage.documents/'
+        'tree/primary%3ADownload%2F%E4%B8%8B%E8%BD%BD',
+      ),
+      '内部存储/Download/下载',
+    );
+  });
+
   test('falls back without throwing on shapes it does not own', () {
     expect(describeDownloadDestination('not a uri'), 'not a uri');
+    // An invalid escape makes Uri.decodeComponent raise ArgumentError, which
+    // must degrade to showing the id, not to a broken settings page.
+    expect(
+      describeDownloadDestination(
+        'content://com.android.externalstorage.documents/tree/primary%3A100%zz',
+      ),
+      '内部存储/100%zz',
+    );
     expect(
       describeDownloadDestination('content://com.example.provider/document/x'),
       '已授权的文件夹',
