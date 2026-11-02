@@ -173,6 +173,13 @@ final class DownloadFileStore {
     }
   }
 
+  /// Publishable, self-describing record of one finished task.
+  ///
+  /// Version 3 carries everything needed to re-import the folder after a
+  /// reinstall, plus the sizes of the sidecar files so a scan can tell
+  /// "downloaded without subtitles" from "sidecar went missing". It never
+  /// records the account scope, a signed URL or any session data: this file
+  /// lands in shared storage.
   Future<void> writeManifest(DownloadTask task) async {
     if (task.tracks.length != 2 ||
         !task.tracks.every((track) => track.complete)) {
@@ -181,21 +188,37 @@ final class DownloadFileStore {
     if (task.selection.output.isMerged && task.mergedMedia == null) {
       throw const AppFailure(AppFailureKind.storage, '合并文件尚未完成');
     }
+    final extras = await _sidecar(task, 'extras.json');
+    final cover = await _sidecar(task, 'cover.img');
     await _atomicWrite(
       await taskFile(task, 'manifest.json'),
       utf8.encode(
         jsonEncode({
-          'version': task.selection.output.isMerged ? 2 : 1,
+          'version': 3,
           'id': task.id,
-          'scope': task.scope,
           'itemKey': task.item.key,
+          'createdAtMs': task.createdAt.millisecondsSinceEpoch,
+          'video': {
+            'id': task.item.video.id.value,
+            'title': task.item.video.title,
+            'author': task.item.video.author,
+            'durationMs': task.item.video.duration.inMilliseconds,
+          },
+          'part': {
+            'cid': task.item.part.cid,
+            'page': task.item.part.page,
+            'title': task.item.part.title,
+            'durationMs': task.item.part.duration.inMilliseconds,
+          },
+          'aid': task.item.aid,
           'quality': task.selection.quality,
           'codec': task.selection.codec.name,
-          if (task.selection.output.isMerged)
+          'output': task.selection.output.name,
+          if (task.mergedMedia case final merged?)
             'merged': {
-              'fileName': task.mergedMedia?.fileName,
-              'bytes': task.mergedMedia?.bytes,
-              'sha256': task.mergedMedia?.sha256,
+              'fileName': merged.fileName,
+              'bytes': merged.bytes,
+              'sha256': merged.sha256,
             },
           'tracks': task.tracks
               .map(
@@ -208,9 +231,30 @@ final class DownloadFileStore {
                 },
               )
               .toList(),
+          'extras': ?extras,
+          'cover': ?cover,
         }),
       ),
     );
+  }
+
+  Future<Map<String, Object?>?> _sidecar(DownloadTask task, String name) async {
+    final file = await taskFile(task, name);
+    if (!await file.exists()) return null;
+    return {'fileName': name, 'bytes': await file.length()};
+  }
+
+  /// Sidecars worth publishing next to the media: the self-describing manifest
+  /// plus whichever of the danmaku/subtitle file and cover actually landed.
+  /// Missing entries are not failures — a video without subtitles simply has no
+  /// `extras.json` with a non-empty subtitle list.
+  Future<Map<String, String>> publishableSidecars(DownloadTask task) async {
+    final files = <String, String>{};
+    for (final name in const ['manifest.json', 'extras.json', 'cover.img']) {
+      final file = await taskFile(task, name);
+      if (await file.exists()) files[name] = file.path;
+    }
+    return files;
   }
 
   Future<bool> verifyCompleted(DownloadTask task) async {

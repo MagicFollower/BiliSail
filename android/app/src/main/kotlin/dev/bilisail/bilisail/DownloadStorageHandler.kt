@@ -43,7 +43,62 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
     private val closed = AtomicBoolean(false)
     private var picker: MethodChannel.Result? = null
     private val requestCode = 5714
-    private val names = setOf("video.m4s", "audio.m4s", "media.mp4", "media.mkv")
+    private val mediaNames = setOf("video.m4s", "audio.m4s", "media.mp4", "media.mkv")
+    private val sidecarNames = setOf("manifest.json", "extras.json", "cover.img")
+    private val mimes = mapOf(
+        "audio.m4s" to "audio/mp4",
+        "media.mkv" to "video/x-matroska",
+        "manifest.json" to "application/json",
+        "extras.json" to "application/json",
+        "cover.img" to "application/octet-stream",
+    )
+
+    private fun mimeFor(name: String): String = mimes[name] ?: "video/mp4"
+
+    /**
+     * The readable per-part folder name suggested by Dart. Re-sanitized here
+     * because the caller is not the only party that can name a folder: a
+     * separator or dot-prefix would escape the BiliSail subtree.
+     */
+    private fun folderName(call: MethodCall): String {
+        val raw = call.argument<String>("folder") ?: throw IllegalArgumentException()
+        val name = raw.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F\\u007F]+"), " ")
+            .replace(Regex("\\s+"), " ").trim().trimEnd('.', ' ')
+        require(name.isNotEmpty() && name != ".." && !name.startsWith("."))
+        require(name.toByteArray(Charsets.UTF_8).size <= 200)
+        return name
+    }
+
+    /** Appends `-2`, `-3`, … until the store has nothing under that name. */
+    private fun unique(base: String, taken: (String) -> Boolean): String {
+        if (!taken(base)) return base
+        for (suffix in 2..99) {
+            val candidate = "$base-$suffix"
+            if (!taken(candidate)) return candidate
+        }
+        throw IOException("同名的下载文件夹过多，请清理后重试")
+    }
+
+    /** True when MediaStore already has rows in that Download/BiliSail folder. */
+    private fun hasMediaStoreRows(relative: String): Boolean {
+        val projection = arrayOf(MediaStore.MediaColumns._ID)
+        resolver.query(
+            MediaStore.Files.getContentUri("external"), projection,
+            "${MediaStore.MediaColumns.RELATIVE_PATH} = ?", arrayOf(relative), null,
+        )?.use { return it.count > 0 } ?: return false
+    }
+
+    /** True when the chosen SAF tree already has a direct child with this name. */
+    private fun hasTreeChild(tree: Uri, name: String): Boolean =
+        treeChildren(tree, DocumentsContract.getTreeDocumentId(tree)).contains(name)
+
+    private fun treeChildren(tree: Uri, documentId: String): List<String> {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
+        val names = ArrayList<String>()
+        resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+            ?.use { while (it.moveToNext()) names.add(it.getString(0) ?: "") }
+        return names
+    }
 
     init { channel.setMethodCallHandler(::call) }
 
@@ -238,9 +293,12 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         require(items(record).containsValue(uri.toString()))
         if (destination.startsWith("file:")) {
             require(uri.scheme == "file")
-            val folder = externalDirectory(Uri.parse(destination).path!!)
             val name = items(record).entries.first { it.value == uri.toString() }.key
-            val file = File(folder, "${record.getString("taskId")}_$name")
+            // Journals written before per-part folders stored "<taskId>_<name>"
+            // flat in the destination; they stay verifiable and deletable.
+            val file = if (record.has("folderPath"))
+                File(externalDirectory(record.getString("folderPath")), name)
+            else File(externalDirectory(Uri.parse(destination).path!!), "${record.getString("taskId")}_$name")
             require(uri == Uri.fromFile(file))
             if (!file.exists()) throw java.io.FileNotFoundException()
             require(!OsConstants.S_ISLNK(Os.lstat(file.path).st_mode) && file.isFile)
@@ -253,7 +311,8 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             } ?: throw java.io.FileNotFoundException()
         } else {
             require(uri.scheme == "content")
-            val parent = root(destination)
+            val parent = if (record.has("folderDocId")) DocumentsContract.buildDocumentUriUsingTree(
+                Uri.parse(destination), record.getString("folderDocId")) else root(destination)
             resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)?.use {
                 if (!it.moveToFirst()) throw java.io.FileNotFoundException()
             } ?: throw java.io.FileNotFoundException()
@@ -283,17 +342,27 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             val uri = Uri.parse(value)
             try { checkBoundary(record, uri); readable(uri).close() }
             catch (e: java.io.FileNotFoundException) {
-                throw IOException(if (name == "audio.m4s") "公共音频文件不存在或设备已离线" else "公共视频文件不存在或设备已离线")
+                throw IOException("公共${labelOf(name)}文件不存在或设备已离线")
             }
         }
+    }
+
+    private fun labelOf(name: String): String = when (name) {
+        "audio.m4s" -> "音频"
+        "video.m4s" -> "视频"
+        "media.mp4", "media.mkv" -> "合并媒体"
+        "extras.json" -> "弹幕字幕"
+        "cover.img" -> "封面"
+        else -> "清单"
     }
 
     private fun publish(call: MethodCall, cancelled: AtomicBoolean): Map<String, String> {
         val key = key(call)
         val destination = call.argument<String>("destination") ?: throw IllegalArgumentException()
         val files = call.argument<Map<String, String>>("files") ?: throw IllegalArgumentException()
-        require(files.keys == setOf("video.m4s", "audio.m4s") ||
-            files.keys == setOf("media.mp4") || files.keys == setOf("media.mkv"))
+        val media = files.keys.filter { it in mediaNames }.toSet()
+        require(files.keys.all { it in mediaNames || it in sidecarNames })
+        require(media == setOf("video.m4s", "audio.m4s") || media == setOf("media.mp4") || media == setOf("media.mkv"))
         var record = read(key)
         if (record != null) {
             require(record.getString("destination") == destination)
@@ -306,13 +375,38 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         if (destination.startsWith("file:")) externalDirectory(Uri.parse(destination).path!!)
         else if (destination == "downloads") require(Build.VERSION.SDK_INT >= 29) else root(destination, write = true)
         val id = call.argument<String>("id")!!
-        val relative = "${Environment.DIRECTORY_DOWNLOADS}/BiliSail/$id/"
-        record = JSONObject().put("destination", destination).put("relativePath", relative)
-            .put("taskId", id).put("ready", false).put("items", JSONObject())
+        val base = folderName(call)
+        record = JSONObject().put("destination", destination).put("taskId", id)
+            .put("ready", false).put("items", JSONObject())
+        // Every branch keeps one part in one readable folder, so the folder can
+        // be recognised again after the app - and with it the private staging
+        // directory - is gone.
+        when {
+            destination.startsWith("file:") -> {
+                val parent = externalDirectory(Uri.parse(destination).path!!)
+                val name = unique(base) { File(parent, it).exists() }
+                val folder = File(parent, name)
+                if (!folder.mkdir() && !folder.isDirectory) throw IOException("无法创建下载文件夹")
+                record.put("folderPath", folder.absolutePath)
+            }
+            destination == "downloads" -> {
+                val prefix = "${Environment.DIRECTORY_DOWNLOADS}/BiliSail/"
+                val name = unique(base) { hasMediaStoreRows("$prefix$it/") }
+                record.put("relativePath", "$prefix$name/")
+            }
+            else -> {
+                val tree = root(destination, write = true)
+                val name = unique(base) { hasTreeChild(tree, it) }
+                val mime = DocumentsContract.Document.MIME_TYPE_DIR
+                val folder = DocumentsContract.createDocument(resolver, tree, mime, name)
+                    ?: throw IOException("无法创建下载文件夹，请改用应用私有目录或重新选择位置")
+                record.put("folderDocId", DocumentsContract.getDocumentId(folder))
+            }
+        }
         save(key, record)
         for ((name, path) in files) {
             if (cancelled.get()) throw IOException("保存已暂停，临时文件已保留")
-            require(name in names)
+            require(name in mediaNames || name in sidecarNames)
             val source = File(path)
             // Trust the exact platform-owned app directory, including its system
             // ancestor aliases. Inspect only user-controlled descendants, just
@@ -326,22 +420,24 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                 require(!OsConstants.S_ISLNK(Os.lstat(component.path).st_mode))
                 component = component.parentFile ?: throw IllegalArgumentException()
             }
-            val mime = if (name == "audio.m4s") "audio/mp4" else if (name.endsWith("mkv")) "video/x-matroska" else "video/mp4"
+            val mime = mimeFor(name)
             val uri = if (destination.startsWith("file:")) {
-                val target = File(externalDirectory(Uri.parse(destination).path!!), "${id}_$name")
+                val target = File(externalDirectory(record.getString("folderPath")), name)
                 if (!target.createNewFile()) throw IOException("目标文件已存在，请更换文件夹后重试")
                 Uri.fromFile(target)
             } else if (destination == "downloads") {
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, name)
                     put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, record.getString("relativePath"))
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
                 resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw IOException("无法创建下载文件")
             } else {
-                // Unique per-task names avoid collisions without deleting existing documents.
-                DocumentsContract.createDocument(resolver, root(destination, write = true), mime, "${id}_$name")
+                // One folder per part; the name is already unique per folder.
+                val folder = DocumentsContract.buildDocumentUriUsingTree(
+                    Uri.parse(destination), record.getString("folderDocId"))
+                DocumentsContract.createDocument(resolver, folder, mime, name)
                     ?: throw IOException("无法创建下载文件")
             }
             record.getJSONObject("items").put(name, uri.toString())
@@ -403,7 +499,34 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             record.getJSONObject("items").remove(name)
             save(key, record)
         }
+        removeEmptyFolder(record)
         if (!prefs.edit().remove(key).commit()) throw IOException("保存删除结果失败")
+    }
+
+    /**
+     * Removes the per-part folder this journal created, but only once it is
+     * empty - a user who dropped anything else into it keeps their files.
+     * MediaStore folders cannot be deleted through the provider, so the empty
+     * directory stays behind in that mode.
+     */
+    private fun removeEmptyFolder(record: JSONObject) {
+        val destination = record.getString("destination")
+        try {
+            if (destination.startsWith("file:") && record.has("folderPath")) {
+                val folder = externalDirectory(record.getString("folderPath"))
+                if (folder.listFiles()?.isEmpty() == true && !folder.delete())
+                    throw IOException("删除下载文件夹失败")
+            } else if (!destination.startsWith("file:") && destination != "downloads" &&
+                record.has("folderDocId")
+            ) {
+                val tree = Uri.parse(destination)
+                val children = treeChildren(tree, record.getString("folderDocId"))
+                if (children.isEmpty()) DocumentsContract.deleteDocument(
+                    resolver, DocumentsContract.buildDocumentUriUsingTree(tree, record.getString("folderDocId")))
+            }
+        } catch (_: java.io.FileNotFoundException) {
+            // Volume offline: the items are already gone from the journal.
+        }
     }
 
     private fun delete(call: MethodCall) {

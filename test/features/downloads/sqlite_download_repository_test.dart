@@ -119,7 +119,18 @@ void main() {
       await repository.close();
       final task = repository.current.tasks.single;
       expect(task.publicDestination, 'downloads');
-      expect(task.publicFiles.length, 2);
+      // Media plus the sidecars that let the folder be recognised again after
+      // the app - and its private staging directory - is gone.
+      expect(task.publicFiles.keys, [
+        'video.m4s',
+        'audio.m4s',
+        'manifest.json',
+        'extras.json',
+      ]);
+      expect(
+        publicStorage!.capturedFolders.single,
+        startsWith('BV1234567890-P1'),
+      );
       expect(await File('${task.directory}/video.m4s').exists(), isFalse);
       expect(await File('${task.directory}/audio.m4s').exists(), isFalse);
       final requests = videoRequests;
@@ -165,7 +176,12 @@ void main() {
       await repository.resume(task.id);
       await _waitFor(repository, DownloadStatus.completed);
       expect(videoRequests, requests);
-      expect(repository.current.tasks.single.publicFiles.length, 2);
+      expect(repository.current.tasks.single.publicFiles.keys, [
+        'video.m4s',
+        'audio.m4s',
+        'manifest.json',
+        'extras.json',
+      ]);
       expect(publicStorage!.destinations, ['downloads', 'downloads']);
     },
   );
@@ -181,6 +197,19 @@ void main() {
       expect(await File('${task.directory}/video.m4s').length(), media.length);
       expect(await File('${task.directory}/audio.m4s').length(), media.length);
       expect(await File('${task.directory}/extras.json').exists(), isTrue);
+      final manifest = jsonDecode(
+        await File('${task.directory}/manifest.json').readAsString(),
+      ) as Map<String, Object?>;
+      expect(manifest['version'], 3);
+      // The manifest is published into shared storage, so it must not carry
+      // the account scope, a signed URL or any session data.
+      expect(manifest.containsKey('scope'), isFalse);
+      expect((manifest['video']! as Map)['id'], 'BV1234567890');
+      expect((manifest['part']! as Map)['page'], 1);
+      expect(manifest['extras'], {
+        'fileName': 'extras.json',
+        'bytes': await File('${task.directory}/extras.json').length(),
+      });
       expect(
         (await File(
           '${task.directory}/manifest.json',
@@ -563,6 +592,8 @@ void main() {
         expect(native.calls, 1);
         expect(repository.current.tasks.single.publicFiles.keys, [
           output.fileName,
+          'manifest.json',
+          'extras.json',
         ]);
         for (final name in ['video.m4s', 'audio.m4s', output.fileName]) {
           expect(await File('${task.directory}/$name').exists(), isFalse);
@@ -959,12 +990,16 @@ final class _PublicStorage implements PublicDownloadStorage {
   Future<void> chooseDestination(String directory) async {}
   @override
   Future<String> destination() async => selected;
+  final capturedFolders = <String>[];
+
   @override
   Future<Map<String, String>> publish(
     DownloadTask task,
-    Map<String, String> files,
-    RequestCancellation cancellation,
-  ) async {
+    Map<String, String> files, {
+    required String folder,
+    required RequestCancellation cancellation,
+  }) async {
+    capturedFolders.add(folder);
     destinations.add(task.publicDestination);
     if (failPublish) throw const AppFailure(AppFailureKind.storage, '空间不足');
     for (final source in files.values) {

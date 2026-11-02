@@ -27,6 +27,24 @@ void main() {
     });
     tearDown(() => sandbox.delete(recursive: true));
 
+    test('publishes only the sidecars that actually landed', () async {
+      final directory = await files.createTaskDirectory(root, 'guest', _id);
+      final task = _task(directory);
+      expect(await files.publishableSidecars(task), isEmpty);
+
+      await files.writeExtras(
+        task,
+        DownloadExtras(cover: Uint8List.fromList(const [1, 2, 3])),
+      );
+      final sidecars = await files.publishableSidecars(task);
+      // A video whose subtitle fetch was skipped has no manifest yet and no
+      // cover at all; publishing must not invent entries for either.
+      expect(sidecars.keys, ['extras.json', 'cover.img']);
+      for (final path in sidecars.values) {
+        expect(await File(path).exists(), isTrue);
+      }
+    });
+
     test('creates and reopens a task without migrating its files', () async {
       final directory = await files.createTaskDirectory(root, 'guest', _id);
       final task = _task(directory);

@@ -14,6 +14,7 @@ import '../../../domain/app_failure.dart';
 import '../../../domain/request_cancellation.dart';
 import '../../../domain/video.dart';
 import '../../../domain/video_codec.dart';
+import '../domain/download_folder_name.dart';
 import '../domain/download_repository.dart';
 import '../domain/download_muxer.dart';
 import '../domain/public_download_storage.dart';
@@ -611,14 +612,26 @@ final class SqliteDownloadRepository implements DownloadRepository {
     await _files.writeManifest(task);
     if (!_valid(id, run)) return;
     if (task.publicDestination != null && task.publicFiles.isEmpty) {
-      final files = <String, String>{};
-      for (final name
-          in task.selection.output.isMerged
-              ? [task.selection.output.fileName]
-              : ['video.m4s', 'audio.m4s']) {
-        files[name] = (await _files.taskFile(task, name)).path;
-      }
-      final uris = await _publicStorage!.publish(task, files, run.cancel);
+      final files = <String, String>{
+        for (final name
+            in task.selection.output.isMerged
+                ? [task.selection.output.fileName]
+                : const ['video.m4s', 'audio.m4s'])
+          name: (await _files.taskFile(task, name)).path,
+      };
+      // The sidecars are what makes the published folder survive an app
+      // reinstall: the private task directory does not.
+      files.addAll(await _files.publishableSidecars(task));
+      final uris = await _publicStorage!.publish(
+        task,
+        files,
+        folder: downloadFolderName(
+          videoId: task.item.video.id.value,
+          page: task.item.part.page,
+          title: task.item.video.title,
+        ),
+        cancellation: run.cancel,
+      );
       // Native publication is journaled, so a cancelled generation can recover
       // the same URIs on retry without overwriting a user's public files.
       if (!_valid(id, run)) return;

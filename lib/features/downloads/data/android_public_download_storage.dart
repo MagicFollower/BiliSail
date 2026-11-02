@@ -80,9 +80,10 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
   @override
   Future<Map<String, String>> publish(
     DownloadTask task,
-    Map<String, String> files,
-    RequestCancellation cancellation,
-  ) async {
+    Map<String, String> files, {
+    required String folder,
+    required RequestCancellation cancellation,
+  }) async {
     var finished = false;
     cancellation.onCancel(() {
       if (!finished) {
@@ -95,6 +96,7 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
       }
       final result = await _call<Map<Object?, Object?>>('publish', {
         ..._task(task),
+        'folder': folder,
         'files': files,
       });
       return result!.cast<String, String>();

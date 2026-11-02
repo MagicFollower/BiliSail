@@ -133,3 +133,32 @@ Android 11+ 的 SAF 即使获得“所有文件访问权限”也不能选择 Do
 - 已执行 `tool/check.ps1 -SkipPub`，被同期其他任务文件的格式检查阻塞；单独运行根测试为 2852 项通过、13 项跳过，`primary_switch_layout_test.dart` 的保留页面尺寸断言失败（390×682 与 390×734），属于同期导航改动，未修改这些文件。日志 `build/android-download-check.log`、`build/android-download-root-tests.log`。本轮无可连接的 DTD 调试进程，未执行热重载；原生改动需重新安装构建。
 
 Android 6–10 权限窗口、厂商 Android 实机、可移除设备/拔出恢复和实际媒体解码仍需验收；不将 mock、模拟器或编译结果视为这些项目通过。
+
+## 2026-11-02：每个分 P 一个可读目录，弹幕字幕与清单随媒体同放
+
+按用户要求，下载不再只在公共目录留一个媒体文件，而是**每个分 P 一个可读目录，媒体与弹幕字幕清单放在一起**，为"重装应用后指向同一目录即可重新识别"做铺垫。本条只完成发布面，扫描导入尚未实现。
+
+目录形态（`<目的地>/` 下）：
+
+```
+BV1gDEUuUZA-P3 视频标题/
+  media.mp4 | media.mkv | video.m4s + audio.m4s
+  extras.json      弹幕与字幕正文（version 1，见下）
+  cover.img        封面，存在才发布
+  manifest.json    自描述清单（version 3）
+```
+
+- 目录名由 `lib/features/downloads/domain/download_folder_name.dart` 生成：`<bvid>-P<页码> <清洗后的标题>`，`\/:*?"<>|` 与控制字符换成空格并折叠，去掉结尾的点和空格，整体限 160 字节并给冲突后缀留出余量；标题全被清掉时退回 `<bvid>-P<页码>`。截断只停在码点之间，不会把多字节字符切成非法 UTF-8。
+- 冲突由平台层判定：MediaStore 查同 `RELATIVE_PATH` 是否已有条目，SAF 列树根子项，`file:` 直接看路径是否存在，占用则追加 `-2`、`-3`…（上限 99）。**目录名不是身份**，身份是 `manifest.json` 里的 `id`。
+- `manifest.json` 升到 version 3：新增 `video`/`part`/`aid`/`createdAtMs`/`output` 与 `extras`/`cover` 的字节数，**删除 `scope`**——该文件现在会落到共享存储，不能带账号标识；同时继续不含任何签名地址或会话信息（既有约束）。
+- `extras.json` 仍是弹幕与字幕的唯一载体：`{version:1, comments:[{id,positionMs,text,mode,color,fontSize,weight}], subtitles:[{label,cues:[{startMs,endMs,text}]}], warnings:[…]}`，上限 60000 条弹幕、16 条字幕轨道、整体 32 MB。它只在应用私有目录时会被卸载连带清除，这正是本条把它发布出去的动机。
+- 三条发布分支（MediaStore `downloads`、SAF 树、`file:` 路径）都改为建子目录，文件用裸名；此前 SAF 与 `file:` 是在目的地根下平铺 `<taskId>_<name>`。`checkBoundary` 按清单记录里的 `folderPath`/`relativePath`/`folderDocId` 校验，**旧的平铺 journal 仍可校验、读取与删除**（缺字段时回落到 `<taskId>_<name>` 推导）。
+- 删除任务时，`file:` 与 SAF 分支会连带删掉我们创建且已空的目录；用户自己往里放过东西的目录保留不删。MediaStore 无法删目录，该模式下会留下一个空文件夹。
+- 发布集合从"只有媒体"变成"媒体 + 清单 + 附属"，因此 `publicFiles` 的键集合随之变宽；私有目录仍是离线播放的读取源，本条不改变读取路径。
+
+已知边界与本条未做的事：
+
+- **扫描导入尚未实现**：现在只是把可识别的东西放出去了，重装后指向同一目录还不会自动出现在下载列表里。
+- MediaStore 的空目录不计入冲突判定（只查有没有条目），所以同一分 P 重新下载且旧目录已空时可能复用同名目录；同名文件由系统加 `(1)` 后缀，不会覆盖，但会在同一目录里留下两份。
+- SAF 的云盘类 provider 可能不支持建子目录，此时发布直接失败并提示改用其他位置，未做"回退平铺"。
+- 验收：目录命名规则由 `test/features/downloads/download_folder_name_test.dart` 6 项钉住（形状、非法字符、空白折叠、结尾点/空格、字节上限与码点完整性、冲突后缀余量）；清单 version 3、不含 `scope`、含 `extras` 字节数，以及发布集合含 sidecars，由 `sqlite_download_repository_test.dart` 断言；"只发布真正落地的附属文件（含 `cover.img`）"由 `download_file_store_test.dart` 断言。下载目录共 99 项通过、13 项跳过（Windows 建链权限），根应用全量 3935 项通过、13 项跳过。原生 `:app:compileDebugKotlin` 编译通过。**Android 真机上三种目的地的实际目录形态、旧任务兼容与删除行为未验收**，需重新出包后在设备上确认；原生里"旧平铺 journal 回落推导"只有编译与代码走查覆盖，没有仪器测试。
