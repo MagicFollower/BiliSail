@@ -243,3 +243,23 @@ BV1gDEUuUZA-P3 视频标题/
 
 收窄范围的一条既有证据：17:05 版的日志里出现过 `原生 choose →/←`，而 `choose` 只有"选一个文件夹"这条路径会调用（MediaStore 与 SAF 各有自己的入口），所以那台设备的公共目的地应是 `file:`。同一目的地下的媒体发布走 `File.inputStream()` → `File.outputStream()` → `fd.sync()` 并成功了（视频就在目录里），说明 fsync 在那台机器上不像是阻塞点；而 `resolver.openInputStream(file://…)` 恰好是扫描路径里唯一把普通文件当 content URI 交给 provider 的调用。下一版的 `目的地 私有路径` 与 `原生 copyPublished ←` 两行会把这条推断证实或推翻。
 
+### 2026-11-02（同日第四轮）：真因是回投负载，上一轮两条猜测被证据推翻
+
+17:51 版带回的日志把结论翻转了。**上面那段推断是错的，这里显式更正**：
+
+- 原生停点显示 `copyPublished 完成`——那个 `step()` 在 `renameTo` 之后才写，说明**校验归属、打开输入流、写临时文件、`fd.sync()`、替换正式文件全部跑完了**。所以 `openInputStream(file://…)` 和 fsync 都不是阻塞点，上一轮针对它们的两处修改建立在被推翻的假设上。
+- 真正断的是**回投**：`when` 分支里只有 `"copyPublished" -> copyPublished(call)` 没有像 `adopt` / `verify` / `delete` 那样写 `; null`，于是 `value` 是 `kotlin.Unit`。`StandardMessageCodec` 编码不了它，`result.success(value)` 在主线程的 Runnable 里抛异常。
+- 这一个 bug 同时解释了两件事：**加 `runCatching` 之前**，这个异常在主线程未捕获 → 系统结束进程 = 用户报的闪退；**加了之后**，异常被吞 → 回复永远没发出 → Dart 的 `await` 永久悬挂 = 这一轮报的"一直正在扫描…"。所以第三轮那次"顺带修好闪退"其实只是把崩溃降级成了悬挂，判断方向也因此被带偏了一轮。
+
+改动：
+
+- `"copyPublished" -> { copyPublished(call); null }`——根因，一行。
+- 回投不再静默：新增 `reply(name) { ... }`，在主线程提交，失败时写进原生停点（`回投失败 <method> <异常类名>`），下一次扫描的 `原生上次停在 …` 就会把它带回来。`runCatching` 那种"把崩溃变成挂住"的兜底不再出现在这里。
+- 保留 `file:` 直读 `File.inputStream()`，但**理由换成真实的那一个**：普通文件走 ContentResolver 是每 64 KB 一次 binder 往返，没有好处，而清单读取对同一种目的地本来就走直路。
+- **恢复 `fd.sync()`**：它被上一轮以"可能不返回"为由删掉，而本轮证据证明它正常完成；发布媒体文件的路径同样在 sync，保持一致。
+- 60 秒超时与扫描重入闸门保留（它们不是为这个 bug 加的，但正是它们让悬挂在 20 秒处留下可读的"仍在等待，停在：copyPublished 完成"，从而暴露了回投这一侧）。
+
+关于"扫描为什么慢"：**扫描从不读视频字节**。一次完整导入 = 6 次通道调用 + 读一个 923 字符的 `manifest.json` + 抄一个小文本旁路；命中缓存时只有 3 次通道调用（日志里 `缓存命中` 那一档）。`adopt` 对每个文件只做 `checkBoundary` + 开一次 FD 再 `lseek` 探可寻址性，是元数据操作。慢的部分全部来自这条回投 bug，不是解析成本；目的地切换后缓存键变化导致的全量重读也是设计内的。
+
+验收：`:app:compileDebugKotlin` 通过；Dart 侧无行为改动（第三轮的超时/闸门用例仍覆盖）。**设备端未验证**：这一版的判据是 `原生 copyPublished ←` 出现配对、红字不再停留、一次扫描在几十毫秒内返回。
+

@@ -351,10 +351,10 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         val temp = File("${file.path}.tmp")
         try {
             step("copyPublished 打开输入流")
-            // A `file:` child is a plain file. Pushing it through the resolver
-            // costs a binder round trip per chunk and was the step that never
-            // returned on the HarmonyOS container; the manifest reader already
-            // takes the direct path for the same destination shape.
+            // A `file:` child is a plain file: reading it through the resolver
+            // costs a binder round trip per 64 KB chunk for no benefit, and the
+            // manifest reader already takes the direct path for this
+            // destination shape.
             val source = if (uri.scheme == "file")
                 File(uri.path ?: throw IllegalArgumentException()).inputStream()
             else
@@ -373,10 +373,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     }
                     step("copyPublished 落盘 $total 字节")
                     output.flush()
-                    // No fd.sync(): this file is a re-fetchable sidecar, and an
-                    // fsync on the container's data mount was a second candidate
-                    // for the call that never came back. Losing it only means the
-                    // next scan copies it again.
+                    if (output is java.io.FileOutputStream) output.fd.sync()
                 }
             }
             step("copyPublished 替换正式文件")
@@ -512,7 +509,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     "listDirectories" -> listDirectories(call.argument<String>("directory"))
                     "listFolders" -> listFolders(call)
                     "readText" -> readPublishedText(call)
-                    "copyPublished" -> copyPublished(call)
+                    "copyPublished" -> { copyPublished(call); null }
                     "adopt" -> synchronized(taskLocks.getOrPut(key(call)) { Any() }) { adopt(call); null }
                     "choose" -> {
                         val folder = externalDirectory(call.argument<String>("directory") ?: throw IllegalArgumentException())
@@ -536,7 +533,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     "closeMedia" -> { leases.remove(call.argument<String>("lease"))?.close(); null }
                     else -> throw IllegalArgumentException("不支持的存储操作")
                 }
-                main.post { runCatching { result.success(value) } }
+                reply(call.method) { result.success(value) }
             } catch (e: Throwable) {
                 // Throwable, not Exception: an OutOfMemoryError or a
                 // NoClassDefFoundError from a virtualized provider used to
@@ -550,13 +547,29 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     is IllegalArgumentException -> "下载文件归属或保存位置无效"
                     else -> e.message ?: e.javaClass.simpleName
                 }
-                main.post {
-                    runCatching {
-                        result.error(if (e is SecurityException) "permission" else "storage", message, null)
-                    }
+                reply(call.method) {
+                    result.error(if (e is SecurityException) "permission" else "storage", message, null)
                 }
             } finally {
                 if (cancel != null) cancellations.remove(key(call), cancel)
+            }
+        }
+    }
+
+    /**
+     * Submits a reply on the platform thread and records a rejection instead of
+     * swallowing it. A payload the standard codec cannot encode - a Kotlin
+     * `Unit`, say - throws right here: before the guard that closed the whole
+     * process, wrapped in `runCatching` it became a call whose await never
+     * resumed. Either reading is a bug; the marker at least names it in the
+     * next scan's log.
+     */
+    private fun reply(name: String, submit: () -> Unit) {
+        main.post {
+            try {
+                submit()
+            } catch (e: Throwable) {
+                step("回投失败 $name ${e.javaClass.simpleName}")
             }
         }
     }
