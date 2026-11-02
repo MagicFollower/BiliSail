@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -10,12 +9,18 @@ import 'package:flutter/material.dart';
 /// tweened to at most three quarters of a turn, and the distance that triggers a
 /// refresh is a private constant. Here the sweep *is* the pull - no open arc
 /// left means nothing was asked for - so releasing only refreshes when the ring
-/// is shut, and pushing back up unwinds it.
+/// is shut, and pushing back unwinds it.
 ///
-/// The disc is drawn as frosted glass with layered fills and a lit rim rather
-/// than a [BackdropFilter] or a blurred shadow: it repaints on every drag pixel,
-/// and a per-frame blur costs exactly the frames this gesture needs to stay
-/// smooth on the weakest runtime the app ships to.
+/// The ring follows the **pointer**, not the scroll deltas: on the home page a
+/// pull-down first spends itself collapsing the header, and a scroll-delta
+/// reading leaves the ring frozen exactly while the finger is doing the thing
+/// the user meant. Tracking starts only when the gesture begins at the leading
+/// edge, so scrolling through content never arms a refresh.
+///
+/// The disc is drawn as dark glass with layered fills and a lit rim rather than
+/// a [BackdropFilter] or a blurred shadow: it repaints on every drag pixel, and
+/// a per-frame blur costs exactly the frames this gesture needs to stay smooth
+/// on the weakest runtime the app ships to.
 class LiquidPullRefresh extends StatefulWidget {
   const LiquidPullRefresh({
     super.key,
@@ -31,7 +36,8 @@ class LiquidPullRefresh extends StatefulWidget {
   final Future<void> Function() onRefresh;
   final Widget child;
 
-  /// How far the finger has to pull, in logical pixels, to close the ring.
+  /// How far the finger has to travel downwards, in logical pixels, to close
+  /// the ring.
   final double triggerDistance;
 
   /// How far from the edge the disc rests while a refresh runs.
@@ -51,107 +57,141 @@ enum _Phase { idle, dragging, armed, refreshing }
 
 const _diameter = 46.0;
 const _stroke = 3.5;
+const _retreatDuration = Duration(milliseconds: 180);
 
-/// How long the drawn ring takes to catch up with the finger. Short enough to
-/// stay under the fingertip, long enough that a fast flick reads as travel
-/// rather than a stack of snapshots.
-const _follow = Duration(milliseconds: 110);
+/// Dark slate body: it holds its own against a white feed and a night-mode
+/// page alike, which a translucent white disc could not do on either.
+const _discBody = Color(0xDD21252B);
+const _check = Color(0xFF7BE38B);
 
 class _LiquidPullRefreshState extends State<LiquidPullRefresh>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _spin = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1200),
   );
+  late final AnimationController _retreat = AnimationController(
+    vsync: this,
+    duration: _retreatDuration,
+  );
 
   _Phase _phase = _Phase.idle;
   double _pulled = 0;
+
+  /// What is painted: equal to the pull while the finger is down, and driven by
+  /// [_retreat] on the way out. One value, one motion - a chase animation on
+  /// top of a timed hide reads as two stages and stutters.
+  double _drawn = 0;
+
+  /// The pull height the retreat started from, so it can ease from there to 0.
+  double? _retreatValue;
+
+  double? _anchorY;
+  ScrollMetrics? _metrics;
   Future<void>? _running;
-  Timer? _retreat;
+
+  @override
+  void initState() {
+    super.initState();
+    _retreat.addListener(_stepRetreat);
+  }
 
   @override
   void dispose() {
-    _retreat?.cancel();
+    _retreat
+      ..removeListener(_stepRetreat)
+      ..dispose();
     _spin.dispose();
     super.dispose();
   }
 
-  /// 0 while the pull is still short, 1 once the ring is shut.
   double get _progress =>
       (_pulled / widget.triggerDistance).clamp(0.0, 1.0).toDouble();
 
-  bool _atLeadingEdge(ScrollMetrics metrics) => switch (metrics.axisDirection) {
-    AxisDirection.down => metrics.extentBefore == 0,
-    AxisDirection.up => metrics.extentAfter == 0,
-    _ => false,
-  };
-
-  /// Signed travel toward or away from closing the ring, on either channel a
-  /// gesture arrives through: the overscroll delta while the list is pinned at
-  /// its edge, and the scroll delta once the finger pushes it away from that
-  /// edge. Both follow the axis the way `RefreshIndicator` reads it - on a
-  /// downward list a pull-down delta arrives negative - so pushing back up
-  /// unwinds the ring instead of winding it further.
-  double _travel(AxisDirection axis, double delta) => switch (axis) {
-    AxisDirection.down => -delta,
-    AxisDirection.up => delta,
-    _ => 0,
-  };
-
-  void _addTravel(double travel) {
-    final next = math.max(0.0, _pulled + travel);
-    if (next == _pulled) return;
-    setState(() {
-      _pulled = next;
-      _phase = _progress >= 1 ? _Phase.armed : _Phase.dragging;
-    });
-  }
+  /// No metrics yet means the page has never scrolled, i.e. it is at the top.
+  bool _atLeadingEdge(ScrollMetrics? metrics) =>
+      metrics == null ||
+      switch (metrics.axisDirection) {
+        AxisDirection.down => metrics.extentBefore == 0,
+        AxisDirection.up => metrics.extentAfter == 0,
+        _ => false,
+      };
 
   bool _handleScroll(ScrollNotification notification) {
-    if (!widget.notificationPredicate(notification)) return false;
-    // A running refresh owns the indicator; a second gesture must not fight it.
-    if (_phase == _Phase.refreshing) return false;
-    if (notification is OverscrollNotification &&
-        notification.dragDetails != null &&
-        _atLeadingEdge(notification.metrics)) {
-      // Undamped finger travel: [triggerDistance] is the distance the user
-      // actually pulls, not a fraction of it.
-      _addTravel(
-        _travel(notification.metrics.axisDirection, notification.overscroll),
-      );
-    } else if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null &&
-        _phase != _Phase.idle &&
-        notification.scrollDelta != null) {
-      // Deliberately not gated on the leading edge: pushing back from a partial
-      // pull scrolls the list normally, and that displacement is what should
-      // take the ring back down.
-      _addTravel(
-        _travel(notification.metrics.axisDirection, notification.scrollDelta!),
-      );
-    } else if (notification is ScrollEndNotification && _phase != _Phase.idle) {
-      // Handled before the drag-details gate: a fling ends without them, and
-      // leaving the ring half drawn would strand the indicator on screen.
-      if (_phase == _Phase.armed) {
-        _trigger();
-      } else {
-        _retreatToIdle();
-      }
+    if (widget.notificationPredicate(notification)) {
+      _metrics = notification.metrics;
     }
     return false;
   }
 
-  /// Lets the ring unwind on screen instead of vanishing at the release point.
-  void _retreatToIdle() {
+  void _stepRetreat() {
+    final from = _retreatValue;
+    if (from == null) return;
     setState(() {
-      _pulled = 0;
-      _phase = _Phase.dragging;
+      _drawn = from * (1 - Curves.easeOutCubic.transform(_retreat.value));
+      if (_drawn <= 0) _phase = _Phase.idle;
     });
-    _retreat?.cancel();
-    _retreat = Timer(_follow * 2, () {
-      if (!mounted) return;
-      setState(() => _phase = _Phase.idle);
+  }
+
+  void _onPointerDown(PointerDownEvent event) {
+    if (_phase == _Phase.refreshing) return;
+    _retreat.stop();
+    _retreatValue = null;
+    // The anchor is recorded wherever the gesture starts: a pull that begins
+    // deeper in the list has not started pulling yet, and the anchor follows the
+    // finger until the list runs out of scroll to give (see [_onPointerMove]).
+    _anchorY = event.position.dy;
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    final anchor = _anchorY;
+    if (anchor == null || _phase == _Phase.refreshing) return;
+    if (!_atLeadingEdge(_metrics)) {
+      if (_pulled == 0 && _phase == _Phase.idle) {
+        setState(() => _anchorY = event.position.dy);
+      }
+      return;
+    }
+    final travel = event.position.dy - anchor;
+    if (travel <= 0 && _phase == _Phase.idle) return;
+    setState(() {
+      _pulled = math.max(0, travel);
+      _drawn = _progress;
+      _phase = _progress >= 1
+          ? _Phase.armed
+          : _progress > 0
+          ? _Phase.dragging
+          : _Phase.idle;
     });
+  }
+
+  /// A gesture that ends without the ring closed must still unwind: the pointer
+  /// can be lifted, cancelled, or dragged off the widget's edge, and the last of
+  /// those delivers no scroll notification at all.
+  void _onPointerUp(PointerEvent event) {
+    if (_anchorY == null) return;
+    _anchorY = null;
+    if (_phase == _Phase.armed) {
+      _trigger();
+    } else if (_phase != _Phase.idle) {
+      _retreatToIdle();
+    }
+  }
+
+  void _retreatToIdle() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      setState(() {
+        _pulled = 0;
+        _drawn = 0;
+        _phase = _Phase.idle;
+      });
+      return;
+    }
+    _retreatValue = _drawn;
+    _pulled = 0;
+    _retreat
+      ..value = 0
+      ..forward();
   }
 
   Future<void> _trigger() async {
@@ -160,7 +200,7 @@ class _LiquidPullRefreshState extends State<LiquidPullRefresh>
     _running = pending;
     setState(() {
       _phase = _Phase.refreshing;
-      _pulled = widget.triggerDistance;
+      _drawn = 1;
     });
     if (!MediaQuery.disableAnimationsOf(context)) {
       _spin.repeat();
@@ -179,20 +219,19 @@ class _LiquidPullRefreshState extends State<LiquidPullRefresh>
 
   @override
   Widget build(BuildContext context) {
-    return NotificationListener<ScrollNotification>(
-      onNotification: _handleScroll,
-      child: Stack(
-        children: [
-          widget.child,
-          if (_phase != _Phase.idle)
-            // The drawn ring chases the finger over a short ease; the semantics
-            // still report the real pull, not the smoothed value.
-            TweenAnimationBuilder(
-              tween: Tween(begin: 0.0, end: _progress),
-              duration: _follow,
-              curve: Curves.easeOutCubic,
-              builder: (context, drawn, _) => Positioned(
-                top: _discTop(drawn),
+    return Listener(
+      onPointerDown: _onPointerDown,
+      onPointerMove: _onPointerMove,
+      onPointerUp: _onPointerUp,
+      onPointerCancel: _onPointerUp,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _handleScroll,
+        child: Stack(
+          children: [
+            widget.child,
+            if (_phase != _Phase.idle)
+              Positioned(
+                top: _discTop(),
                 left: 0,
                 right: 0,
                 child: Center(
@@ -204,15 +243,15 @@ class _LiquidPullRefreshState extends State<LiquidPullRefresh>
                       _ => '${(_progress * 100).round()}%',
                     },
                     child: _GlassRing(
-                      progress: drawn,
+                      progress: _drawn,
                       phase: _phase,
                       spin: _spin,
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -220,13 +259,13 @@ class _LiquidPullRefreshState extends State<LiquidPullRefresh>
   /// Rides in from above the edge as the pull grows and lands on
   /// [LiquidPullRefresh.settleOffset] exactly when the ring closes, so arming
   /// does not move the disc.
-  double _discTop(double drawn) {
+  double _discTop() {
     final settled = widget.edgeOffset + widget.settleOffset - _diameter / 2;
     if (_phase == _Phase.refreshing || _phase == _Phase.armed) return settled;
     return Tween(
       begin: widget.edgeOffset - _diameter / 2,
       end: settled,
-    ).transform(Curves.easeOutCubic.transform(drawn));
+    ).transform(Curves.easeOutCubic.transform(_drawn));
   }
 }
 
@@ -247,7 +286,6 @@ class _GlassRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final dark = Theme.of(context).brightness == Brightness.dark;
     final spinning = phase == _Phase.refreshing;
     final armed = phase == _Phase.armed;
     return SizedBox(
@@ -259,17 +297,13 @@ class _GlassRing extends StatelessWidget {
           painter: _RingPainter(
             progress: spinning ? null : progress,
             spin: spinning ? spin.value : 0,
-            // A body that opposes the page behind it is what makes the disc read
-            // as glass at all: a white sheen over a light feed disappears.
-            body: dark
-                ? Colors.white.withValues(alpha: 0.24)
-                : Colors.black.withValues(alpha: 0.46),
-            sheen: Colors.white.withValues(alpha: dark ? 0.26 : 0.38),
-            rim: Colors.white.withValues(alpha: dark ? 0.55 : 0.88),
-            shadow: Colors.black.withValues(alpha: dark ? 0.50 : 0.30),
-            track: (dark ? Colors.white : Colors.black).withValues(alpha: 0.34),
-            arc: armed ? colors.tertiaryContainer : colors.primary,
-            head: armed ? colors.onTertiaryContainer : colors.primary,
+            armed: armed,
+            sheen: Colors.white.withValues(alpha: 0.16),
+            rim: Colors.white.withValues(alpha: 0.42),
+            shadow: Colors.black.withValues(alpha: 0.42),
+            track: Colors.white.withValues(alpha: 0.22),
+            arc: armed ? _check : colors.primary,
+            check: _check,
           ),
         ),
       ),
@@ -281,25 +315,25 @@ class _RingPainter extends CustomPainter {
   _RingPainter({
     required this.progress,
     required this.spin,
-    required this.body,
+    required this.armed,
     required this.sheen,
     required this.rim,
     required this.shadow,
     required this.track,
     required this.arc,
-    required this.head,
+    required this.check,
   });
 
   /// Null while a refresh runs: the arc then spins instead of following a pull.
   final double? progress;
   final double spin;
-  final Color body;
+  final bool armed;
   final Color sheen;
   final Color rim;
   final Color shadow;
   final Color track;
   final Color arc;
-  final Color head;
+  final Color check;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -317,7 +351,7 @@ class _RingPainter extends CustomPainter {
           stops: const [0.72, 1.0],
         ).createShader(Rect.fromCircle(center: center, radius: radius + 5)),
     );
-    canvas.drawCircle(center, radius, Paint()..color = body);
+    canvas.drawCircle(center, radius, Paint()..color = _discBody);
     canvas.drawCircle(
       center,
       radius,
@@ -337,7 +371,7 @@ class _RingPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [rim, rim.withValues(alpha: 0.12)],
+          colors: [rim, rim.withValues(alpha: 0.10)],
         ).createShader(disc),
     );
     final ring = Rect.fromCircle(center: center, radius: radius - _stroke);
@@ -367,28 +401,64 @@ class _RingPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round
         ..color = arc,
     );
-    if (value != null && value > 0.02) {
-      // A lit head keeps the leading edge readable over any page colour.
-      final r = ring.width / 2;
-      canvas.drawCircle(
-        Offset(
-          center.dx + r * math.cos(start + sweepAngle),
-          center.dy + r * math.sin(start + sweepAngle),
-        ),
-        _stroke * 0.85,
-        Paint()..color = head,
-      );
+    if (value != null && value > 0.03 && !armed) {
+      _drawHeadArrow(canvas, center, ring.width / 2, start + sweepAngle, arc);
     }
+    if (value != null && value >= 1) {
+      _drawCheck(canvas, center, radius * 0.42, check);
+    }
+  }
+
+  /// A chevron pointing along the direction of travel, so the open end of the
+  /// ring reads as "keep going this way".
+  void _drawHeadArrow(
+    Canvas canvas,
+    Offset center,
+    double radius,
+    double angle,
+    Color color,
+  ) {
+    final size = _stroke * 1.9;
+    canvas.save();
+    canvas.translate(
+      center.dx + radius * math.cos(angle),
+      center.dy + radius * math.sin(angle),
+    );
+    canvas.rotate(angle + math.pi / 2);
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, size * 0.55)
+        ..lineTo(-size * 0.45, -size * 0.45)
+        ..lineTo(size * 0.45, -size * 0.45)
+        ..close(),
+      Paint()..color = color,
+    );
+    canvas.restore();
+  }
+
+  void _drawCheck(Canvas canvas, Offset center, double size, Color color) {
+    // Two strokes, not a closed path: closing it draws a chord across the tick.
+    canvas.drawPath(
+      Path()
+        ..moveTo(center.dx - size * 0.62, center.dy + size * 0.02)
+        ..lineTo(center.dx - size * 0.16, center.dy + size * 0.5)
+        ..lineTo(center.dx + size * 0.66, center.dy - size * 0.46),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..color = color,
+    );
   }
 
   @override
   bool shouldRepaint(_RingPainter old) =>
       old.progress != progress ||
       old.spin != spin ||
+      old.armed != armed ||
       old.arc != arc ||
-      old.head != head ||
       old.track != track ||
-      old.body != body ||
       old.rim != rim ||
       old.shadow != shadow ||
       old.sheen != sheen;

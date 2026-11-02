@@ -34,6 +34,9 @@ void main() {
     final gesture = await tester.startGesture(
       tester.getCenter(find.byType(ListView)),
     );
+    // The widget only arms a gesture that starts at the leading edge, and it
+    // learns the edge from the scroll notifications the list emits on layout.
+    await tester.pump();
     await gesture.moveBy(Offset(0, distance));
     await tester.pump();
     return gesture;
@@ -143,6 +146,50 @@ void main() {
     await lift(tester, second);
     expect(calls, 1);
     release.complete();
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+  });
+
+  testWidgets('a pull that reaches the top mid-gesture counts from there', (
+    tester,
+  ) async {
+    var calls = 0;
+    await mount(
+      tester,
+      onRefresh: () async {
+        calls++;
+      },
+    );
+    // Scroll into the content first, so the pull starts 300 pixels away from
+    // the edge.
+    final setup = await tester.startGesture(
+      tester.getCenter(find.byType(ListView)),
+    );
+    await setup.moveBy(const Offset(0, -300));
+    await setup.up();
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(ListView)),
+    );
+    await tester.pump();
+    // Sampled like a real finger: the anchor follows the hand while the list
+    // still has scroll to give, then stops and starts counting at the edge.
+    for (var step = 0; step < 10; step++) {
+      await gesture.moveBy(const Offset(0, 25));
+      await tester.pump();
+    }
+    expect(
+      semanticsValue(tester),
+      isNull,
+      reason: 'travel the list can still scroll away must not fill the ring',
+    );
+    for (var step = 0; step < 20; step++) {
+      await gesture.moveBy(const Offset(0, 25));
+      await tester.pump();
+    }
+    expect(semanticsValue(tester), '松手刷新');
+    await gesture.up();
     await tester.pumpAndSettle();
     expect(calls, 1);
   });
