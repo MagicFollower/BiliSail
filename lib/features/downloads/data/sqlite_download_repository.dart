@@ -9,7 +9,6 @@ import 'dart:math';
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
 
-import '../../../core/diagnostics/diagnostics_log.dart';
 import '../../../core/storage/app_database.dart';
 import '../../../domain/app_failure.dart';
 import '../../../domain/request_cancellation.dart';
@@ -982,55 +981,6 @@ final class SqliteDownloadRepository implements DownloadRepository {
     _pump();
   }
 
-  static const _scanBreadcrumbKey = 'download-scan-breadcrumb';
-
-  /// Records the step about to run so a pass that takes the process down can
-  /// still be located afterwards. The HarmonyOS Android-compatibility container
-  /// gives no logcat, and the failure only shows up as the app closing.
-  ///
-  /// The settings row is what the downloads dialog can colour red, and it is
-  /// cleared on a clean pass. The trace keeps every pass, because the next
-  /// successful scan would otherwise erase the crashed one.
-  Future<void> _noteScanStage(String stage, {String folder = ''}) async {
-    await db.writeSetting(
-      _scanBreadcrumbKey,
-      jsonEncode({
-        'stage': stage,
-        'folder': folder,
-        'atMs': _clock().millisecondsSinceEpoch,
-      }),
-    );
-    await _trace('扫描 $stage${folder.isEmpty ? '' : ' $folder'}');
-  }
-
-  Future<void> _clearScanStage() => db.writeSetting(_scanBreadcrumbKey, '');
-
-  /// The durable trace is a separate record from the breadcrumb row: the
-  /// breadcrumb is cleared by a clean pass, and the next pass is exactly what
-  /// would otherwise erase the crashed one.
-  Future<void> _trace(String message) async {
-    final log = DiagnosticsLog.instance;
-    if (log != null) await log.note(message);
-  }
-
-  @override
-  Future<String?> lastScanStage() async {
-    final raw = await db.readSetting(_scanBreadcrumbKey);
-    if (raw == null || raw.isEmpty) return null;
-    try {
-      final value = jsonDecode(raw);
-      if (value is Map<String, Object?> && value['stage'] is String) {
-        final folder = value['folder'];
-        return folder is String && folder.isNotEmpty
-            ? '${value['stage']}（$folder）'
-            : value['stage']! as String;
-      }
-    } on FormatException {
-      // Fall through: a raw string is still more useful than silence.
-    }
-    return raw;
-  }
-
   /// Whether a shared-storage pass is in flight. One pass claims a folder,
   /// writes the platform journal and saves rows; a second pass running the same
   /// steps concurrently over the same task ids is how the dialog ended up
@@ -1045,7 +995,6 @@ final class SqliteDownloadRepository implements DownloadRepository {
   }) async {
     if (_publicStorage == null) return const DownloadScanResult();
     if (_scanRunning) {
-      await _trace('扫描重入被拒');
       return const DownloadScanResult(alreadyRunning: true);
     }
     _scanRunning = true;
@@ -1067,23 +1016,11 @@ final class SqliteDownloadRepository implements DownloadRepository {
   }) async {
     final storage = _publicStorage;
     if (storage == null) return const DownloadScanResult();
-    // Ahead of the queue load: a pass that dies inside `initialize` would
-    // otherwise leave no trace of ever having been asked.
-    await _trace('扫描请求');
-    // Whatever the native handler was doing when the last process died. This is
-    // the only evidence that survives a kill inside a provider call, where no
-    // reply and no Dart error ever arrive.
-    final stuckAt = await storage.lastNativeStep();
-    if (stuckAt != null && stuckAt.isNotEmpty) {
-      await _trace('原生上次停在 $stuckAt');
-    }
     await initialize();
     final cancel = cancellation ?? RequestCancellation();
     final scope = _scope;
     final epoch = _epoch;
-    await _noteScanStage('destination');
     final destination = await storage.destination();
-    await _trace('目的地 ${_destinationKind(destination)}');
     if (replaceCompleted) {
       // The queue is a mirror of this directory now. Rows completed against a
       // different shared directory cannot be opened from here, so they leave
@@ -1100,11 +1037,8 @@ final class SqliteDownloadRepository implements DownloadRepository {
       for (final id in stale) {
         await remove(id);
       }
-      await _trace('换目录让位 ${stale.length} 行');
     }
-    await _noteScanStage('listFolders');
     final folders = await storage.listPublishedFolders();
-    await _trace('扫描到 ${folders.length} 个已发布目录');
     final cached = await _scanCacheEntries();
     var imported = 0,
         refreshed = 0,
@@ -1146,12 +1080,10 @@ final class SqliteDownloadRepository implements DownloadRepository {
         final known = _tasks[hit.taskId];
         if (known != null && known.status == DownloadStatus.completed) {
           unchanged++;
-          await _trace('缓存命中 ${folder.name}');
           continue;
         }
       }
       final String text;
-      await _noteScanStage('readManifest', folder: folder.name);
       try {
         text = await storage.readPublishedText(
           folder: folder.key,
@@ -1161,7 +1093,6 @@ final class SqliteDownloadRepository implements DownloadRepository {
         refuse('${folder.name}: ${error.message}');
         continue;
       }
-      await _trace('清单已读 ${folder.name} ${text.length} 字符');
       final listed = {for (final file in folder.files) file.name: file.bytes};
       final parsed = parsePublishedManifest(
         manifestText: text,
@@ -1170,16 +1101,13 @@ final class SqliteDownloadRepository implements DownloadRepository {
       final data = parsed.manifest;
       if (data == null) {
         refuse('${folder.name}: ${parsed.reason}');
-        await _trace('清单拒绝 ${folder.name} ${parsed.reason}');
         continue;
       }
-      await _trace('清单通过 ${data.id}');
       final existing = _tasks[data.id];
       if (existing != null && existing.scope != scope) {
         // Another account claimed this part first; ownership does not move
         // just because this device opened the tab.
         ownedElsewhere++;
-        await _trace('他号已认领 ${folder.name}');
         continue;
       }
       final publicFiles = <String, String>{
@@ -1209,7 +1137,6 @@ final class SqliteDownloadRepository implements DownloadRepository {
               ),
       );
       try {
-        await _noteScanStage('adopt', folder: folder.name);
         await storage.adoptPublishedFolder(
           task: task,
           folder: folder.key,
@@ -1221,7 +1148,6 @@ final class SqliteDownloadRepository implements DownloadRepository {
       }
       await _save(task);
       _tasks[task.id] = task;
-      await _trace('入库 ${data.id}');
       await _rememberScan(
         folderKey: folder.key,
         taskId: task.id,
@@ -1231,13 +1157,11 @@ final class SqliteDownloadRepository implements DownloadRepository {
       final sidecar = folder.named('extras.json');
       if (sidecar != null) {
         try {
-          await _noteScanStage('copySidecar', folder: folder.name);
           await storage.copyPublishedSidecar(
             folder: folder.key,
             uri: sidecar.uri,
             targetPath: (await _files.taskFile(task, 'extras.json')).path,
           );
-          await _trace('附属文件已复制 ${folder.name}');
         } on AppFailure catch (error) {
           // The media still plays; losing the sidecar is a degradation the scan
           // reports, not a reason to refuse the part.
@@ -1251,19 +1175,11 @@ final class SqliteDownloadRepository implements DownloadRepository {
       }
       onTask?.call(task);
       _emit();
-      await _trace('已通知界面 ${data.id}');
     }
     // A partial pass must not forget the folders it never reached.
     if (!aborted) {
-      await _noteScanStage('pruneCache');
       await _forgetScans(visited);
     }
-    await _clearScanStage();
-    await _trace(
-      '扫描结束 目录=${folders.length} 导入=$imported 刷新=$refreshed '
-      '跳过=$unchanged 拒绝=$rejected 他号=$ownedElsewhere '
-      '${aborted ? '中止' : '完成'}',
-    );
     return DownloadScanResult(
       folders: folders.length,
       imported: imported,
@@ -1290,16 +1206,6 @@ final class SqliteDownloadRepository implements DownloadRepository {
   /// sits where every other row's does.
   Future<String> _scanRoot() async =>
       _preferences.directory ?? await _defaultDirectory();
-
-  /// Which of the three shared-storage shapes the destination is. The scan
-  /// behaves differently per shape and the device only exposes one of them, so
-  /// the log has to say which one a trace belongs to.
-  static String _destinationKind(String destination) {
-    if (destination == 'downloads') return '系统下载库';
-    if (destination.startsWith('file:')) return '私有路径';
-    if (destination.startsWith('content:')) return 'SAF 树';
-    return '未知形态';
-  }
 
   Future<Map<String, ({int bytes, int modifiedMs, String taskId})>>
   _scanCacheEntries() async {

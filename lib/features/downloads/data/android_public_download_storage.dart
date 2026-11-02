@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-import '../../../core/diagnostics/diagnostics_log.dart';
 import '../../../domain/app_failure.dart';
 import '../../../domain/request_cancellation.dart';
 import '../domain/download_models.dart';
@@ -11,26 +10,6 @@ import '../domain/public_download_storage.dart';
 final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
   const AndroidPublicDownloadStorage();
   static const _channel = MethodChannel('dev.bilisail/download_storage');
-
-  /// Coarse round trips only. The byte traffic of a download does not come
-  /// through [_call], so bracketing these keeps a row per storage operation -
-  /// which is what tells a call that never returned from one that did.
-  static const _traced = {
-    'destination',
-    'choose',
-    'listFolders',
-    'readText',
-    'copyPublished',
-    'adopt',
-    'publish',
-    'verify',
-    'delete',
-  };
-
-  /// How long a traced call may stay outstanding before the log records that it
-  /// is still waiting and asks the handler where it is. A provider that blocks
-  /// is invisible from Dart otherwise: the await simply never resumes.
-  static const _waitThreshold = Duration(seconds: 20);
 
   /// Calls whose work is bounded in bytes, so a provider that stops answering
   /// has to become a reported failure instead of a spinner that never ends.
@@ -46,59 +25,20 @@ final class AndroidPublicDownloadStorage implements PublicDownloadStorage {
   static const _deadline = Duration(seconds: 60);
 
   Future<T?> _call<T>(String method, [Map<String, Object?>? args]) async {
-    final log = DiagnosticsLog.instance;
-    final trace = log != null && _traced.contains(method);
-    Timer? watchdog;
-    if (trace) {
-      await log.note('原生 $method →');
-      watchdog = Timer(_waitThreshold, () {
-        unawaited(
-          lastNativeStep().then(
-            (step) => log.note(
-              '原生 $method 等待超过 ${_waitThreshold.inSeconds}s'
-              '${step == null || step.isEmpty ? '' : '，停在：$step'}',
-            ),
-          ),
-        );
-      });
-    }
     try {
       final pending = _channel.invokeMethod<T>(method, args);
-      final value = _deadlineMethods.contains(method)
+      return _deadlineMethods.contains(method)
           ? await pending.timeout(_deadline)
           : await pending;
-      if (trace) await log.note('原生 $method ←');
-      return value;
     } on TimeoutException {
-      if (trace) {
-        await log.note('原生 $method ✗ 超时 ${_deadline.inSeconds}s');
-      }
       throw const AppFailure(AppFailureKind.storage, '公共下载目录没有响应，已放弃本次操作');
     } on PlatformException catch (e) {
-      if (trace) {
-        await log.note('原生 $method ✗ ${e.code} ${e.message ?? ''}');
-      }
       throw AppFailure(
         e.code == 'permission'
             ? AppFailureKind.permission
             : AppFailureKind.storage,
         e.message ?? '公共下载位置不可用，请重新授权或连接存储设备',
       );
-    } finally {
-      watchdog?.cancel();
-    }
-  }
-
-  /// Where the previous process left the native side, or the step it is in right
-  /// now. Kept in preferences, so it survives being killed.
-  @override
-  Future<String?> lastNativeStep() async {
-    try {
-      return await _channel.invokeMethod<String>('lastNativeStep');
-    } on PlatformException {
-      return null;
-    } on MissingPluginException {
-      return null;
     }
   }
 

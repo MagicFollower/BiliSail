@@ -222,8 +222,6 @@ final class DownloadController extends Notifier<DownloadQueueState> {
     );
   }
 
-  Future<String?> lastScanStage() => _repository.lastScanStage();
-
   /// One opportunistic pass per process. The downloads tab is rebuilt every
   /// time the user switches to it, and each rebuild reaching shared storage
   /// would turn a navigation gesture into a platform scan.
@@ -274,8 +272,6 @@ final class _UnavailableDownloadRepository implements DownloadRepository {
     void Function(DownloadTask task)? onTask,
     bool replaceCompleted = false,
   }) async => const DownloadScanResult();
-  @override
-  Future<String?> lastScanStage() async => null;
   @override
   Future<void> updatePreferences(DownloadPreferences preferences) async {
     _state = DownloadQueueState(preferences: preferences, initialized: true);

@@ -54,10 +54,6 @@ abstract interface class DownloadRepository {
     bool replaceCompleted = false,
   });
 
-  /// The step a previous scan started but never finished, for the case where
-  /// the process dies mid-pass and no log is reachable. Null when the last
-  /// pass completed.
-  Future<String?> lastScanStage();
   Future<void> updatePreferences(DownloadPreferences preferences);
 
   /// Cancel old work synchronously before waiting for file handles to close.

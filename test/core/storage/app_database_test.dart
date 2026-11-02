@@ -112,7 +112,7 @@ void main() {
       expect(
         (await database.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        5,
+        6,
       );
     },
   );
@@ -157,7 +157,7 @@ void main() {
       expect(
         (await database.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        5,
+        6,
       );
       await database.close();
       await directory.delete(recursive: true);
@@ -221,7 +221,7 @@ void main() {
       expect(
         (await database.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        5,
+        6,
       );
     },
   );
@@ -286,27 +286,18 @@ void main() {
     await database.customStatement(
       "INSERT INTO download_scan_cache VALUES ('k','a',120,3000,4000)",
     );
-    // The v4 → v5 step in the same chain adds the diagnostic trace, also
-    // empty at first: it only ever holds what this run recorded.
-    expect(
-      (await database
-              .customSelect('SELECT COUNT(*) AS count FROM diagnostics_events')
-              .getSingle())
-          .read<int>('count'),
-      0,
-    );
     expect(
       (await database.customSelect('PRAGMA user_version').getSingle())
           .read<int>('user_version'),
-      5,
+      6,
     );
   });
 
   test(
-    'v4 migration keeps the queue and the scan cache and adds the trace',
+    'v5 migration drops the diagnostics trace and keeps queue and cache',
     () async {
       final directory = await Directory.systemTemp.createTemp(
-        'bilisail_v4_migration',
+        'bilisail_v5_migration',
       );
       final file = File('${directory.path}/client.sqlite');
       final database = AppDatabase(
@@ -337,7 +328,13 @@ void main() {
             sqlite.execute(
               "INSERT INTO download_scan_cache VALUES ('k','a',120,3000,4000)",
             );
-            sqlite.execute('PRAGMA user_version = 4');
+            sqlite.execute('''CREATE TABLE diagnostics_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,
+        at_ms INTEGER NOT NULL,message TEXT NOT NULL)''');
+            sqlite.execute(
+              "INSERT INTO diagnostics_events(run_id,at_ms,message) VALUES ('r',1,'m')",
+            );
+            sqlite.execute('PRAGMA user_version = 5');
           },
         ),
       );
@@ -367,16 +364,18 @@ void main() {
       expect(
         (await database
                 .customSelect(
-                  'SELECT COUNT(*) AS count FROM diagnostics_events',
+                  "SELECT COUNT(*) AS count FROM sqlite_master "
+                  "WHERE type='table' AND name='diagnostics_events'",
                 )
                 .getSingle())
             .read<int>('count'),
         0,
+        reason: 'nothing writes the trace any more, so it must not linger',
       );
       expect(
         (await database.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        5,
+        6,
       );
     },
   );

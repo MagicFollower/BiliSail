@@ -74,7 +74,7 @@ void main() {
         (await database.readSetting('preferences.v1'))!,
       ) as Map<String, Object?>;
       expect(snapshot['schemaVersion'], greaterThanOrEqualTo(28));
-      expect(database.schemaVersion, 5);
+      expect(database.schemaVersion, 6);
       final container = ProviderContainer(
         overrides: [settingsRepositoryProvider.overrideWithValue(repository)],
       );

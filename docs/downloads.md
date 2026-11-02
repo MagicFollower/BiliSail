@@ -275,3 +275,17 @@ BV1gDEUuUZA-P3 视频标题/
 
 未验证：真机上三种目的地（`file:` / MediaStore / SAF）之间来回切换后列表接管的手感；把目录切回原处时靠扫描重新认领的路径在用例里覆盖了，设备未取样。
 
+## 2026-11-02：诊断埋点全部撤除（schema 5→6）
+
+**更正上面两节的口径。** 崩溃面包屑、跨进程诊断日志、原生停点这三样是**一次性的定位手段**，根因（`copyPublished` 回投 `kotlin.Unit`）确认后已全部删除，不再记录任何日志，设置 → 关于里的「诊断日志」查看口也一并撤掉。它们记录的行为描述仍然成立，但不要再去代码里找对应实现。
+
+删除清单：
+
+- `lib/core/diagnostics/`（`diagnostics_log.dart`、`diagnostics_log_view.dart`）与其测试整目录删除；`main.dart` 里非 smoke 分支的 `FlutterError.onError` / `PlatformDispatcher.onError` 记录恢复为不安装（smoke 分支的 stderr 打点是发布烟测原有能力，保留）。
+- 表 `diagnostics_events` 不再创建。`schemaVersion` 5→6，`onUpgrade` 只在 `from == 5` 时 `DROP TABLE IF EXISTS diagnostics_events`；v1–v4 的老库沿链路升级时本来就没建过这张表，所以不需要 drop。迁移用例改成从 v5 起（含一条已写入的日志行）断言表消失、`download_tasks` 与 `download_scan_cache` 原样保留、`user_version` 为 6。
+- Kotlin `DownloadStorageHandler`：`nativeStep` 字段、`step()`、全部约 30 处打点、`lastNativeStep` 通道方法、`reply()` 包装（回投恢复为直接 `main.post { result.success(value) }` / `result.error(...)`）删除。`SharedPreferences` 里的 `native-step` 键不再写入，残留值无人读取。
+- Dart 侧：`PublicDownloadStorage.lastNativeStep()`、`DownloadRepository.lastScanStage()`、控制器转发、仓储的 `_scanBreadcrumbKey` / `_noteScanStage` / `_clearScanStage` / `_trace` / `_destinationKind`、下载设置对话框里的 `_lastStage` 红字全部删除。
+- **保留**（它们不是为定位这个 bug 加的观测，而是健壮性）：`catch (e: Throwable)` 而非 `Exception`——未捕获的 throwable 在任何线程上都会关掉整个进程；60 秒 `_deadlineMethods` 超时；`_scanRunning` 扫描重入闸门；`file:` 直读与 `fd.sync()`。
+
+验收：`flutter analyze` 无问题；`test/core/storage` + `test/features/settings` + `test/features/downloads` 全通过（迁移用例覆盖 v1/v2/v3/v5 四条链路）。**设备端未验证**：撤除埋点后卓易通上的下载 tab 仍需一次实机确认，判据是不闪退、扫描在几十毫秒内返回、下载设置对话框无红字。
+

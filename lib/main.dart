@@ -8,7 +8,6 @@ import 'package:flutter/services.dart';
 import 'app/bili_app.dart';
 import 'app/dependencies.dart';
 import 'app/release_smoke.dart';
-import 'core/diagnostics/diagnostics_log.dart';
 import 'core/presentation/bili_widgets_binding.dart';
 import 'core/presentation/window_input_focus.dart';
 import 'core/platform/macos_application_window.dart';
@@ -43,24 +42,6 @@ Future<void> main(List<String> arguments) async {
       smokeHadError = true;
       stderr.writeln('BILISAIL_RELEASE_SMOKE_ERROR:asynchronous');
       return true;
-    };
-  } else {
-    // The durable trace does not exist yet - the database opens later in main -
-    // so early errors queue and are flushed by DiagnosticsLog.install. A device
-    // with no log channel only ever gets these lines back through 设置 → 关于,
-    // and an uncaught Dart error in release does not close the process, so the
-    // point of recording them is to tell that case apart from a native kill.
-    FlutterError.onError = (details) {
-      DiagnosticsLog.recordEarly(
-        '框架错误 ${DiagnosticsLog.describeError(details.exception, details.stack)}',
-      );
-      FlutterError.presentError(details);
-    };
-    PlatformDispatcher.instance.onError = (error, stack) {
-      DiagnosticsLog.recordEarly(
-        '异步错误 ${DiagnosticsLog.describeError(error, stack)}',
-      );
-      return false;
     };
   }
   LicenseRegistry.addLicense(() async* {
@@ -118,14 +99,6 @@ Future<void> main(List<String> arguments) async {
     );
     final app = dependencies.scope(BiliApp(dependencies: dependencies));
     smokeStage('dependencies-ready');
-    if (smoke == null) {
-      final diagnostics = DiagnosticsLog(dependencies.database);
-      await diagnostics.trim();
-      await DiagnosticsLog.install(diagnostics);
-      await diagnostics.note(
-        '进程启动（${Platform.operatingSystem} ${Platform.operatingSystemVersion}）',
-      );
-    }
     present(app);
     if (smoke != null) {
       final mainWindow = applicationWindow;

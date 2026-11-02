@@ -77,12 +77,6 @@ abstract interface class PublicDownloadStorage {
   /// one level deep: the scan must never walk a user's unrelated subtree.
   Future<List<PublishedFolder>> listPublishedFolders();
 
-  /// Where this platform's native storage handler last reached, kept outside the
-  /// process so it survives being killed. It is the only trace left of a pass
-  /// that died inside a provider call, where no reply and no Dart error arrive.
-  /// A storage with no native side answers null.
-  Future<String?> lastNativeStep();
-
   /// Reads one small published text file, re-checking that it really is a child
   /// of [folder] and that its name is a manifest or the danmaku/subtitle sidecar.
   Future<String> readPublishedText({

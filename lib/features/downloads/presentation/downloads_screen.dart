@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/ui/app_dialog.dart';
-import '../../../core/diagnostics/diagnostics_log.dart';
 import '../../../core/presentation/workspace_activity.dart';
 import '../../../shared/ui/scroll_collapsing_header.dart';
 import '../../../domain/app_failure.dart';
@@ -88,7 +87,6 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   @override
   void initState() {
     super.initState();
-    DiagnosticsLog.instance?.note('下载页进入');
     // A reinstall keeps the published folders but wipes the queue database, so
     // one pass on first open puts them back. Once per screen instance, and only
     // where a shared download location exists at all.
@@ -97,7 +95,6 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
   void _autoScan() {
     if (!mounted) return;
-    DiagnosticsLog.instance?.note('下载页首帧后');
     // The once-per-process guard lives in the controller, because this screen's
     // state is not retained across tab switches.
     ref.read(downloadControllerProvider.notifier).autoScanOnce();
@@ -830,7 +827,6 @@ final class _DownloadSettingsDialogState
   String? _error;
   String? _publicDestination;
   String? _defaultDirectory;
-  String? _lastStage;
   DownloadScanResult? _scan;
   bool _scanning = false;
 
@@ -859,19 +855,10 @@ final class _DownloadSettingsDialogState
     } on Object {
       defaultDirectory = null;
     }
-    String? lastStage;
-    try {
-      lastStage = await ref
-          .read(downloadControllerProvider.notifier)
-          .lastScanStage();
-    } on Object {
-      lastStage = null;
-    }
     if (!mounted) return;
     setState(() {
       _publicDestination = publicDestination;
       _defaultDirectory = defaultDirectory;
-      _lastStage = lastStage;
     });
   }
 
@@ -1015,11 +1002,6 @@ final class _DownloadSettingsDialogState
             '每个分 P 存一个子目录，媒体与弹幕、字幕清单放在同一目录里；改位置只影响之后新增的任务。',
             style: Theme.of(context).textTheme.bodySmall,
           ),
-          if (_lastStage case final stage?)
-            Text(
-              '上次扫描未完成，停在：$stage',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
           if (openablePath != null)
             TextButton.icon(
               onPressed: _saving ? null : _openLocation,

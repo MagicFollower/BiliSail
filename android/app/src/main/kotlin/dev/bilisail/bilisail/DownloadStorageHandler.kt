@@ -43,20 +43,6 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
     private val taskLocks = ConcurrentHashMap<String, Any>()
     private val closed = AtomicBoolean(false)
     private var picker: MethodChannel.Result? = null
-
-    /**
-     * The last step this handler reached, kept in preferences so it survives a
-     * process kill. A signal-level crash inside a provider call leaves no
-     * Java-side trace and Dart only knows the call never returned; after a
-     * restart the scan reads this back and the log says which line of native
-     * code was in progress when the app closed.
-     */
-    @Volatile private var nativeStep: String = ""
-
-    private fun step(name: String) {
-        nativeStep = "${System.currentTimeMillis()} $name"
-        prefs.edit().putString("native-step", nativeStep).commit()
-    }
     private val requestCode = 5714
     private val mediaNames = setOf("video.m4s", "audio.m4s", "media.mp4", "media.mkv")
     private val sidecarNames = setOf("manifest.json", "extras.json", "cover.img")
@@ -128,19 +114,15 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             ?: throw IllegalArgumentException()
         val folders = when {
             destination.startsWith("file:") -> {
-                step("listFolders 应用私有路径")
                 fileFolders(externalDirectory(Uri.parse(destination).path!!))
             }
             destination == "downloads" -> {
-                step("listFolders 系统下载库")
                 mediaStoreFolders()
             }
             else -> {
-                step("listFolders  SAF 树")
                 treeFolders(root(destination))
             }
         }
-        step("listFolders 完成 ${folders.size} 项")
         return mapOf("destination" to destination, "folders" to folders)
     }
 
@@ -284,7 +266,6 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         uri: Uri,
     ) {
         if (destination.startsWith("file:")) {
-            step("归属校验 私有路径")
             require(uri.scheme == "file")
             val directory = File(folder)
             externalDirectory(directory.parentFile?.path ?: throw IllegalArgumentException())
@@ -295,7 +276,6 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             return
         }
         if (destination == "downloads") {
-            step("归属校验 系统下载库")
             require(uri.authority == MediaStore.AUTHORITY)
             resolver.query(
                 uri,
@@ -311,12 +291,10 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             } ?: throw java.io.FileNotFoundException()
             return
         }
-        step("归属校验 SAF 树")
         val tree = Uri.parse(destination)
         require(uri.authority == tree.authority)
         val folderUri = DocumentsContract.buildDocumentUriUsingTree(tree, folder)
         require(DocumentsContract.isChildDocument(resolver, folderUri, uri))
-        step("归属校验 SAF 查询名称")
         resolver.query(
             uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null,
         )?.use {
@@ -338,10 +316,8 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         val target = call.argument<String>("targetPath") ?: throw IllegalArgumentException()
         val limit = (call.argument<Int>("maxBytes") ?: 33554432).toLong()
         val uri = Uri.parse(raw)
-        step("copyPublished 校验归属")
         requirePublishedSidecar(destination, folder, uri)
         if (destination == "downloads") {
-            step("copyPublished 查询大小")
             resolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null)?.use {
                 if (it.moveToFirst() && !it.isNull(0)) require(it.getLong(0) <= limit)
             }
@@ -350,7 +326,6 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         require(file.parentFile?.isDirectory == true && file.name in textNames)
         val temp = File("${file.path}.tmp")
         try {
-            step("copyPublished 打开输入流")
             // A `file:` child is a plain file: reading it through the resolver
             // costs a binder round trip per 64 KB chunk for no benefit, and the
             // manifest reader already takes the direct path for this
@@ -360,7 +335,6 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             else
                 resolver.openInputStream(uri) ?: throw java.io.FileNotFoundException()
             source.use { input ->
-                step("copyPublished 写入临时文件")
                 temp.outputStream().use { output ->
                     val buffer = ByteArray(64 * 1024)
                     var total = 0L
@@ -371,15 +345,12 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                         if (total > limit) throw IOException("附属文件过大，已放弃复制")
                         output.write(buffer, 0, read)
                     }
-                    step("copyPublished 落盘 $total 字节")
                     output.flush()
                     if (output is java.io.FileOutputStream) output.fd.sync()
                 }
             }
-            step("copyPublished 替换正式文件")
             if (file.exists() && !file.delete()) throw IOException("替换离线附属文件失败")
             if (!temp.renameTo(file)) throw IOException("写入离线附属文件失败")
-            step("copyPublished 完成")
         } catch (e: Exception) {
             temp.delete()
             throw e
@@ -399,21 +370,17 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         val limit = call.argument<Int>("maxBytes") ?: 262144
         require(limit in 1..1048576)
         val uri = Uri.parse(raw)
-        step("readText 校验归属")
         requirePublishedSidecar(destination, folder, uri)
         if (destination.startsWith("file:")) {
             val file = File(uri.path ?: throw IllegalArgumentException())
             require(file.length() <= limit)
-            step("readText 私有路径读取")
             return file.readText()
         }
         if (destination == "downloads") {
-            step("readText 查询大小")
             resolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null)?.use {
                 if (it.moveToFirst() && !it.isNull(0)) require(it.getLong(0) <= limit)
             }
         }
-        step("readText 打开输入流")
         resolver.openInputStream(uri).use { input ->
             input ?: throw java.io.FileNotFoundException()
             val buffer = ByteArray(limit + 1)
@@ -457,16 +424,13 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             destination == "downloads" -> record.put("relativePath", folder)
             else -> record.put("folderDocId", folder)
         }
-        step("adopt 写 journal")
         save(key, record)
         try {
             for ((index, value) in files.values.toList().withIndex()) {
-                step("adopt 校验 ${index + 1}/${files.size} ${files.keys.toList()[index]}")
                 val uri = Uri.parse(value)
                 checkBoundary(record, uri)
                 readable(uri).close()
             }
-            step("adopt 完成")
         } catch (e: Exception) {
             // Leave no half-adopted journal behind.
             deleteRecord(key, record)
@@ -492,14 +456,6 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         }
         if (call.method == "cancel") {
             cancellations[key(call)]?.set(true); result.success(null); return
-        }
-        // Answered on the platform thread, never queued behind a wedged worker:
-        // the whole point of the marker is to be readable while a storage call
-        // is still stuck inside a provider.
-        if (call.method == "lastNativeStep") {
-            val stored = nativeStep.ifEmpty { prefs.getString("native-step", "") ?: "" }
-            result.success(stored)
-            return
         }
         val cancel = if (call.method == "publish") AtomicBoolean(false) else null
         if (cancel != null) cancellations[key(call)] = cancel
@@ -533,7 +489,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     "closeMedia" -> { leases.remove(call.argument<String>("lease"))?.close(); null }
                     else -> throw IllegalArgumentException("不支持的存储操作")
                 }
-                reply(call.method) { result.success(value) }
+                main.post { result.success(value) }
             } catch (e: Throwable) {
                 // Throwable, not Exception: an OutOfMemoryError or a
                 // NoClassDefFoundError from a virtualized provider used to
@@ -547,29 +503,11 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
                     is IllegalArgumentException -> "下载文件归属或保存位置无效"
                     else -> e.message ?: e.javaClass.simpleName
                 }
-                reply(call.method) {
+                main.post {
                     result.error(if (e is SecurityException) "permission" else "storage", message, null)
                 }
             } finally {
                 if (cancel != null) cancellations.remove(key(call), cancel)
-            }
-        }
-    }
-
-    /**
-     * Submits a reply on the platform thread and records a rejection instead of
-     * swallowing it. A payload the standard codec cannot encode - a Kotlin
-     * `Unit`, say - throws right here: before the guard that closed the whole
-     * process, wrapped in `runCatching` it became a call whose await never
-     * resumed. Either reading is a bug; the marker at least names it in the
-     * next scan's log.
-     */
-    private fun reply(name: String, submit: () -> Unit) {
-        main.post {
-            try {
-                submit()
-            } catch (e: Throwable) {
-                step("回投失败 $name ${e.javaClass.simpleName}")
             }
         }
     }
@@ -910,10 +848,8 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             record.getJSONObject("items").remove(name)
             save(key, record)
         }
-        step("delete 移除空目录")
         removeEmptyFolder(record)
         if (!prefs.edit().remove(key).commit()) throw IOException("保存删除结果失败")
-        step("delete 完成")
     }
 
     /**

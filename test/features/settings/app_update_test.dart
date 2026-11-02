@@ -593,7 +593,7 @@ void main() {
       await second.readSetting('preferences.v1'),
       '{"font":"harmonyOsSans"}',
     );
-    expect(second.schemaVersion, 5);
+    expect(second.schemaVersion, 6);
   });
   test(
     'startup stays offline while the opt-in is off and manual still checks',

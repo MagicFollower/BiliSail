@@ -507,8 +507,6 @@ final class _Repository implements DownloadRepository {
     bool replaceCompleted = false,
   }) async => const DownloadScanResult();
   @override
-  Future<String?> lastScanStage() async => null;
-  @override
   Future<void> updatePreferences(DownloadPreferences preferences) async {}
 }
 
