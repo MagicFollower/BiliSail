@@ -655,3 +655,19 @@ C 的落地要点：
 **验收：** 新增 `test/app/liquid_glass_dock_setting_test.dart` 3 项——默认建出 `LiquidDockNavi` 且没有 `NavigationBar`、底栏里能找到「历史」「下载」；关掉后建出 `NavigationBar` 且没有 `LiquidDockNavi`，点 `workspace-bottom-home` 能从 `/settings` 回到 `/`；关掉后 `/downloads` 落到无选中态的条。新增仓储用例 `the glass dock defaults on, survives old snapshots and round-trips`（v36 旧快照与四种非法值都回退 true，false/true 都能存回读回）。`test/features/settings/sqlite_settings_repository_test.dart` 的快照版本断言 36→37；`test/features/settings/font_selection_test.dart` 的外观用例补 `ensureVisible`——新开关把「界面字体」推到了 650×850 视口外，点击落空。`flutter analyze` 无问题。
 
 **未验证：** 真机上两套底栏的切换手感与 Material 底栏在卓易通里的表现；关掉开关后头像菜单里「下载管理」只在 `embedded` 为真时出现这一条，未在窄布局实机走一遍。
+
+## D76：上游 8 个提交的合并判定（2026-11-02 第二轮）
+
+分叉点 `2053716`（D73 那轮的 tip），本次取到 `5d7c48b`：8 个提交、41 文件、+2350/−71，全部集中在播放侧——听模式睡眠定时器、Dolby Vision Profile 5 在 Windows 上转 SDR、紧凑控制保留并加清晰度选择、全屏指针输入隔离与闲置光标隐藏、macOS 烟测预算、版本号 1.2.6+4。本地这一轮只动了下载诊断撤除、下拉圆环与底栏开关，**与上游零交叠**：除下表 7 处 modify/delete 外全部自动合并。
+
+| 项 | 判定 | 依据 |
+| --- | --- | --- |
+| `integration_test/windows_audio_quality_test.dart`、`windows_playback_test.dart`、`tool/fixtures/macos-smoke-process.ps1`、`tool/{macos-release-validation,macos-smoke-worker,test-macos-release-validation,test-windows-media}.ps1`（上游改、本地删） | **保持删除** | `f8e5506` 平台收敛已把 `windows/ macos/ ios/ linux/` 工程整链摘掉（`git ls-files` 命中 0），这些脚本与集成测试只服务不存在的工程；与 D73 同一处置。要回到多平台交付时按 `git checkout upstream/master -- <路径>` 取上游版本再评估。 |
+| 上游新增 `integration_test/windows_dolby_vision_test.dart`、`tool/test-windows-dolby-vision.ps1` | **不收** | 同一条理由：新增文件也是指向已删工程的入口，收了就是一处必然腐烂的死路径。 |
+| 上游新增 `docs/validation/{dolby-vision-profile5-2026-11-02,fullscreen-pointer-input-2026-11-02,listening-sleep-timer,player-compact-audio-controls-2026-11-02}.md` 与 `macos-release-startup.md` 的改动 | **收下** | 平台收敛只删构建链，文档保留（`docs/validation/` 现有 15 篇 Windows/macOS 记录）；新文档没有指向已删脚本的 markdown 链接，不产生断链。 |
+| `packages/bili_player` 的 Dolby Vision 路径（`native_video_color.dart` + `media_kit_engine.dart:706`） | **原样收下** | 钩子挂在 `Platform.isWindows && !audioOnly` 上，本树不可达但不报错。保持与上游逐字一致，是为了下次合并这里不再成为分叉点——为"我们跑不到"而删掉它，等于把上游的修复变成永久冲突源。 |
+| `pubspec.yaml` 版本 `1.2.6+3` → `1.2.6+4` | **取上游** | 版本号归上游，本地不另起序列。 |
+
+**验收：** `flutter pub get` 与 `flutter analyze` 无问题；根应用全量 `flutter test` **4093 通过、13 跳过**（合并前 4055，+38 为上游新增的睡眠定时器、清晰度、光标闲置与全屏指针用例）；`packages/bili_player` 包 138 项通过（含上游新增 `native_video_color_test.dart`）。这轮上游没有再写死旧的 `schemaVersion` 断言，D73 记的那条坑本轮未复现，但**合并后必跑全量**这条流程照旧。
+
+**未验证：** Dolby Vision P5→SDR 只在 Windows 生效，本树无法取样；`native_video_color.dart` 依赖真实容器元数据（`track-list/*/dolby-vision-profile`），单测用的是假 `read`；听模式睡眠定时器、紧凑控制里的清晰度选择、全屏闲置光标三处只过了 widget 用例，Android 实机（含卓易通容器）未跑；本轮未重跑 `bili_api`/`bili_danmaku`/`bili_mux` 三个包（上游未触碰）。

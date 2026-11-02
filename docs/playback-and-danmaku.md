@@ -1,5 +1,7 @@
 # 播放、直播与弹幕设计
 
+2026-11-02 按后续要求，普通小窗隐藏清晰度、倍速和音量的直接入口，通过“更多播放选项”调节，音质选择仍保留。宽屏／全屏沿用直接控件和点播音量菜单选音质；视频／影视共用换源、播放意图和导航检查点。范围、参考来源及验证见[小窗播放控件与音质选择](validation/player-compact-audio-controls-2026-11-02.md)。
+
 2026-11-01 继续定位键盘／触摸长按倍速的剩余停顿：在常驻变速滤镜之外，点播打开前将音频输出最小缓冲设为 50 ms，减少旧速率音频队列造成的视频等待与恢复速度时的追帧。网络缓存仍沿用原策略；Windows Flutter Profile 的 ABBA 对照、PiliPlus 参考及设备边界见[输出缓冲记录](validation/hold-rate-output-buffer-2026-11-01.md)。
 
 2026-11-01 后续核对：PiliPlus 的 Windows runner 明确关闭 Impeller，本项目也改为 Skia。实际硬解仍按 `hwdec-current` 读取，不能由 `auto` 或纹理复制日志推断；渲染后端的独立全屏对照、二进制哈希及验证边界见[Windows Skia 播放记录](validation/windows-skia-playback-2026-11-01.md)。
@@ -119,6 +121,8 @@ abstract interface class PlayerEngine {
 - `VideoSurface` 是 bili_player 的 Flutter UI 出口；`bili_player_control.dart` 提供不依赖 Flutter 的控制、诊断和输出生命周期契约，`VideoOutputSource` 提供稳定的输出对象。`VideoCompositionAdapter` 在应用根统一注入，负责画面构建与前景合成；当前仍使用 media-kit Video 与原 Stack，测试可分别替换 engine、output 和 composition。实现与后续平台边界见[输出与合成拆分](player-output-composition-design.md)。
 
 从用户偏好、服务端授权的 representation、后端支持和当前设备能力的交集选轨。优先使用经过验证的 H.264/AAC 组合；HEVC/AV1、HDR、高帧率逐项测试，不仅凭 codec 名宣称硬解成功。
+
+2026-11-02 修复 Windows Dolby Vision Profile 5 的绿／紫偏色：从容器元数据识别后，在解码前设置 libplacebo RPU／色彩转换，输出 BT.709／sRGB 的 SDR 纹理；该源自动模式使用 copy 硬解，其他视频保留原路径。公开样片、实际纹理对照及大会员／其他平台未测项见[Profile 5 验证](validation/dolby-vision-profile5-2026-11-02.md)。
 
 当前设置已提供 H.264/HEVC/AV1 点播编码偏好，以及三类播放共用的自动/软件解码方式。默认 H.264 和 SDK 自动模式；同清晰度优先匹配编码，缺失时使用其他已识别编码。源 generation 捕获偏好，下次打开/重新加载时应用；软件解码保持 GPU 渲染开启。具体选择顺序、SDK 差异和 Windows/其他平台验证边界见 [视频编解码设置](validation/video-codec-settings.md)。
 

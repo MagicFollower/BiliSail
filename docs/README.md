@@ -57,12 +57,14 @@
 | [性能热点 P2 优化结果](validation/performance-p2-results-2026-10-11.md) | 图片连接复用、分页索引、启动并发、字幕与评论、影视缓存／解码、直播对账及待实机测量项 |
 | [连续播放与下一集](validation/continuous-playback.md) | 分 P／合集／影视顺序、完播推进、设置持久化与全屏控件 |
 | [播放器音量均衡](validation/audio-normalization.md) | 标准／高动态／关闭、UGC／PGC 元数据、原生增益与验证边界 |
+| [小窗播放控件与音质选择](validation/player-compact-audio-controls-2026-11-02.md) | 小窗精简控件／更多选项调节、音质选择、换源保留与验证边界 |
 | [与 PiliPlus 的播放音量对照](validation/player-volume-piliplus-comparison-2026-11-01.md) | 默认原生音量、移动端系统／播放器控件差异、放大与音轨偏好、同源 A/B 条件及离线验证边界 |
 | [播放 GPU 与 PiliPlus 对照](validation/playback-gpu-piliplus-2026-11-01.md) | 固定依赖、透明合成、控件重复绘制修复与 Windows Profile 验证边界 |
 | [固定与滚动弹幕分层对照](validation/danmaku-layers-performance-2026-11-01.md) | 单一时钟、固定层保留、覆盖顺序及三类场景的 Profile 前后对照 |
 | [Windows 全屏弹幕与 Skia 对照](validation/windows-skia-playback-2026-11-01.md) | 实际硬解、PiliPlus 渲染后端差异、真实视频交叉对照及验证边界 |
 | [直通硬解调研与方案](hardware-decoding-plan-2026-11-01.md) | #44 发布追溯、Bili.Libre.Speed／Predidit 路径、各平台硬解设置与自有 fork 分阶段维护 |
 | [Windows ANGLE 直通硬解](validation/windows-angle-direct-hwdec-2026-11-01.md) | copy 回退修复、PiliPlus 实际链路差异、三组 Profile 交叉对照及原生验收边界 |
+| [Windows 杜比视界 Profile 5 偏色](validation/dolby-vision-profile5-2026-11-02.md) | 解码前色彩转换、公开 Dolby 样片、实际纹理颜色回归与平台边界 |
 | [听视频与音频控件](validation/listen-video.md) | 独立音轨、常驻响应式控件、切换／检查点及原生验证 |
 | [充电专属与付费视频](validation/video-access.md) | 权益分类、播放限制提示、官网入口与共享视频卡角标 |
 | [实施与验收](implementation-plan.md) | 技术验证、开发里程碑、测试、构建与发布要求 |
@@ -135,6 +137,7 @@
 | [视频 CDN 设置与测速](validation/video-cdn.md) | 自动／运营商与具体节点、点击展开测速、旧设置兼容、备用与取消 |
 | [悬停预览加载延迟](validation/video-preview-loading.md) | 官网无音轨预览、cid 直传、CDN 顺序、启动预算、静止窗口与首帧切换 |
 | [播放控件与小窗布局](validation/responsive-player.md) | 单行工具栏、弹幕输入自适应、窄窗口布局和播放状态保留 |
+| [全屏鼠标与滚轮输入](validation/fullscreen-pointer-input-2026-11-02.md) | #60 的视频输出输入隔离、全屏光标空闲隐藏与 Windows 验证边界 |
 | [播放器顶部导航与人数](validation/player-top-navigation.md) | 返回／回主页的三种模式、全屏动作、UGC 正在观看人数与取消隔离 |
 | [移动端弹幕输入与键盘布局](validation/mobile-danmaku-keyboard-performance.md) | 高度变化局部布局、控件测量复用、直播弹幕缓存保留及结构对比 |
 | [视频章节与悬停缩略图](validation/playback-timeline.md) | 自适应分段、雪碧图裁剪、预览生命周期与真实视频验证 |

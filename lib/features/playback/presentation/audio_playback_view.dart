@@ -9,7 +9,9 @@ import '../../../shared/ui/app_cover_image.dart';
 import '../../../shared/ui/playback_page_commands.dart';
 import '../application/playback_session.dart';
 import 'audio_subtitle_lyrics.dart';
+import 'listening_sleep_timer_button.dart';
 import 'playback_snapshot_builder.dart';
+import 'player_control_labels.dart';
 
 /// A listening surface with localized timeline and subtitle updates.
 class AudioPlaybackView extends StatelessWidget {
@@ -62,7 +64,11 @@ class AudioPlaybackView extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (bounds.maxWidth < 380 ||
+                      ListeningSleepTimerButton(
+                        session: session,
+                        compact: bounds.maxWidth < 520,
+                      ),
+                      if (bounds.maxWidth < 520 ||
                           MediaQuery.textScalerOf(context).scale(14) > 18)
                         IconButton(
                           key: const ValueKey('audio-return-video'),
@@ -190,6 +196,17 @@ class AudioPlaybackView extends StatelessWidget {
                         tooltip: '听视频选项',
                         onSelected: (action) => action(),
                         itemBuilder: (_) => [
+                          if (session.media case final media?)
+                            for (final option in media.audioTracks)
+                              CheckedPopupMenuItem(
+                                checked: media.audioQuality == option.quality,
+                                value: () => unawaited(
+                                  session.changeAudioQuality(option.quality),
+                                ),
+                                child: Text(
+                                  '音质 ${playbackAudioQualityLabel(option.quality)}',
+                                ),
+                              ),
                           if (session.subtitleTracks.isNotEmpty) ...[
                             CheckedPopupMenuItem(
                               checked: session.selectedSubtitle == -1,

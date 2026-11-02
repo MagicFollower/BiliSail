@@ -60,6 +60,197 @@ import 'package:flutter_test/flutter_test.dart';
 final _composerScopeProvider = Provider<String>((ref) => 'root');
 
 void main() {
+  for (final fullScreen in [false, true]) {
+    testWidgets(
+      'compact more menu switches audio quality fullscreen=$fullScreen',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(400, 900);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final engine = _FakeEngine();
+        final session = _session(
+          engine,
+          repository: _MenuRepository(withAudioTracks: true),
+        );
+        addTearDown(session.close);
+        await tester.pumpWidget(
+          _app(
+            session,
+            _FakeWindowService(),
+            const AppSettings.defaults(),
+            width: 320,
+            textScale: 2,
+          ),
+        );
+        await _pumpFrames(tester);
+        await _showControls(tester);
+        if (fullScreen) {
+          await tester.tap(find.byTooltip('全屏（F）'));
+          await _pumpFrames(tester);
+        }
+        await session.pause();
+        await session.seek(const Duration(seconds: 45));
+        await session.setRate(1.5);
+        await session.setVolume(36);
+        await _pumpFrames(tester);
+
+        Future<void> openChoices() async {
+          await _showControls(tester);
+          await tester.tap(find.byTooltip('更多播放选项'));
+          await tester.pumpAndSettle();
+          if (!fullScreen) {
+            final audio = find.widgetWithText(ExpansionTile, '音质');
+            await tester.ensureVisible(audio);
+            await tester.pumpAndSettle();
+            await tester.tap(audio);
+            await tester.pumpAndSettle();
+          }
+        }
+
+        String label(String quality) => fullScreen ? '音质 $quality' : quality;
+        Finder choice(String quality) => fullScreen
+            ? find.widgetWithText(
+                CheckedPopupMenuItem<VoidCallback>,
+                label(quality),
+              )
+            : find.byWidgetPredicate(
+                (widget) =>
+                    widget is ListTile &&
+                    widget.title is Text &&
+                    (widget.title as Text).data == quality,
+              );
+        bool checked(String quality) {
+          if (fullScreen) {
+            return tester
+                .widget<CheckedPopupMenuItem<VoidCallback>>(choice(quality))
+                .checked;
+          }
+          return tester.widget<ListTile>(choice(quality)).selected;
+        }
+
+        await openChoices();
+        expect(checked('AAC · 192K'), isTrue);
+        expect(find.text(label('杜比音频')), findsNothing);
+        final lossless = choice('Hi-Res / FLAC 无损');
+        await tester.ensureVisible(lossless);
+        await tester.pumpAndSettle();
+        expect(lossless.hitTestable(), findsOneWidget);
+        await tester.tap(lossless);
+        await _pumpFrames(tester);
+        expect(session.media?.audioQuality, AudioQualityPreference.lossless);
+        expect(engine.currentSnapshot.position, const Duration(seconds: 45));
+        expect(engine.currentSnapshot.rate, 1.5);
+        expect(engine.currentSnapshot.volume, 36);
+        expect(engine.currentSnapshot.desiredPlaying, isFalse);
+        if (!fullScreen && find.byTooltip('关闭更多播放选项').evaluate().isNotEmpty) {
+          await tester.tap(find.byTooltip('关闭更多播放选项'));
+          await tester.pumpAndSettle();
+        }
+        await openChoices();
+        expect(checked('Hi-Res / FLAC 无损'), isTrue);
+        final aac = choice('AAC · 192K');
+        await tester.ensureVisible(aac);
+        await tester.pumpAndSettle();
+        await tester.tap(aac);
+        await _pumpFrames(tester);
+        expect(session.media?.audioQuality, AudioQualityPreference.aac192);
+        expect(engine.opens, 3);
+        expect(engine.maxSurfaces, 1);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+      },
+    );
+  }
+  for (final width in [320.0, 1200.0]) {
+    for (final fullScreen in [false, true]) {
+      if (width == 320 && !fullScreen) continue;
+      testWidgets(
+        'volume menu switches available audio quality width=$width fullscreen=$fullScreen',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = Size(width == 320 ? 400 : 1400, 1000);
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final engine = _FakeEngine();
+          final session = _session(
+            engine,
+            repository: _MenuRepository(withAudioTracks: true),
+          );
+          addTearDown(session.close);
+          await tester.pumpWidget(
+            _app(
+              session,
+              _FakeWindowService(),
+              const AppSettings.defaults(),
+              width: width,
+              textScale: width == 320 ? 2 : 1,
+            ),
+          );
+          await _pumpFrames(tester);
+          await _showControls(tester);
+          if (fullScreen) {
+            await tester.tap(find.byTooltip('全屏（F）'));
+            await _pumpFrames(tester);
+          }
+          await session.pause();
+          await session.seek(const Duration(seconds: 45));
+          await session.setRate(1.5);
+          await session.setVolume(36);
+          await _pumpFrames(tester);
+          await _showControls(tester);
+          await tester.tap(find.byTooltip('音量'));
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('player-volume-slider')),
+            findsOneWidget,
+          );
+          expect(find.text('音质'), findsOneWidget);
+          expect(find.text('杜比音频'), findsNothing);
+          final current = find.widgetWithText(
+            CheckedPopupMenuItem<AudioQualityPreference>,
+            'AAC · 192K',
+          );
+          expect(
+            tester
+                .widget<CheckedPopupMenuItem<AudioQualityPreference>>(current)
+                .checked,
+            isTrue,
+          );
+          await tester.tap(find.text('Hi-Res / FLAC 无损'));
+          await _pumpFrames(tester);
+          expect(session.media?.audioQuality, AudioQualityPreference.lossless);
+          expect(engine.opens, 2);
+          expect(engine.currentSnapshot.position, const Duration(seconds: 45));
+          expect(engine.currentSnapshot.rate, 1.5);
+          expect(engine.currentSnapshot.volume, 36);
+          expect(engine.currentSnapshot.desiredPlaying, isFalse);
+          await _showControls(tester);
+          await tester.tap(find.byTooltip('音量'));
+          await tester.pumpAndSettle();
+          final selected = find.widgetWithText(
+            CheckedPopupMenuItem<AudioQualityPreference>,
+            'Hi-Res / FLAC 无损',
+          );
+          expect(
+            tester
+                .widget<CheckedPopupMenuItem<AudioQualityPreference>>(selected)
+                .checked,
+            isTrue,
+          );
+          await tester.tap(find.text('AAC · 192K'));
+          await _pumpFrames(tester);
+          expect(session.media?.audioQuality, AudioQualityPreference.aac192);
+          expect(engine.opens, 3);
+          expect(engine.maxSurfaces, 1);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox());
+          await _pumpFrames(tester);
+        },
+      );
+    }
+  }
   for (final (content, target) in <(String, ContentPlaybackTarget?)>[
     ('video', null),
     ('pgc', const PgcPlaybackTarget('12', cid: '123')),
@@ -157,8 +348,9 @@ void main() {
           expect(find.byTooltip('更多播放选项'), findsOneWidget);
           expect(find.byIcon(Icons.more_horiz), findsOneWidget);
           for (final tooltip in [
-            '播放速度',
             '清晰度',
+            '直播清晰度与线路',
+            '播放速度',
             '音量',
             '字幕',
             '语音翻译',
@@ -194,17 +386,10 @@ void main() {
             tester.getTopLeft(find.byTooltip('更多播放选项')).dx,
             greaterThan(tester.getTopLeft(find.byTooltip('播放配置')).dx),
           );
-          final fullscreenY = tester.getCenter(find.byTooltip('全屏（F）')).dy;
-          final controls = find.descendant(
-            of: find.byKey(const ValueKey('player-controls')),
-            matching: find.byType(Tooltip),
+          expect(
+            find.byKey(const ValueKey('small-window-quality-audio-row')),
+            findsNothing,
           );
-          for (var i = 0; i < controls.evaluate().length; i++) {
-            expect(
-              tester.getCenter(controls.at(i)).dy,
-              closeTo(fullscreenY, .1),
-            );
-          }
           await tester.tap(find.byTooltip('更多播放选项'));
           await tester.pumpAndSettle();
           final drawer = find.byKey(const ValueKey('player-more-dialog'));
@@ -4632,7 +4817,7 @@ void main() {
     testWidgets('$content player wheel adjusts volume inline and fullscreen', (
       tester,
     ) async {
-      final engine = _FakeEngine();
+      final engine = _FakeEngine()..interactiveSurface = true;
       final session = _session(engine);
       addTearDown(session.close);
       await tester.pumpWidget(
@@ -4675,6 +4860,7 @@ void main() {
         expect(engine.currentSnapshot.position, position);
         expect(engine.currentSnapshot.desiredPlaying, isFalse);
         expect(engine.currentSnapshot.generation, generation);
+        expect(engine.surfaceGestures, 0);
         expect(engine.opens, 1);
         expect(engine.maxSurfaces, 1);
       }
@@ -9059,6 +9245,104 @@ void main() {
     _expectPlayerSemantics(tester, '退出全屏（Esc）', focused: true);
     semantics.dispose();
   });
+
+  for (final mode in PlayerControlsMode.values) {
+    for (final (content, target) in <(String, ContentPlaybackTarget?)>[
+      ('video', null),
+      ('pgc', const PgcPlaybackTarget('12', cid: '123')),
+      ('live', const LivePlaybackTarget('12')),
+      ('offline', const OfflinePlaybackTarget('local-task')),
+    ]) {
+      testWidgets('$content fullscreen cursor idles and restores in $mode', (
+        tester,
+      ) async {
+        _resumeApp(tester);
+        final engine = _FakeEngine();
+        final session = _session(engine);
+        addTearDown(session.close);
+        await tester.pumpWidget(
+          _app(
+            session,
+            _FakeWindowService(),
+            AppSettings(playerControlsMode: mode),
+            target: target,
+          ),
+        );
+        await _pumpFrames(tester);
+        await _showControls(tester);
+        await tester.tap(find.byTooltip('全屏（F）'));
+        await _pumpFrames(tester);
+        final mouse = await tester.createGesture(
+          kind: PointerDeviceKind.mouse,
+          pointer: 1,
+        );
+        await mouse.addPointer(location: const Offset(-10, -10));
+        final point = tester.getCenter(
+          find.byKey(const ValueKey('player-surface-tap-target')),
+        );
+        await mouse.moveTo(point);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 6));
+        await tester.pump(const Duration(milliseconds: 216));
+        await tester.pump();
+        final tracker = RendererBinding.instance.mouseTracker;
+        expect(find.byKey(const ValueKey('player-controls')), findsNothing);
+        expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.none);
+
+        if (target == null) {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          await tester.pump();
+          expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.basic);
+          _resumeApp(tester);
+          await tester.pump(const Duration(seconds: 6));
+          await tester.pump(const Duration(milliseconds: 216));
+          await tester.pump();
+          expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.none);
+        }
+
+        await mouse.moveTo(point + const Offset(5, 0));
+        await tester.pump();
+        expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.basic);
+        await tester.pump(const Duration(milliseconds: 2499));
+        expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.basic);
+        await tester.pump(const Duration(milliseconds: 1));
+        await tester.pump();
+        expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.none);
+        await mouse.moveTo(point + const Offset(10, 0));
+        await tester.pump();
+        if (mode == PlayerControlsMode.click) {
+          expect(find.byKey(const ValueKey('player-controls')), findsNothing);
+          await tester.tapAt(point);
+          await _pumpSurfaceTap(tester);
+        }
+        await mouse.moveTo(tester.getCenter(find.byTooltip('音量')));
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 6));
+        expect(
+          tracker.debugDeviceActiveCursor(1),
+          isNot(SystemMouseCursors.none),
+        );
+        expect(find.byKey(const ValueKey('player-controls')), findsOneWidget);
+        await mouse.moveTo(point);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 6));
+        await _pumpFrames(tester);
+        expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.none);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await _pumpFrames(tester);
+        await mouse.moveTo(_surfacePoint(tester));
+        await tester.pump(const Duration(seconds: 6));
+        expect(tracker.debugDeviceActiveCursor(1), SystemMouseCursors.basic);
+        expect(engine.opens, 1);
+        expect(engine.maxSurfaces, 1);
+        await mouse.removePointer();
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+      });
+    }
+  }
 }
 
 void _expectPlayerSemantics(
@@ -9692,30 +9976,54 @@ final class _FakePlaybackRepository implements PlaybackRepository {
 
 final class _MenuRepository extends Fake
     implements PlaybackRepository, VoicePlaybackRepository {
+  _MenuRepository({this.withAudioTracks = false});
+  final bool withAudioTracks;
   static const voice = PlaybackVoice(
     languageCode: 'en',
     label: 'English',
     productionType: 2,
     subtitleLanguage: 'ai-en',
   );
-  PlaybackMedia _media(int quality, PlaybackVoice selected) => PlaybackMedia(
-    video: PlaybackTrack(
-      urls: [Uri.https('example.test', '/video/${selected.languageCode}')],
-      codec: 'avc1',
-      bandwidth: 1000,
-    ),
-    audio: PlaybackTrack(
+  PlaybackMedia _media(int quality, PlaybackVoice selected) {
+    final audio = PlaybackTrack(
       urls: [Uri.https('example.test', '/audio/${selected.languageCode}')],
       codec: 'mp4a',
       bandwidth: 128,
-    ),
-    quality: quality,
-    qualities: const [64, 80],
-    duration: const Duration(minutes: 3),
-    headers: const {},
-    voices: const [voice],
-    voice: selected,
-  );
+    );
+    return PlaybackMedia(
+      video: PlaybackTrack(
+        urls: [Uri.https('example.test', '/video/${selected.languageCode}')],
+        codec: 'avc1',
+        bandwidth: 1000,
+      ),
+      audio: audio,
+      audioTracks: withAudioTracks
+          ? [
+              PlaybackAudioTrack(
+                quality: AudioQualityPreference.aac192,
+                track: audio,
+              ),
+              PlaybackAudioTrack(
+                quality: AudioQualityPreference.lossless,
+                track: PlaybackTrack(
+                  urls: [
+                    Uri.https('example.test', '/flac/${selected.languageCode}'),
+                  ],
+                  codec: 'fLaC',
+                  bandwidth: 900000,
+                ),
+              ),
+            ]
+          : const [],
+      quality: quality,
+      qualities: const [64, 80],
+      duration: const Duration(minutes: 3),
+      headers: const {},
+      voices: const [voice],
+      voice: selected,
+    );
+  }
+
   @override
   Future<PlaybackMedia> resolve(
     VideoId video,
