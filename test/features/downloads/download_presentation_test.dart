@@ -644,6 +644,8 @@ final class _DownloadRepository implements DownloadRepository {
     void Function(DownloadTask task)? onTask,
   }) async => const DownloadScanResult();
   @override
+  Future<String?> lastScanStage() async => null;
+  @override
   Future<void> updatePreferences(DownloadPreferences preferences) async {}
   @override
   Future<void> sessionChanged() async {}

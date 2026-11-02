@@ -83,7 +83,6 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   String _shownQuery = '';
   List<DownloadTaskEntry> _shown = const [];
   Map<String, int> _shownIndices = const {};
-  bool _autoScanned = false;
 
   @override
   void initState() {
@@ -95,13 +94,10 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   }
 
   void _autoScan() {
-    if (_autoScanned || !mounted) return;
-    _autoScanned = true;
-    if (ref.read(publicDownloadStorageProvider) == null) return;
-    ref
-        .read(downloadControllerProvider.notifier)
-        .scanShared()
-        .catchError((Object _) => null);
+    if (!mounted) return;
+    // The once-per-process guard lives in the controller, because this screen's
+    // state is not retained across tab switches.
+    ref.read(downloadControllerProvider.notifier).autoScanOnce();
   }
 
   List<DownloadTaskEntry> _shownEntries(DownloadQueueStructure structure) {
@@ -837,6 +833,7 @@ final class _DownloadSettingsDialogState
   String? _error;
   String? _publicDestination;
   String? _defaultDirectory;
+  String? _lastStage;
   DownloadScanResult? _scan;
   bool _scanning = false;
 
@@ -865,10 +862,19 @@ final class _DownloadSettingsDialogState
     } on Object {
       defaultDirectory = null;
     }
+    String? lastStage;
+    try {
+      lastStage = await ref
+          .read(downloadControllerProvider.notifier)
+          .lastScanStage();
+    } on Object {
+      lastStage = null;
+    }
     if (!mounted) return;
     setState(() {
       _publicDestination = publicDestination;
       _defaultDirectory = defaultDirectory;
+      _lastStage = lastStage;
     });
   }
 
@@ -993,6 +999,11 @@ final class _DownloadSettingsDialogState
             '每个分 P 存一个子目录，媒体与弹幕、字幕清单放在同一目录里；改位置只影响之后新增的任务。',
             style: Theme.of(context).textTheme.bodySmall,
           ),
+          if (_lastStage case final stage?)
+            Text(
+              '上次扫描未完成，停在：$stage',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           if (openablePath != null)
             TextButton.icon(
               onPressed: _saving ? null : _openLocation,

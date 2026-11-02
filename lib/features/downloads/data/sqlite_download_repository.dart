@@ -983,6 +983,41 @@ final class SqliteDownloadRepository implements DownloadRepository {
     _pump();
   }
 
+  static const _scanBreadcrumbKey = 'download-scan-breadcrumb';
+
+  /// Records the step about to run so a pass that takes the process down can
+  /// still be located afterwards. The HarmonyOS Android-compatibility container
+  /// gives no logcat, and the failure only shows up as the app closing.
+  Future<void> _noteScanStage(String stage, {String folder = ''}) =>
+      db.writeSetting(
+        _scanBreadcrumbKey,
+        jsonEncode({
+          'stage': stage,
+          'folder': folder,
+          'atMs': _clock().millisecondsSinceEpoch,
+        }),
+      );
+
+  Future<void> _clearScanStage() => db.writeSetting(_scanBreadcrumbKey, '');
+
+  @override
+  Future<String?> lastScanStage() async {
+    final raw = await db.readSetting(_scanBreadcrumbKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final value = jsonDecode(raw);
+      if (value is Map<String, Object?> && value['stage'] is String) {
+        final folder = value['folder'];
+        return folder is String && folder.isNotEmpty
+            ? '${value['stage']}（$folder）'
+            : value['stage']! as String;
+      }
+    } on FormatException {
+      // Fall through: a raw string is still more useful than silence.
+    }
+    return raw;
+  }
+
   @override
   Future<DownloadScanResult> scanShared({
     RequestCancellation? cancellation,
@@ -994,7 +1029,9 @@ final class SqliteDownloadRepository implements DownloadRepository {
     final cancel = cancellation ?? RequestCancellation();
     final scope = _scope;
     final epoch = _epoch;
+    await _noteScanStage('destination');
     final destination = await storage.destination();
+    await _noteScanStage('listFolders');
     final folders = await storage.listPublishedFolders();
     final cached = await _scanCacheEntries();
     var imported = 0,
@@ -1041,6 +1078,7 @@ final class SqliteDownloadRepository implements DownloadRepository {
         }
       }
       final String text;
+      await _noteScanStage('readManifest', folder: folder.name);
       try {
         text = await storage.readPublishedText(
           folder: folder.key,
@@ -1094,6 +1132,7 @@ final class SqliteDownloadRepository implements DownloadRepository {
               ),
       );
       try {
+        await _noteScanStage('adopt', folder: folder.name);
         await storage.adoptPublishedFolder(
           task: task,
           folder: folder.key,
@@ -1114,6 +1153,7 @@ final class SqliteDownloadRepository implements DownloadRepository {
       final sidecar = folder.named('extras.json');
       if (sidecar != null) {
         try {
+          await _noteScanStage('copySidecar', folder: folder.name);
           await storage.copyPublishedSidecar(
             folder: folder.key,
             uri: sidecar.uri,
@@ -1135,8 +1175,10 @@ final class SqliteDownloadRepository implements DownloadRepository {
     }
     // A partial pass must not forget the folders it never reached.
     if (!aborted) {
+      await _noteScanStage('pruneCache');
       await _forgetScans(visited);
     }
+    await _clearScanStage();
     return DownloadScanResult(
       folders: folders.length,
       imported: imported,

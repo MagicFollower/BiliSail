@@ -219,6 +219,18 @@ final class DownloadController extends Notifier<DownloadQueueState> {
     return _repository.scanShared(onTask: onTask);
   }
 
+  Future<String?> lastScanStage() => _repository.lastScanStage();
+
+  /// One opportunistic pass per process. The downloads tab is rebuilt every
+  /// time the user switches to it, and each rebuild reaching shared storage
+  /// would turn a navigation gesture into a platform scan.
+  bool _opportunisticScanDone = false;
+  Future<DownloadScanResult?> autoScanOnce() {
+    if (_opportunisticScanDone) return Future.value();
+    _opportunisticScanDone = true;
+    return scanShared().catchError((Object _) => null);
+  }
+
   Future<void> updatePreferences(DownloadPreferences preferences) =>
       _repository.updatePreferences(preferences);
 }
@@ -258,6 +270,8 @@ final class _UnavailableDownloadRepository implements DownloadRepository {
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
   }) async => const DownloadScanResult();
+  @override
+  Future<String?> lastScanStage() async => null;
   @override
   Future<void> updatePreferences(DownloadPreferences preferences) async {
     _state = DownloadQueueState(preferences: preferences, initialized: true);

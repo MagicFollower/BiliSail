@@ -450,6 +450,8 @@ final class _FakeDownloads implements DownloadRepository {
     void Function(DownloadTask task)? onTask,
   }) async => const DownloadScanResult();
   @override
+  Future<String?> lastScanStage() async => null;
+  @override
   Future<DownloadTask> offlineTask(String id) async {
     offlineReads++;
     if (!started.isCompleted) started.complete();
