@@ -27,27 +27,10 @@ class ApiFeedRepository
   final BiliApiClient api;
   final ApiRequests requests;
 
-  // The rcmd sampler has no page number: fresh_idx is a pull index that must
-  // keep rising, otherwise every refresh re-asks the same batch (visible signed
-  // out, where nothing else varies the request). Only a deeper page whose
-  // request never completed reuses its index, so an explicit retry cannot skip
-  // a batch; a refresh always means "pull again", even after the previous pull
-  // succeeded with an empty batch (ads or non-video cards filtered out).
   int _recommendationIndex = 0;
-  int _recommendationPage = 0;
-  bool _recommendationSettled = false;
-
-  int _recommendationPullIndex(int page) {
-    if (page > 1 && page == _recommendationPage && !_recommendationSettled) {
-      return _recommendationIndex;
-    }
-    _recommendationIndex = page > _recommendationPage
-        ? _recommendationIndex + (page - _recommendationPage)
-        : _recommendationIndex + 1;
-    _recommendationPage = page;
-    _recommendationSettled = false;
-    return _recommendationIndex;
-  }
+  // A refresh owns a new cancellation scope. Weak keys retain failed-page
+  // indices for explicit retries without retaining closed query lifetimes.
+  final _recommendationPulls = Expando<_RecommendationPull>();
 
   @override
   String get feedbackScope => 'session:${requests.sessionEpoch}';
@@ -339,26 +322,36 @@ class ApiFeedRepository
     required int page,
     required String? categoryId,
     required RequestCancellation cancellation,
-  }) {
-    final pullIndex = categoryId == null
-        ? _recommendationPullIndex(page)
-        : page;
-    return requests.run((context) async {
-      final result = _mapPage(
-        categoryId == null
-            ? await api.getRecommended(page: pullIndex, context: context)
-            : await api.getRegionalVideos(
-                categoryId: categoryId,
-                page: page,
-                context: context,
-              ),
+  }) => requests.run((context) async {
+    if (categoryId != null) {
+      return _mapPage(
+        await api.getRegionalVideos(
+          categoryId: categoryId,
+          page: page,
+          context: context,
+        ),
       );
-      if (categoryId == null) {
-        _recommendationSettled = true;
-      }
-      return result;
-    }, cancellation: cancellation);
-  }
+    }
+    if (page < 1) throw ArgumentError.value(page, 'page');
+    final epoch = requests.sessionEpoch;
+    final pending = _recommendationPulls[cancellation];
+    final pull =
+        pending != null && pending.page == page && pending.epoch == epoch
+        ? pending
+        : _RecommendationPull(page, ++_recommendationIndex, epoch);
+    _recommendationPulls[cancellation] = pull;
+    final result = _mapPage(
+      await api.getRecommended(page: pull.index, context: context),
+    );
+    // An empty success also consumes its sample. A late old response must not
+    // clear the retry index of a newer page or account session.
+    if (!cancellation.isCancelled &&
+        epoch == requests.sessionEpoch &&
+        identical(_recommendationPulls[cancellation], pull)) {
+      _recommendationPulls[cancellation] = null;
+    }
+    return result;
+  }, cancellation: cancellation);
 
   @override
   Future<PageResult<VideoSummary>> loadRanking({
@@ -448,4 +441,12 @@ class ApiFeedRepository
             .toList(growable: false),
         hasMore: result.hasMore,
       );
+}
+
+final class _RecommendationPull {
+  const _RecommendationPull(this.page, this.index, this.epoch);
+
+  final int page;
+  final int index;
+  final int epoch;
 }

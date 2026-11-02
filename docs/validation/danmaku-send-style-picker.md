@@ -10,7 +10,7 @@
 
 ## 交互与适配
 
-- 视频与影视、普通与全屏继续共用 [样式按钮](../../lib/shared/ui/danmaku_send_style_button.dart) 和 [面板](../../lib/shared/ui/danmaku_send_style_panel.dart)，已选样式仍归 `PlaybackSession` 持有，没有新增全局偏好或数据库迁移。
+- 视频与影视、普通与全屏继续共用 [样式按钮](../../lib/shared/ui/danmaku_send_style_button.dart) 和 [面板](../../lib/shared/ui/danmaku_send_style_panel.dart)。2026-11-01 按用户后续要求改为全局保存，`PlaybackSession` 同步当前偏好供发送使用，详见下文。
 - 一次打开可同时调整滚动／顶部／底部和颜色，深浅两种背景预览当前颜色；点击“完成”一次性应用。关闭、取消、遮罩或 Escape 丢弃草稿，不改变已有设置，也不发送弹幕。打开／取消不清除发送栏文字。
 - 面板按当前窗口可用空间适配：宽度小于 600 时靠底，其他情况居中，内容最大宽度 440。使用现有 `showAppDialog`，保持当前 View 的弹层归属、模态快捷键隔离和焦点循环，不创建额外原生窗口。
 - 色块为 44×44，提供名称提示、选中边框／勾选与读屏颜色值。发送栏最小高度调整为 44，按钮同时显示颜色圆点，深色选项仍有可辨识的按钮图形。
@@ -28,3 +28,30 @@
 - Windows Debug 原生合成预览、热重载通过，工具报告无运行时错误，实际检查普通／自定义／大字号画面，截图为 `artifacts/danmaku-style-picker-windows.png`。预览结束后，普通入口 `lib/main.dart` 的 Windows Debug 构建通过，日志为 `artifacts/danmaku-style-normal-build.log`。
 
 本轮没有发布真实测试弹幕。Android／Apple／Linux 原生输入法、触摸手感与读屏设备验收仍待执行。
+
+## Windows 格式确认丢失修复（2026-11-01，#52）
+
+[问题 #52](https://github.com/CKopoer/BiliSail/issues/52) 报告确认发送格式后再次打开恢复默认，发送仍使用默认值。根因是样式面板没有参与播放器现有的菜单显隐保护：面板打开后，点击模式等待 5 秒，或动态模式移出播放器／等待 2.5 秒，控件淡出并销毁发送栏。面板本身仍在 Navigator 上显示，但确认回调发现原样式按钮已经卸载，丢弃了选择。
+
+共享控件新增 [PlayerControlsMenuScope](../../lib/shared/ui/player_controls_menu_scope.dart)，将发送栏内的样式面板接入播放器同一菜单计数。打开面板前暂停控件自动隐藏，确认、取消、关闭按钮、遮罩及 Escape 返回后释放保护，恢复原来的隐藏规则。视频与影视、普通与全屏沿用同一入口；发送样式仍由当前 `PlaybackSession` 持有，点击“完成”提交，其他关闭方式丢弃未确认编辑。
+
+验证：
+
+- [播放器组件回归](../../test/features/playback/playback_panel_test.dart) 新增点击／动态 × 普通／全屏四项测试，修复前四项均复现默认白色滚动样式未改变，修复后全部通过。测试包含面板打开后鼠标移出并等待 6 秒、确认顶部粉色、重新打开、取消新颜色、真实发送控制器参数，以及面板关闭后控件再次自动隐藏。
+- [样式面板回归](../../test/shared/ui/danmaku_send_style_button_test.dart) 验证确认及四种取消方式的菜单计数配对；连同视频发送／输入框和影视发送回归，共 63 项通过。
+- `tool/check.ps1 -SkipPub` 通过格式、静态分析、打包边界及 4810 项测试（根应用 3980、API 541、播放器 131、弹幕 153、mux 5）。根应用按既有条件跳过 13 项；未配置 `BILI_MUX_LIBRARY`，10 项 mux 原生用例跳过，不属于原生验证通过。日志：`artifacts/issue-52/check.log`。本文相对链接和 `git diff --check` 通过。
+- 按用户要求未构建、未实机测试、未发送真实弹幕；没有活动调试应用可热重载。设备交互与真实账号发送效果由后续构建验收。
+
+## 全局记忆（2026-11-01）
+
+发送位置和颜色改为 `AppSettings.danmakuSendStyle` 全局偏好，不按账号或视频隔离。点击“完成”后通过 `SettingsController` 的串行写入队列保存；新视频、影视剧集、新播放标签与应用重启读取同一选择。取消、关闭、遮罩或 Escape 继续丢弃未确认编辑。恢复默认设置会恢复白色滚动弹幕。
+
+`preferences.v1` 快照版本从 34 升至 35，新增整数 `danmakuSendMode`／`danmakuSendColor`，SQLite 表结构版本仍为 3。缺失／非法字段分别回退到滚动 `1`／白色 `0xFFFFFF`，保留其他有效偏好；颜色 `000000`、`000001` 等仍按完整 24 位 RGB 保存。
+
+共享样式按钮等待保存结果，失败时提示“弹幕样式保存失败，请重试”，沿用设置控制器的已保存值回退。多个页面先后确认时，较早完成的回调读取最新全局选择，不用旧草稿覆盖新值。普通／全屏和菜单显隐保护沿用 #52 的修复。
+
+回归覆盖设置默认值／非法字段／复制、旧快照兼容与数据库重载、并发偏好写入／保存失败／恢复默认、两个播放会话同步、切视频和重建设置容器后的恢复，以及视频与影视的保存／发送路径。按用户要求仍不构建、不实机测试、不发送真实弹幕。
+
+为隔离同期搜索功能修改，使用提交 `25934d6` 加本次文件的临时工作区验证。`tool/check.ps1` 的格式、静态分析及打包边界检查通过；测试首次因 SQLite 下载 TLS 握手失败中断，复用与上游 SHA-256 一致的本地缓存后，分别重跑 `-SkipPub -Stage RootTests` 和 `-SkipPub -Stage PackageTests`，共 4816 项通过（根应用 3986、API 541、播放器 131、弹幕 153、mux 5）。根应用 13 项条件跳过，10 项 mux 原生用例因未配置 `BILI_MUX_LIBRARY` 跳过。未修改 Pub 缓存或绕过哈希校验。主工作区的四项播放器样式回归随后也通过。
+
+日志保存到 `artifacts/issue-52-global-memory/` 下的 `lint.log`、`root-tests.log` 和 `package-tests.log`；首次下载失败记录保留在 `setup.log`。本文相对链接与 `git diff --check` 通过。

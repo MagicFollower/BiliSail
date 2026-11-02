@@ -24,11 +24,74 @@ import 'package:bilisail/features/playback/domain/content_playback.dart';
 import 'package:bilisail/features/playback/domain/sponsor_repository.dart';
 import 'package:bilisail/features/playback/domain/playback_history_repository.dart';
 import 'package:bilisail/features/settings/domain/app_settings.dart';
+import 'package:bilisail/core/storage/app_database.dart';
+import 'package:bilisail/features/settings/application/settings_controller.dart';
+import 'package:bilisail/features/settings/data/sqlite_settings_repository.dart';
+import 'package:drift/native.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bili_player/bili_player.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('global send style follows new sessions, source changes and a settings restart', () async {
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    ProviderContainer container() => ProviderContainer(
+      overrides: [
+        settingsRepositoryProvider.overrideWithValue(
+          SqliteSettingsRepository(database),
+        ),
+      ],
+    );
+    final firstRun = container();
+    addTearDown(firstRun.dispose);
+    await firstRun.read(settingsControllerProvider.future);
+    PlaybackSession session() {
+      final created = PlaybackSession(
+        engine: _FakeEngine(),
+        repository: _FakeRepository(autoResolve: true),
+        progress: _FakeProgress(),
+        accountScope: () => 'guest',
+      );
+      addTearDown(created.close);
+      return created;
+    }
+
+    final first = session(), second = session();
+    firstRun.listen(settingsControllerProvider, (_, next) {
+      if (next.value case final settings?) {
+        first.configureSettings(settings);
+        second.configureSettings(settings);
+      }
+    });
+    const chosen = (mode: 4, color: 0x0012ab);
+    await firstRun
+        .read(settingsControllerProvider.notifier)
+        .setDanmakuSendStyle(chosen);
+    await Future<void>.delayed(Duration.zero);
+    expect(first.danmakuSendStyle.value, chosen);
+    expect(second.danmakuSendStyle.value, chosen);
+    await first.open(_detail('one'), _part('one'));
+    await first.open(_detail('two'), _part('two'));
+    expect(first.danmakuSendStyle.value, chosen);
+    await first.close();
+    await second.close();
+    firstRun.dispose();
+
+    final nextRun = container();
+    addTearDown(nextRun.dispose);
+    final reloaded = await nextRun.read(settingsControllerProvider.future);
+    final reopened = session()..configureSettings(reloaded);
+    expect(reopened.danmakuSendStyle.value, chosen);
+    reopened.configureSettings(
+      reloaded.copyWith(theme: AppThemePreference.dark),
+    );
+    expect(reopened.danmakuSendStyle.value, chosen);
+    reopened.configureSettings(const AppSettings.defaults());
+    expect(reopened.danmakuSendStyle.value, (mode: 1, color: 0xffffff));
+  });
+
   for (final (mode, expected) in [
     (1, DanmakuMode.scroll),
     (4, DanmakuMode.bottom),
@@ -735,6 +798,40 @@ void main() {
         _ => false,
       }, isTrue);
     });
+  }
+
+  for (final quality in AppSettings.supportedQualities) {
+    test(
+      'new video and PGC owners use configured default qn $quality',
+      () async {
+        final repository = _FakeRepository(autoResolve: true);
+        final content = _FakeContentRepository();
+        final session = PlaybackSession(
+          engine: _FakeEngine(),
+          repository: repository,
+          contentRepository: content,
+          progress: _FakeProgress(),
+          accountScope: () => 'guest',
+        );
+        addTearDown(session.close);
+        session.configureSettings(
+          AppSettings(preferredQuality: quality, resumePlayback: false),
+        );
+        final video = Object(), pgc = Object();
+        session.attach(video);
+        session.attach(pgc);
+        await session.activate(video, _detail('video'), _part('video'));
+        expect(repository.qualities.single, quality);
+        await session.activate(
+          pgc,
+          null,
+          null,
+          target: const PgcPlaybackTarget('7'),
+        );
+        expect(content.qualities.single, quality);
+        expect(session.requestedQuality, quality);
+      },
+    );
   }
 
   for (final quality in [0, 250, 400, 20000]) {

@@ -2004,6 +2004,97 @@ void main() {
     }
   }
 
+  for (final fullscreen in [false, true]) {
+    for (final visible in [false, true]) {
+      testWidgets(
+        'phone picture swipes work over interactive video after a rate hold fullscreen=$fullscreen controls=$visible',
+        (tester) async {
+          tester.view.physicalSize = const Size(390, 844);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final engine = _FakeEngine()..interactiveSurface = true;
+          final session = _session(engine);
+          final window = _FakeWindowService(desktop: false);
+          addTearDown(session.close);
+          await tester.pumpWidget(
+            _app(session, window, const AppSettings.defaults()),
+          );
+          await _pumpFrames(tester);
+          await _showControls(tester);
+          if (fullscreen) {
+            await tester.tap(find.byTooltip('全屏（F）'));
+            await _pumpFrames(tester);
+          }
+          await session.pause();
+          await session.setVolume(50);
+          await session.seek(const Duration(seconds: 30));
+          await _pumpFrames(tester);
+          if (!visible) {
+            await tester.tapAt(_surfacePoint(tester));
+            await _pumpSurfaceTap(tester);
+          }
+          final hold = await _startRateHold(tester);
+          expect(engine.currentSnapshot.rate, 2);
+          await hold.up();
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.rate, 1);
+          final opens = engine.opens;
+          final generation = session.sourceGeneration;
+          final picture = tester.getRect(
+            find.byKey(const ValueKey('player-surface-tap-target')),
+          );
+          final start =
+              picture.topLeft + Offset(picture.width * .7, picture.height * .4);
+          final seeks = engine.seeks;
+          Future<void> swipe(Offset start, Offset delta) async {
+            final gesture = await tester.startGesture(start);
+            for (var i = 0; i < 10; i++) {
+              await gesture.moveBy(delta / 10);
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+            await gesture.up();
+            await _pumpFrames(tester);
+          }
+
+          await swipe(start, Offset(-picture.width * .2, 0));
+          await _pumpFrames(tester);
+          expect(engine.seeks, seeks + 1);
+          expect(engine.currentSnapshot.position, const Duration(seconds: 6));
+          await swipe(start, Offset(picture.width * .2, 0));
+          expect(engine.seeks, seeks + 2);
+          expect(engine.currentSnapshot.position, const Duration(seconds: 30));
+          await swipe(start, Offset(0, -picture.height * .1));
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.volume, closeTo(60, .01));
+          await swipe(start, Offset(0, picture.height * .1));
+          expect(engine.currentSnapshot.volume, closeTo(50, .01));
+          await swipe(
+            picture.topLeft + Offset(picture.width * .3, picture.height * .4),
+            Offset(0, picture.height * .1),
+          );
+          await _pumpFrames(tester);
+          expect(find.text('亮度 90%'), findsOneWidget);
+          await swipe(
+            picture.topLeft + Offset(picture.width * .3, picture.height * .4),
+            Offset(0, -picture.height * .1),
+          );
+          expect(find.text('亮度 100%'), findsOneWidget);
+          expect(engine.surfaceGestures, 0);
+          expect(engine.currentSnapshot.rate, 1);
+          expect(engine.currentSnapshot.desiredPlaying, isFalse);
+          expect(engine.currentSnapshot.position, const Duration(seconds: 30));
+          expect(engine.opens, opens);
+          expect(engine.maxSurfaces, 1);
+          expect(session.sourceGeneration, generation);
+          await tester.pumpWidget(const SizedBox());
+          await _pumpFrames(tester);
+        },
+        variant: TargetPlatformVariant.only(TargetPlatform.android),
+      );
+    }
+  }
+
   testWidgets(
     'workspace visibility updates player navigation inline and fullscreen without reopening',
     (tester) async {
@@ -5577,6 +5668,105 @@ void main() {
           expect(session.sourceGeneration, generation);
           expect(engine.opens, opens);
           expect(engine.maxSurfaces, 1);
+          await tester.pumpWidget(const SizedBox());
+          await _pumpFrames(tester);
+        },
+      );
+    }
+  }
+
+  for (final mode in PlayerControlsMode.values) {
+    for (final fullscreen in [false, true]) {
+      testWidgets(
+        'danmaku style applies after idle and pointer exit mode=$mode fullscreen=$fullscreen',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = const Size(1400, 900);
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final engine = _FakeEngine();
+          final session = _session(engine);
+          final actions = FakeActions();
+          final settings = _Settings();
+          addTearDown(session.close);
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [
+                authRepositoryProvider.overrideWithValue(FakeAuth(true)),
+                videoActionsRepositoryProvider.overrideWithValue(actions),
+                settingsRepositoryProvider.overrideWithValue(settings),
+              ],
+              child: _app(
+                session,
+                _FakeWindowService(),
+                AppSettings(playerControlsMode: mode),
+                settingsRepository: settings,
+                width: 1200,
+                composer: (_) => VideoDanmakuComposer(
+                  detail: VideoDetail(
+                    summary: _detail.summary,
+                    description: '',
+                    parts: [_part],
+                    aid: '1',
+                  ),
+                  part: _part,
+                  onLogin: () {},
+                ),
+              ),
+            ),
+          );
+          await _pumpFrames(tester);
+          await session.pause();
+          await _showControls(tester);
+          if (fullscreen) {
+            await tester.tap(find.byTooltip('全屏（F）'));
+            await _pumpFrames(tester);
+          }
+          final mouse = await tester.createGesture(
+            kind: PointerDeviceKind.mouse,
+          );
+          await mouse.addPointer(location: _surfacePoint(tester));
+          await tester.pump();
+          await tester.tap(find.byTooltip('发送弹幕样式'));
+          await tester.pumpAndSettle();
+          await mouse.moveTo(const Offset(-10, -10));
+          await tester.pump(const Duration(seconds: 6));
+          await tester.pumpAndSettle();
+          await tester.tap(find.widgetWithText(ChoiceChip, '顶部'));
+          await tester.tap(find.byTooltip('粉色'));
+          await tester.tap(find.text('完成'));
+          await tester.pumpAndSettle();
+          expect(session.danmakuSendStyle.value, (mode: 5, color: 0xff6699));
+          expect(
+            actions.calls.where((call) => call.startsWith('send:')),
+            isEmpty,
+          );
+          await _showControls(tester);
+          await tester.tap(find.byTooltip('发送弹幕样式'));
+          await tester.pumpAndSettle();
+          expect(find.text('预览 · 顶部 · #FF6699'), findsOneWidget);
+          await tester.tap(find.byTooltip('蓝色'));
+          await tester.tap(find.text('取消'));
+          await tester.pumpAndSettle();
+          final editor = find.descendant(
+            of: find.byType(VideoDanmakuComposer),
+            matching: find.byType(TextField),
+          );
+          await tester.enterText(editor, '保留发送格式');
+          await tester.tap(find.widgetWithText(TextButton, '发送'));
+          await tester.pumpAndSettle();
+          expect(actions.calls.where((call) => call.startsWith('send:')), [
+            'send:${_part.cid}:5:${0xff6699}',
+          ]);
+          FocusManager.instance.primaryFocus?.unfocus();
+          await tester.pump();
+          await tester.pump(const Duration(seconds: 6));
+          await tester.pumpAndSettle();
+          expect(find.byType(VideoDanmakuComposer), findsNothing);
+          expect(engine.opens, 1);
+          expect(engine.maxSurfaces, 1);
+          expect(tester.takeException(), isNull);
+          await mouse.removePointer();
           await tester.pumpWidget(const SizedBox());
           await _pumpFrames(tester);
         },
@@ -9284,6 +9474,8 @@ final class _RecordingComposition implements VideoCompositionAdapter {
 }
 
 final class _FakeEngine implements PlayerEngine, VideoOutputSource {
+  bool interactiveSurface = false;
+  int surfaceGestures = 0;
   final _snapshots = StreamController<PlaybackSnapshot>.broadcast(sync: true);
   final _failures = StreamController<PlayerFailure>.broadcast(sync: true);
   PlaybackSnapshot _current = const PlaybackSnapshot(
@@ -9423,7 +9615,23 @@ final class _FakeSurfaceState extends State<_FakeSurface> {
   }
 
   @override
-  Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
+  Widget build(BuildContext context) => widget.engine.interactiveSurface
+      // Match the pinned media-kit Video's low-slop scale recognizer, even
+      // though its panEnabled is false and the app uses NoVideoControls.
+      ? MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            gestureSettings: const DeviceGestureSettings(touchSlop: 4),
+          ),
+          child: InteractiveViewer(
+            panEnabled: false,
+            minScale: .75,
+            maxScale: 2,
+            boundaryMargin: const EdgeInsets.all(double.infinity),
+            onInteractionStart: (_) => widget.engine.surfaceGestures++,
+            child: const ColoredBox(color: Colors.black),
+          ),
+        )
+      : const ColoredBox(color: Colors.black);
 }
 
 final class _FakePlaybackRepository implements PlaybackRepository {

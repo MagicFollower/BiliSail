@@ -16,6 +16,7 @@ import '../../../shared/ui/playback_navigation.dart';
 import '../../../shared/ui/width_layout_builder.dart';
 import '../../../shared/ui/app_dialog.dart';
 import '../../../shared/ui/danmaku_composer_draft.dart';
+import '../../../shared/ui/player_controls_menu_scope.dart';
 import '../../../shared/ui/smooth_scroll_behavior.dart';
 import '../../../domain/video.dart';
 import '../../../domain/playback_rates.dart';
@@ -1505,7 +1506,10 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
                                         key: const ValueKey(
                                           'player-surface-tap-target',
                                         ),
-                                        behavior: HitTestBehavior.translucent,
+                                        // Keep backend surface gestures out of
+                                        // this arena; media-kit's scale recognizer
+                                        // can claim a swipe before our drags.
+                                        behavior: HitTestBehavior.opaque,
                                         onTap: _onSurfaceTap,
                                         onDoubleTapDown: (details) =>
                                             _doubleTapKind = details.kind,
@@ -2413,7 +2417,10 @@ class _ControlBar extends StatelessWidget {
         ? null
         : KeyedSubtree(
             key: composerKey,
-            child: Builder(builder: composerBuilder),
+            child: PlayerControlsMenuScope(
+              onChanged: onMenuChanged,
+              child: Builder(builder: composerBuilder),
+            ),
           );
     final qualityAndRate = <Widget>[
       if (media != null && session.isLive)

@@ -574,3 +574,22 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 **导入必须复用既有的所有权与校验链路，不另起一套。** `verify`／`openMedia`／`delete` 都依赖应用偏好中的 journal，而 journal 随卸载消失，因此新增"认领"步骤：把扫描得到的 URI 逐个按目的地复检后写回 journal，之后播放与删除沿用原路径；复检失败整条撤销，不留半截 journal。三个新通道方法共用同一套来源证明（目标必须是刚列出的目录的直接子项，且名字在白名单内），通道不得退化成"调用方给什么就读什么"。清单里的媒体字节数必须与平台实际列出的逐一对上，对不上只拒绝并给原因——截断或被替换的文件夹不能被视为可播。
 
 **归属规则。** 导入项记在当前账号名下；该任务 id 已属于其他账号时跳过并单独计数，不因为谁打开了 tab 就转移所有权。弹幕字幕以流式复制取回私有 `extras.json`（该文件允许到 32 MB，读成字符串会造成几十 MB 瞬时占用），复制失败只降级报告，不影响已导入的媒体。细节、判据与未验证项见[下载与离线播放方案](downloads.md)"2026-11-02：下载 tab 从共享目录扫描并导入离线内容"一节。
+
+## D73：上游 15 个提交的合并判定（2026-11-02）
+
+`liquid_dock` 与 `upstream/master` 的分叉点是 `b41d1fd`；本次取到 `2053716`（15 个提交、66 文件、+3302/−285），与本地 33 个提交在 15 个文件上交叠，7 处冲突。逐条判定：
+
+| 冲突 | 判定 | 依据 |
+| --- | --- | --- |
+| `settings/data/sqlite_settings_repository.dart` 与 `test/.../sqlite_settings_repository_test.dart` 的 `preferences.v1` 版本号 | **取 36** | 上游把快照写到 35（新增 `fullscreenSwipeControls`），我们此前为 `dockGlassRefraction` 抬到 36；合并后的负载同时含两个键，比上游多一项，号必须更高。读侧不按版本号分支，号只是记录，不改变解析。 |
+| `feed/data/api_feed_repository.dart` 的 Web 推荐采样器 | **整体取上游，丢掉本地实现** | 同一个 bug（刷新不推进 `fresh_idx`）两边各修了一次。上游用 `Expando<_RecommendationPull>` 按取消作用域记 pull，并带 `sessionEpoch` 与"空成功也消耗一次采样"的判定，覆盖本地版本的全部语义且多了旧响应守卫；保留本地会把同一处变成每次合并必冲突的分叉。 |
+| `app/shell.dart` 底栏分组页面重击（上游 `f865d36`） | **取上游规则，落到 dock 上** | 上游修的是 Material `NavigationBar`，而该组件已被 D69 的液态玻璃 dock 替换。把"仅在目的地自身页面抑制重选"的判据搬进 dock（`onOwnDestination`：`mine → tab.isAccount`、`settings → tab.isSettings`、其余 `tab.isBrowse`），本地为 `/history` 特判的高亮规则保留。 |
+| 同上，dock 收不到点击 | **改组件加开关** | `LiquidDockNavi._select` 写死 `index != currentIndex` 才回调，点当前高亮项在宿主侧永远收不到事件，上游语义无法表达。组件新增 `notifyOnSelectedTap`（默认 false，旧行为不变），宿主传 true。见组件仓库 `36624f5`。 |
+| `macos/Runner/MainFlutterWindow.swift`、`tool/macos-release-validation.ps1`、`tool/test-macos-release-validation.ps1`（modify/delete） | **保持删除** | 当前工作树没有 `macos/` 工程（`git ls-files` 中 `windows/`、`macos/` 命中 0），恢复三个孤立文件只会造出指向不存在工程的东西。要回到三端交付时按 `git checkout upstream/master -- <路径>` 取上游版本再评估。 |
+| `test/app/bottom_navigation_destination_test.dart`（上游新增） | **收下并适配** | 它按 `workspace-bottom-<section>` 定位条目，而 dock 的条目由组件内部绘制、没有逐项 key（组件也不提供注入点），因此加了一条"按 dock 绘制的标签命中"的回退 finder，其余断言原样保留。 |
+| 上游两处 `expect(database.schemaVersion, 3)`（`sqlite_settings_repository_test.dart`、`search_history_settings_test.dart`） | **抬到 5** | 上游写这两条时 drift 还在 v3；我们这条链已到 v5（v4 扫描缓存、v5 诊断事件表）。这两处在合并中不冲突（是上游新增文件），所以只能靠跑测试发现。 |
+| `test/features/feed/api_feed_repository_test.dart` 的本地用例 `recommendation refresh advances fresh_idx` | **删除** | 采样器实现取了上游，而本地这条断言"重试沿用同一序号"是以"每次新建 `RequestCancellation`"为前提写的，与上游"按取消作用键控、同一 cancellation 才复用"的契约相反。上游自带 `web_recommendation_refresh_test.dart` 用 8 个用例覆盖了刷新推进、空批次、失败刷新、旧响应隔离、按 cancellation 各自的失败重试与分区不消耗序号，删本地这条不丢覆盖；其测试替身里只服务这条用例的 `emptyForFreshIndex` / `failForFreshIndex` 一并移除。 |
+
+自动合并且无需判定的还有 `README.md`、`docs/api-design.md`、`docs/validation/api-endpoints.md`、`settings/{application, domain, presentation}`、`packages/bili_api/lib/src/api_client.dart`、`test/app/workspace_shell_test.dart`。
+
+验收：合并后 `flutter analyze` 无问题；`flutter test` 全量 **4052 通过、13 跳过**（含上游新增的导航、搜索建议、弹幕发送样式、playurl 清晰度与 Web 推荐刷新用例）；组件仓库 `flutter test` 20 项通过（新增 2 项覆盖开关的默认关闭与开启）。**未验证**：真机上从稍后再看/收藏页点高亮的"我的"是否跳回 `/me`，以及上游这批改动在卓易通容器上的表现。

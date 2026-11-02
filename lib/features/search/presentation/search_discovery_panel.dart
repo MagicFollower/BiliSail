@@ -4,18 +4,64 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../application/search_discovery_controller.dart';
+import 'search_history_chip.dart';
 
-final class SearchDiscoveryPanel extends ConsumerStatefulWidget {
-  const SearchDiscoveryPanel({super.key, required this.onSearch});
+final class SearchDiscoveryPanel extends StatelessWidget {
+  const SearchDiscoveryPanel({
+    super.key,
+    required this.controller,
+    required this.onSearch,
+  });
+  final TextEditingController controller;
+  final ValueChanged<String> onSearch;
+
+  @override
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        builder: (context, value, _) => _SearchDiscoveryContent(
+          query: value.text.trim(),
+          isComposing: value.composing.isValid && !value.composing.isCollapsed,
+          onSearch: onSearch,
+        ),
+      );
+}
+
+final class _SearchDiscoveryContent extends ConsumerStatefulWidget {
+  const _SearchDiscoveryContent({
+    required this.query,
+    required this.isComposing,
+    required this.onSearch,
+  });
+  final String query;
+  final bool isComposing;
   final ValueChanged<String> onSearch;
   @override
-  ConsumerState<SearchDiscoveryPanel> createState() =>
+  ConsumerState<_SearchDiscoveryContent> createState() =>
       _SearchDiscoveryPanelState();
 }
 
 final class _SearchDiscoveryPanelState
-    extends ConsumerState<SearchDiscoveryPanel> {
+    extends ConsumerState<_SearchDiscoveryContent> {
   bool _expanded = false;
+  bool _savingRecording = false;
+  bool _recordingError = false;
+
+  Future<void> _setRecording(bool enabled) async {
+    final save = ref.read(searchHistoryRecordingWriterProvider);
+    if (save == null || _savingRecording) return;
+    setState(() {
+      _savingRecording = true;
+      _recordingError = false;
+    });
+    try {
+      await save(enabled);
+    } catch (_) {
+      if (mounted) setState(() => _recordingError = true);
+    } finally {
+      if (mounted) setState(() => _savingRecording = false);
+    }
+  }
 
   @override
   void initState() {
@@ -40,6 +86,13 @@ final class _SearchDiscoveryPanelState
         }
       });
     });
+    if (widget.query.isNotEmpty) {
+      // Pause draft queries without unmounting the retained suggestion list.
+      return _SearchSuggestions(
+        query: widget.isComposing ? '' : widget.query,
+        onSearch: widget.onSearch,
+      );
+    }
     final state = ref.watch(searchDiscoveryControllerProvider);
     final controller = ref.read(searchDiscoveryControllerProvider.notifier);
     final theme = Theme.of(context);
@@ -61,6 +114,25 @@ final class _SearchDiscoveryPanelState
               ),
             ],
           ),
+          if (ref.watch(searchHistoryRecordingWriterProvider) != null)
+            Row(
+              children: [
+                const Expanded(child: Text('记录搜索历史')),
+                Switch.adaptive(
+                  key: const ValueKey('search-history-recording'),
+                  value: ref.watch(searchHistoryRecordingProvider),
+                  onChanged: _savingRecording
+                      ? null
+                      : (value) => unawaited(_setRecording(value)),
+                ),
+              ],
+            ),
+          if (!ref.watch(searchHistoryRecordingProvider))
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('已关闭历史记录，新搜索不会保存'),
+            ),
+          if (_recordingError) const Text('搜索历史设置保存失败，请重试'),
           if (state.historyError)
             const Padding(
               padding: EdgeInsets.only(bottom: 8),
@@ -76,22 +148,11 @@ final class _SearchDiscoveryPanelState
             runSpacing: 8,
             children: [
               for (final query in history)
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 180),
-                  child: Tooltip(
-                    message: query,
-                    child: ActionChip(
-                      label: Text(
-                        query,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      side: BorderSide.none,
-                      backgroundColor: theme.colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.5),
-                      onPressed: () => widget.onSearch(query),
-                    ),
-                  ),
+                SearchHistoryChip(
+                  key: ValueKey(('search-history', query)),
+                  query: query,
+                  onSearch: () => widget.onSearch(query),
+                  onDelete: () => unawaited(controller.removeHistory(query)),
                 ),
             ],
           ),
@@ -207,6 +268,70 @@ final class _SearchDiscoveryPanelState
                     },
                   ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _SearchSuggestions extends ConsumerStatefulWidget {
+  const _SearchSuggestions({required this.query, required this.onSearch});
+  final String query;
+  final ValueChanged<String> onSearch;
+
+  @override
+  ConsumerState<_SearchSuggestions> createState() => _SearchSuggestionsState();
+}
+
+final class _SearchSuggestionsState extends ConsumerState<_SearchSuggestions> {
+  String? _scope;
+  List<String> _items = const [];
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = ref.watch(searchHistoryScopeProvider);
+    if (_scope != scope) {
+      _scope = scope;
+      _items = const [];
+    }
+    final provider = searchSuggestionsProvider(widget.query);
+    final result = ref.watch(provider);
+    final items = result.asData?.value;
+    // Retain only this panel's last nonempty result while the next query loads.
+    if (items != null && items.isNotEmpty) _items = items;
+    return SingleChildScrollView(
+      key: const ValueKey('search-discovery-panel'),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('搜索联想', style: Theme.of(context).textTheme.titleSmall),
+          for (final term in _items)
+            ListTile(
+              key: ValueKey(('search-suggestion', term)),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.search, size: 18),
+              title: Text(term, maxLines: 2, overflow: TextOverflow.ellipsis),
+              onTap: () => widget.onSearch(term),
+            ),
+          if (result.hasError)
+            Row(
+              children: [
+                const Expanded(child: Text('搜索联想暂时无法加载')),
+                TextButton(
+                  onPressed: () => ref.invalidate(provider),
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          if (widget.query.isNotEmpty &&
+              _items.isEmpty &&
+              !result.isLoading &&
+              !result.hasError)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text('暂无联想词，可直接提交搜索'),
+            ),
         ],
       ),
     );

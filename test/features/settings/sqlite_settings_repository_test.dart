@@ -17,6 +17,81 @@ void main() {
     repository = SqliteSettingsRepository(database);
   });
   tearDown(() => database.close());
+  test('global send style migrates old settings, rejects malformed fields and reloads', () async {
+    for (final (mode, color) in <(Object?, Object?)>[
+      (null, null),
+      (2, -1),
+      ('5', '123456'),
+      (5.0, 123456.5),
+      (true, false),
+    ]) {
+      await database.writeSetting(
+        'preferences.v1',
+        jsonEncode({
+          'schemaVersion': 34,
+          'danmakuSendMode': mode,
+          'danmakuSendColor': color,
+          'autoPlay': false,
+        }),
+      );
+      final loaded = await repository.load();
+      expect(loaded.danmakuSendStyle, (mode: 1, color: 0xffffff));
+      expect(loaded.autoPlay, isFalse);
+    }
+    for (final mode in [1, 4, 5]) {
+      for (final color in [0, 1, 0x123456, 0xffffff]) {
+        await repository.save(
+          AppSettings(danmakuSendStyle: (mode: mode, color: color)),
+        );
+        final reloaded = await SqliteSettingsRepository(database).load();
+        expect(reloaded.danmakuSendStyle, (mode: mode, color: color));
+      }
+    }
+    await repository.save(const AppSettings.defaults());
+    expect((await repository.load()).danmakuSendStyle, (
+      mode: 1,
+      color: 0xffffff,
+    ));
+    expect(database.schemaVersion, 5);
+  });
+
+  test(
+    'every video quality persists and invalid IDs use the default',
+    () async {
+      for (final quality in AppSettings.supportedQualities) {
+        await repository.save(AppSettings(preferredQuality: quality));
+        final loaded = await repository.load();
+        expect(loaded.preferredQuality, quality);
+        final snapshot = jsonDecode(
+          (await database.readSetting('preferences.v1'))!,
+        ) as Map<String, Object?>;
+        expect(snapshot['preferredQuality'], quality);
+      }
+      for (final invalid in <Object?>[
+        null,
+        '116',
+        116.5,
+        74.5,
+        true,
+        0,
+        -1,
+        999,
+      ]) {
+        await database.writeSetting(
+          'preferences.v1',
+          jsonEncode({
+            'schemaVersion': 32,
+            'preferredQuality': invalid,
+            'preferredLiveQuality': 250,
+          }),
+        );
+        final loaded = await repository.load();
+        expect(loaded.preferredQuality, 80);
+        expect(loaded.preferredLiveQuality, 250);
+      }
+    },
+  );
+
   test(
     'related autoplay defaults, invalid snapshots, save and reset',
     () async {

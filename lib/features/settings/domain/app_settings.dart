@@ -5,6 +5,7 @@ import '../../../domain/audio_normalization.dart';
 export '../../../domain/audio_normalization.dart'
     show AudioNormalizationMode, AudioNormalizationLabel;
 import '../../../domain/video_codec.dart';
+import '../../../domain/video_quality.dart';
 import '../../../domain/audio_quality.dart';
 import '../../../domain/live_stream_preference.dart';
 import '../../../domain/media_cdn.dart';
@@ -12,6 +13,7 @@ import 'shortcut_settings.dart';
 import '../../../domain/recommendation_settings.dart';
 
 export '../../../domain/video_codec.dart';
+export '../../../domain/video_quality.dart';
 export '../../../domain/audio_quality.dart';
 export '../../../domain/live_stream_preference.dart';
 export '../../../domain/media_cdn.dart' show MediaCdnPreference;
@@ -67,12 +69,14 @@ final class AppSettings {
     this.font = AppFontPreference.harmonyOsSans,
     this.systemFontFamily = '',
     this.cacheImages = true,
+    this.recordSearchHistory = true,
     this.checkPrereleaseUpdates = false,
     this.checkUpdatesOnStartup = false,
     this.wheelDampingRatio = 1.3,
     this.danmakuEnabled = true,
     this.danmakuOpacity = 0.8,
     this.danmakuFontScale = 1.0,
+    this.danmakuSendStyle = (mode: 1, color: 0xffffff),
     this.autoPlay = true,
     this.defaultShowComments = false,
     this.videoCardHoverPlayback = true,
@@ -142,11 +146,13 @@ final class AppSettings {
        font = AppFontPreference.harmonyOsSans,
        systemFontFamily = '',
        cacheImages = true,
+       recordSearchHistory = true,
        checkPrereleaseUpdates = false,
        checkUpdatesOnStartup = false,
        wheelDampingRatio = 1.3,
        danmakuEnabled = true,
        danmakuOpacity = 0.8,
+       danmakuSendStyle = (mode: 1, color: 0xffffff),
        autoPlay = true,
        defaultShowComments = false,
        continuousPlayback = false,
@@ -210,6 +216,7 @@ final class AppSettings {
   final String systemFontFamily;
   String? get fontFamily => font.resolveFamily(systemFontFamily);
   final bool cacheImages;
+  final bool recordSearchHistory;
   final bool checkPrereleaseUpdates;
 
   /// Startup update checks are opt-in: without it the app never queries the
@@ -221,6 +228,7 @@ final class AppSettings {
   final bool danmakuEnabled;
   final double danmakuOpacity;
   final double danmakuFontScale;
+  final ({int mode, int color}) danmakuSendStyle;
   final bool autoPlay;
   final bool defaultShowComments;
   final bool videoCardHoverPlayback;
@@ -295,12 +303,14 @@ final class AppSettings {
     AppFontPreference? font,
     String? systemFontFamily,
     bool? cacheImages,
+    bool? recordSearchHistory,
     bool? checkPrereleaseUpdates,
     bool? checkUpdatesOnStartup,
     double? wheelDampingRatio,
     bool? danmakuEnabled,
     double? danmakuOpacity,
     double? danmakuFontScale,
+    ({int mode, int color})? danmakuSendStyle,
     bool? autoPlay,
     bool? defaultShowComments,
     bool? videoCardHoverPlayback,
@@ -361,6 +371,7 @@ final class AppSettings {
     font: font ?? this.font,
     systemFontFamily: systemFontFamily ?? this.systemFontFamily,
     cacheImages: cacheImages ?? this.cacheImages,
+    recordSearchHistory: recordSearchHistory ?? this.recordSearchHistory,
     checkPrereleaseUpdates:
         checkPrereleaseUpdates ?? this.checkPrereleaseUpdates,
     checkUpdatesOnStartup: checkUpdatesOnStartup ?? this.checkUpdatesOnStartup,
@@ -368,6 +379,7 @@ final class AppSettings {
     danmakuEnabled: danmakuEnabled ?? this.danmakuEnabled,
     danmakuOpacity: danmakuOpacity ?? this.danmakuOpacity,
     danmakuFontScale: danmakuFontScale ?? this.danmakuFontScale,
+    danmakuSendStyle: danmakuSendStyle ?? this.danmakuSendStyle,
     autoPlay: autoPlay ?? this.autoPlay,
     defaultShowComments: defaultShowComments ?? this.defaultShowComments,
     videoCardHoverPlayback:
@@ -427,18 +439,9 @@ final class AppSettings {
     ),
   );
 
-  static const supportedQualities = [
-    16,
-    32,
-    64,
-    80,
-    112,
-    116,
-    120,
-    125,
-    126,
-    127,
-  ];
+  static final supportedQualities = List<int>.unmodifiable(
+    videoQualityOptions.keys,
+  );
   // Live qn values are independent of VOD; zero asks the server to choose.
   static const liveQualityOptions = {
     0: '自动',
@@ -487,6 +490,14 @@ final class AppSettings {
       defaultVolume: bounded(defaultVolume, 0, 100, 100),
       danmakuOpacity: bounded(danmakuOpacity, .2, 1, .8),
       danmakuFontScale: bounded(danmakuFontScale, .2, 1.5, 1),
+      danmakuSendStyle: (
+        mode: const [1, 4, 5].contains(danmakuSendStyle.mode)
+            ? danmakuSendStyle.mode
+            : 1,
+        color: danmakuSendStyle.color >= 0 && danmakuSendStyle.color <= 0xffffff
+            ? danmakuSendStyle.color
+            : 0xffffff,
+      ),
       danmakuArea: bounded(danmakuArea, .25, 1, .75),
       danmakuTopMargin: bounded(danmakuTopMargin, 0, 200, 0),
       danmakuLineSpacing: bounded(danmakuLineSpacing, 0, 100, 5),

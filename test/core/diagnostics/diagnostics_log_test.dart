@@ -60,16 +60,9 @@ void main() {
       );
       // A run with no older process has no crash boundary to name.
       expect(
-        DiagnosticsLog.previousProcessTail(
-          [
-            DiagnosticsEntry(
-              runId: 'only',
-              at: DateTime(2026),
-              message: '进程启动',
-            ),
-          ],
-          'only',
-        ),
+        DiagnosticsLog.previousProcessTail([
+          DiagnosticsEntry(runId: 'only', at: DateTime(2026), message: '进程启动'),
+        ], 'only'),
         isNull,
       );
     },

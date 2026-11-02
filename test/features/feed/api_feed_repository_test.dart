@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:bili_api/bili_api.dart';
 import 'package:bilisail/core/network/api_requests.dart';
-import 'package:bilisail/domain/app_failure.dart';
 import 'package:bilisail/domain/request_cancellation.dart';
 import 'package:bilisail/features/feed/data/api_feed_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -73,72 +72,10 @@ void main() {
       );
     },
   );
-
-  test('recommendation refresh advances fresh_idx', () async {
-    final transport = _Transport();
-    final requests = ApiRequests();
-    final api = BiliApiClient(transport: transport, sessionProvider: requests);
-    addTearDown(api.close);
-    final repository = ApiFeedRepository(api, requests);
-    String? pullIndex() => transport.requests.last.queryParameters['fresh_idx'];
-    Future<void> pull(int page) => repository.loadFeed(
-      page: page,
-      categoryId: null,
-      cancellation: RequestCancellation(),
-    );
-
-    await pull(1);
-    expect(pullIndex(), '1');
-    await pull(2);
-    expect(pullIndex(), '2');
-    // 刷新：页码回到 1，但拉取序号必须继续前进，否则服务端重复同一批样本。
-    await pull(1);
-    expect(pullIndex(), '3');
-    expect(transport.requests.last.queryParameters['fresh_idx_1h'], '3');
-    await pull(1);
-    expect(pullIndex(), '4');
-
-    // 成功但为空的批次（含过滤掉非视频卡片后为空）不能把后续刷新卡在同一个
-    // 序号上：刷新表达的是「再要一批」。
-    transport.emptyForFreshIndex = '5';
-    await pull(1);
-    expect(pullIndex(), '5');
-    await pull(1);
-    expect(pullIndex(), '6');
-
-    // 深页请求失败时沿用同一序号，重试不会跳过没拿到的那一页。
-    transport.failForFreshIndex = '7';
-    await expectLater(pull(2), throwsA(isA<AppFailure>()));
-    expect(pullIndex(), '7');
-    await expectLater(pull(2), throwsA(isA<AppFailure>()));
-    expect(pullIndex(), '7');
-    transport.failForFreshIndex = null;
-    await pull(2);
-    expect(pullIndex(), '7');
-    await pull(3);
-    expect(pullIndex(), '8');
-
-    // 对照：分区列表是真分页，pn 直接跟随页码。
-    await repository.loadFeed(
-      page: 2,
-      categoryId: '1',
-      cancellation: RequestCancellation(),
-    );
-    final region = transport.requests.last;
-    expect(region.path, '/x/web-interface/newlist');
-    expect(region.queryParameters['pn'], '2');
-    expect(region.queryParameters.containsKey('fresh_idx'), isFalse);
-  });
 }
 
 final class _Transport implements ApiTransport {
   final List<Uri> requests = [];
-
-  /// When set, the rcmd sample answers that fresh_idx with an empty batch.
-  String? emptyForFreshIndex;
-
-  /// When set, the rcmd sample answers that fresh_idx with a failure.
-  String? failForFreshIndex;
 
   @override
   Future<ApiHttpResponse> get(
@@ -148,10 +85,6 @@ final class _Transport implements ApiTransport {
     ApiCancellation? cancellation,
   }) async {
     requests.add(uri);
-    if (uri.path == '/x/web-interface/index/top/feed/rcmd' &&
-        uri.queryParameters['fresh_idx'] == failForFreshIndex) {
-      throw const ApiFailure(ApiFailureCategory.protocol, 'recommended');
-    }
     final Object data;
     if (uri.path.endsWith('/nav')) {
       data = {
@@ -188,11 +121,9 @@ final class _Transport implements ApiTransport {
       };
       data = switch (uri.path) {
         '/x/web-interface/index/top/feed/rcmd' => {
-          'item': uri.queryParameters['fresh_idx'] == emptyForFreshIndex
-              ? const []
-              : [
-                  {...entry, 'title': '推荐${uri.queryParameters['fresh_idx']}'},
-                ],
+          'item': [
+            {...entry, 'title': '推荐${uri.queryParameters['fresh_idx']}'},
+          ],
         },
         '/x/web-interface/ranking/v2' => {
           'list': [entry],

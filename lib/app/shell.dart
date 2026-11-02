@@ -394,17 +394,13 @@ final class _BiliAppShellState extends State<BiliAppShell>
   TextEditingController _searchFor(WorkspaceTab tab) =>
       _searchControllers.putIfAbsent(tab.id, () {
         final controller = TextEditingController(
-          text:
-              _searchDrafts[tab.id] ?? tab.location.queryParameters['q'] ?? '',
+          text: _searchDrafts[tab.id] ?? '',
         );
         controller.addListener(() => _searchDrafts[tab.id] = controller.text);
         return controller;
       });
   void _restoreSearch() {
-    _searchFor(_displayTab).text =
-        _searchDrafts[_displayTab.id] ??
-        _displayTab.location.queryParameters['q'] ??
-        '';
+    _searchFor(_displayTab).text = _searchDrafts[_displayTab.id] ?? '';
   }
 
   @override
@@ -1711,8 +1707,9 @@ final class _BiliAppShellState extends State<BiliAppShell>
       WorkspaceSection.mine,
       WorkspaceSection.settings,
     ];
+    final tab = _frameTab(context);
     final selected = sectionForLocation(
-      _frameTab(context).location,
+      tab.location,
       compact: _compactChannels,
     );
     // Only the messages page has no dock destination and falls back to
@@ -1726,10 +1723,19 @@ final class _BiliAppShellState extends State<BiliAppShell>
     // like NavigationDestination did, so tall system text scales cannot
     // overflow the dock's fixed height.
     final location = _frameTab(context).location;
-    // /history borrows the "我的" section for selection. The re-tap guard has
-    // to compare the destination that was actually drawn as selected, not the
-    // section: comparing sections left "我的" inert while the highlight sat on
-    // "历史", so no dock entry responded to that tap.
+    // A highlighted group can include other pages: history and the watch-later
+    // and favorites channels all sit under 我的. Re-tapping a destination is
+    // only inert on that destination's own page, so upstream's grouped-route
+    // fix keeps working on the dock instead of the Material bar it replaced.
+    bool onOwnDestination(WorkspaceSection item) => switch (item) {
+      WorkspaceSection.mine => tab.isAccount,
+      WorkspaceSection.settings => tab.isSettings,
+      _ => tab.isBrowse,
+    };
+    // /history borrows the "我的" section for selection. The highlight has to
+    // compare the destination that was actually drawn as selected, not the
+    // section: comparing sections left "我的" lit while the highlight sat on
+    // "历史".
     bool sectionSelected(WorkspaceSection item) =>
         selected == item &&
         !(item == WorkspaceSection.mine && location.path == '/history');
@@ -1741,7 +1747,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
             icon: _sectionIcon(item),
             selected: sectionSelected(item),
             onTap: () {
-              if (!sectionSelected(item)) {
+              if (item != selected || !onOwnDestination(item)) {
                 _selectSection(item, compact: true);
               }
             },
@@ -1773,6 +1779,10 @@ final class _BiliAppShellState extends State<BiliAppShell>
       maxScaleFactor: 1.3,
       child: LiquidDockNavi(
         key: const ValueKey('workspace-bottom-navigation'),
+        // A grouped section stays highlighted on pages that are not its own
+        // (watch-later and favourites sit under 我的), so the dock has to report
+        // that tap for the guard below to be able to return to /me.
+        notifyOnSelectedTap: true,
         // medium drops the rim refraction and the liquid lens but keeps the
         // frosted glass and the selection capsule, for runtimes whose GPU
         // hands the shader a backdrop it cannot map.
