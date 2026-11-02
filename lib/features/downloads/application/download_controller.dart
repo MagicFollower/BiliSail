@@ -203,8 +203,7 @@ final class DownloadController extends Notifier<DownloadQueueState> {
   Future<void> resume(String id) => _repository.resume(id);
   Future<void> pauseAll() => _repository.pauseAll();
   Future<void> resumeAll() => _repository.resumeAll();
-  Future<void> remove(String id, {required bool deleteFiles}) =>
-      _repository.remove(id, deleteFiles: deleteFiles);
+  Future<void> remove(String id) => _repository.remove(id);
   Future<void> refresh() => _repository.refresh();
 
   /// Rebuilds the queue from folders this app published in shared storage.
@@ -212,11 +211,15 @@ final class DownloadController extends Notifier<DownloadQueueState> {
   /// caller can hide the affordance instead of reporting an empty result.
   Future<DownloadScanResult?> scanShared({
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   }) {
     if (ref.read(publicDownloadStorageProvider) == null) {
       return Future.value();
     }
-    return _repository.scanShared(onTask: onTask);
+    return _repository.scanShared(
+      onTask: onTask,
+      replaceCompleted: replaceCompleted,
+    );
   }
 
   Future<String?> lastScanStage() => _repository.lastScanStage();
@@ -262,13 +265,14 @@ final class _UnavailableDownloadRepository implements DownloadRepository {
   @override
   Future<void> resumeAll() async {}
   @override
-  Future<void> remove(String id, {required bool deleteFiles}) async {}
+  Future<void> remove(String id) async {}
   @override
   Future<void> refresh() async {}
   @override
   Future<DownloadScanResult> scanShared({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   }) async => const DownloadScanResult();
   @override
   Future<String?> lastScanStage() async => null;

@@ -448,6 +448,7 @@ final class _FakeDownloads implements DownloadRepository {
   Future<DownloadScanResult> scanShared({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   }) async => const DownloadScanResult();
   @override
   Future<String?> lastScanStage() async => null;

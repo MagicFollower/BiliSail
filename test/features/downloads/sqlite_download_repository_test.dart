@@ -154,8 +154,13 @@ void main() {
         (await repository.offlineTask(task.id)).status,
         DownloadStatus.completed,
       );
-      await repository.remove(task.id, deleteFiles: true);
-      expect(publicStorage!.deleted, isTrue);
+      await repository.remove(task.id);
+      expect(
+        publicStorage!.deleted,
+        isFalse,
+        reason: '删除任务只移除记录，公共目录里的文件归用户所有',
+      );
+      expect(repository.current.tasks, isEmpty);
     },
   );
 
@@ -318,17 +323,17 @@ void main() {
 
     expect((await repository.scanShared()).imported, 1);
     final task = repository.current.tasks.single;
-    await repository.remove(task.id, deleteFiles: true);
+    await repository.remove(task.id);
     expect(repository.current.tasks, isEmpty);
 
-    // The folder is still on disk: deleting the media leaves the directory
-    // behind on MediaStore, and the cache row survives until a full pass.
+    // Nothing was deleted on disk - the folder and its private directory both
+    // survive a removed row - so the next pass has to put the part back.
     final second = await repository.scanShared();
     expect(second.imported, 1, reason: '${second.reasons}');
     final again = repository.current.tasks.single;
     expect(again.id, task.id);
-    // The private directory was deleted with the task, so the rescan must
-    // have recreated it rather than writing into a removed path.
+    // The row was dropped with its cache entry, so the rescan recreated a
+    // private directory instead of writing into a path nothing owns.
     expect(await File('${again.directory}/.bilisail-task').exists(), isTrue);
 
     // And once the folder is really gone, the cache entry must not keep
@@ -343,6 +348,52 @@ void main() {
           .read<int>('count'),
       0,
     );
+  });
+
+  test('a replacing scan retires the rows of the directory we left', () async {
+    await repository.close();
+    await db.close();
+    publicStorage = _PublicStorage();
+    await openRepository();
+    final storage = publicStorage!;
+    PublishedFolder folder() => PublishedFolder(
+      key: 'Download/BiliSail/BV1234567890-P1 视频/',
+      name: 'BV1234567890-P1 视频',
+      files: const [
+        PublishedFile(
+          name: 'media.mp4',
+          uri: 'content://test/media',
+          bytes: 2048,
+          modifiedMs: 10,
+        ),
+        PublishedFile(
+          name: 'manifest.json',
+          uri: 'content://test/manifest',
+          bytes: 512,
+          modifiedMs: 11,
+        ),
+      ],
+    );
+    storage.folders = [folder()];
+    storage.texts['content://test/manifest'] = _publishedManifest();
+    expect((await repository.scanShared()).imported, 1);
+    expect(repository.current.tasks.single.publicDestination, 'downloads');
+
+    // The user points the app at another folder that holds nothing yet. The
+    // list follows that directory instead of keeping parts it cannot open.
+    storage.selected = 'file:///sdcard/BiliSail 二';
+    storage.folders = const [];
+    final moved = await repository.scanShared(replaceCompleted: true);
+    expect(moved.imported, 0);
+    expect(repository.current.tasks, isEmpty);
+    expect(storage.deleted, isFalse, reason: '换目录的清场只移除记录，不删任何文件');
+
+    // Back to a directory that does hold the part: a plain scan re-imports
+    // it under the destination it was found in.
+    storage.selected = 'downloads';
+    storage.folders = [folder()];
+    expect((await repository.scanShared()).imported, 1);
+    expect(repository.current.tasks.single.publicDestination, 'downloads');
   });
 
   test('the scan breadcrumb names the step a failed pass did not return from', () async {
@@ -548,9 +599,6 @@ void main() {
       await _waitFor(repository, DownloadStatus.completed);
       expect((await repository.offlineTask(id)).directory, legacyPath);
       expect(await File('$directory/video.m4s').length(), media.length);
-      await repository.remove(id, deleteFiles: true);
-      expect(await Directory(directory).exists(), isFalse);
-      expect(await Link(alias.path).exists(), isTrue);
     },
     skip: Platform.isWindows
         ? 'Creating Windows symlinks requires additional privileges.'
@@ -627,21 +675,19 @@ void main() {
   );
 
   test(
-    'removing an index can retain files and deleting files is confined to task',
+    'removing a row leaves the task files and everything beside them alone',
     () async {
       await repository.enqueue([item], const DownloadSelection());
       await _waitFor(repository, DownloadStatus.completed);
       final task = repository.current.tasks.single;
       final unrelated = File('${root.path}/keep.txt')
         ..writeAsStringSync('keep');
-      await repository.remove(task.id, deleteFiles: false);
-      expect(await Directory(task.directory).exists(), isTrue);
-      expect(await unrelated.readAsString(), 'keep');
-      await repository.enqueue([item], const DownloadSelection());
-      await _waitFor(repository, DownloadStatus.completed);
-      await repository.remove(
-        repository.current.tasks.single.id,
-        deleteFiles: true,
+      await repository.remove(task.id);
+      expect(repository.current.tasks, isEmpty);
+      expect(
+        await Directory(task.directory).exists(),
+        isTrue,
+        reason: '应用不再删除已下载文件',
       );
       expect(await unrelated.readAsString(), 'keep');
     },
@@ -669,10 +715,7 @@ void main() {
     await repository.enqueue([item], const DownloadSelection());
     await _waitFor(repository, DownloadStatus.completed);
     final id = repository.current.tasks.single.id;
-    await Future.wait([
-      repository.refresh(),
-      repository.remove(id, deleteFiles: false),
-    ]);
+    await Future.wait([repository.refresh(), repository.remove(id)]);
     expect(repository.current.tasks, isEmpty);
     expect(
       (await db
@@ -683,12 +726,12 @@ void main() {
     );
   });
 
-  test('account switch during removal retains the old account files', () async {
+  test('account switch during removal aborts it and retains the row', () async {
     slow = true;
     await repository.enqueue([item], const DownloadSelection());
     await _waitFor(repository, DownloadStatus.downloading);
     final task = repository.current.tasks.single;
-    final removal = repository.remove(task.id, deleteFiles: true);
+    final removal = repository.remove(task.id);
     sources.scope = 'user:2';
     sources.epoch++;
     final switchAccount = repository.sessionChanged();

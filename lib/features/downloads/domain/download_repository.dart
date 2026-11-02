@@ -32,16 +32,26 @@ abstract interface class DownloadRepository {
   Future<void> resume(String id);
   Future<void> pauseAll();
   Future<void> resumeAll();
-  Future<void> remove(String id, {required bool deleteFiles});
+
+  /// Drops the queue row and its record. Shared and private media are never
+  /// deleted here: the download directory belongs to the user, and a scan would
+  /// otherwise be undoing a deletion the user did not ask for.
+  Future<void> remove(String id);
   Future<void> refresh();
 
   /// Rebuilds the queue from the folders this app published in shared storage.
   ///
   /// Cheap on repeat runs: a folder whose manifest size and timestamp are
   /// unchanged, and whose task row is already loaded, is not read again.
+  /// Rebuilds the queue from the published folders in the shared directory.
+  ///
+  /// [replaceCompleted] is the switch used right after the shared directory
+  /// changes: rows completed against another directory leave the queue (their
+  /// files stay), so the list mirrors the directory the user just pointed at.
   Future<DownloadScanResult> scanShared({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   });
 
   /// The step a previous scan started but never finished, for the case where

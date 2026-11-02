@@ -370,10 +370,11 @@ void main() {
     expect(repository.removed, isEmpty);
     await tester.tap(find.text('删除任务').first);
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.text('同时删除已下载文件'));
+    // No opt-out to delete files any more; the dialog says what happens instead.
+    expect(find.textContaining('不删除已下载的文件'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, '删除任务'));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(repository.removed, [('1', true)]);
+    expect(repository.removed, ['1']);
     await repository.close();
   });
 
@@ -599,7 +600,7 @@ final class _DownloadRepository implements DownloadRepository {
   final List<List<DownloadItem>> enqueued = [];
   DownloadSelection? selection;
   final List<String> paused = [], resumed = [];
-  final List<(String, bool)> removed = [];
+  final List<String> removed = [];
   Future<DownloadTask>? offlineResult;
   void setTasks(List<DownloadTask> tasks) {
     _state = DownloadQueueState(
@@ -634,14 +635,14 @@ final class _DownloadRepository implements DownloadRepository {
   @override
   Future<void> resumeAll() async {}
   @override
-  Future<void> remove(String id, {required bool deleteFiles}) async =>
-      removed.add((id, deleteFiles));
+  Future<void> remove(String id) async => removed.add(id);
   @override
   Future<void> refresh() async {}
   @override
   Future<DownloadScanResult> scanShared({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   }) async => const DownloadScanResult();
   @override
   Future<String?> lastScanStage() async => null;

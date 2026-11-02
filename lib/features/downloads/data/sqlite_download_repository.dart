@@ -909,7 +909,7 @@ final class SqliteDownloadRepository implements DownloadRepository {
   }
 
   @override
-  Future<void> remove(String id, {required bool deleteFiles}) async {
+  Future<void> remove(String id) async {
     await initialize();
     final scope = _scope;
     final epoch = _epoch;
@@ -930,20 +930,18 @@ final class SqliteDownloadRepository implements DownloadRepository {
       _tasks.remove(id);
       _emit();
       try {
-        if (deleteFiles) {
-          await _files.ownedDirectory(current);
-          if (current.publicDestination != null) {
-            if (_publicStorage == null) {
-              throw const AppFailure(AppFailureKind.storage, '当前平台不能删除公共下载');
-            }
-            await _publicStorage.delete(current);
-          }
-          await _files.deleteOwned(current);
-        }
+        // Only the row goes away. The published folder stays in the user's
+        // download directory: the list is a view of that directory, so a scan
+        // would put the part straight back, and deleting files was never what
+        // "删除任务" promised.
         await _writes;
         await db.customStatement(
           'DELETE FROM download_tasks WHERE id = ? AND scope = ?',
           [id, scope],
+        );
+        await db.customStatement(
+          'DELETE FROM download_scan_cache WHERE task_id = ?',
+          [id],
         );
       } catch (_) {
         if (scope == _scope && epoch == _epoch && !_tasks.containsKey(id)) {
@@ -1043,6 +1041,7 @@ final class SqliteDownloadRepository implements DownloadRepository {
   Future<DownloadScanResult> scanShared({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   }) async {
     if (_publicStorage == null) return const DownloadScanResult();
     if (_scanRunning) {
@@ -1051,7 +1050,11 @@ final class SqliteDownloadRepository implements DownloadRepository {
     }
     _scanRunning = true;
     try {
-      return await _scanPass(cancellation: cancellation, onTask: onTask);
+      return await _scanPass(
+        cancellation: cancellation,
+        onTask: onTask,
+        replaceCompleted: replaceCompleted,
+      );
     } finally {
       _scanRunning = false;
     }
@@ -1060,6 +1063,7 @@ final class SqliteDownloadRepository implements DownloadRepository {
   Future<DownloadScanResult> _scanPass({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   }) async {
     final storage = _publicStorage;
     if (storage == null) return const DownloadScanResult();
@@ -1080,6 +1084,24 @@ final class SqliteDownloadRepository implements DownloadRepository {
     await _noteScanStage('destination');
     final destination = await storage.destination();
     await _trace('目的地 ${_destinationKind(destination)}');
+    if (replaceCompleted) {
+      // The queue is a mirror of this directory now. Rows completed against a
+      // different shared directory cannot be opened from here, so they leave
+      // the list - files untouched, because the directory belongs to the user.
+      // Rows with no shared destination at all are the app's own private
+      // downloads and stay.
+      final stale = [
+        for (final task in _visible())
+          if (task.status == DownloadStatus.completed &&
+              task.publicDestination != null &&
+              task.publicDestination != destination)
+            task.id,
+      ];
+      for (final id in stale) {
+        await remove(id);
+      }
+      await _trace('换目录让位 ${stale.length} 行');
+    }
     await _noteScanStage('listFolders');
     final folders = await storage.listPublishedFolders();
     await _trace('扫描到 ${folders.length} 个已发布目录');

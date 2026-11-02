@@ -149,15 +149,13 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   Future<void> _remove(DownloadTask task) async {
-    final deleteFiles = await showAppDialog<bool>(
+    final confirmed = await showAppDialog<bool>(
       context: context,
       builder: (_) => _DeleteTaskDialog(task: task),
     );
-    if (deleteFiles == null || !mounted) return;
+    if (confirmed != true || !mounted) return;
     await _run(
-      () => ref
-          .read(downloadControllerProvider.notifier)
-          .remove(task.id, deleteFiles: deleteFiles),
+      () => ref.read(downloadControllerProvider.notifier).remove(task.id),
     );
   }
 
@@ -189,11 +187,6 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           builder: (context, constraints) {
             final compact = constraints.maxWidth < 600;
             final actions = [
-              IconButton(
-                tooltip: '刷新下载',
-                onPressed: () => _run(controller.refresh),
-                icon: const Icon(Icons.refresh_rounded),
-              ),
               IconButton(
                 tooltip: '下载设置',
                 onPressed: () => showAppDialog<void>(
@@ -777,7 +770,6 @@ final class _DeleteTaskDialog extends StatefulWidget {
 }
 
 final class _DeleteTaskDialogState extends State<_DeleteTaskDialog> {
-  bool _deleteFiles = false;
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('删除下载任务'),
@@ -791,12 +783,14 @@ final class _DeleteTaskDialogState extends State<_DeleteTaskDialog> {
             '${widget.task.item.video.title} · ${widget.task.item.part.title}',
           ),
           const SizedBox(height: 12),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: const Text('同时删除已下载文件'),
-            value: _deleteFiles,
-            onChanged: (value) => setState(() => _deleteFiles = value ?? false),
+          // The app never deletes from the shared directory, and the list is a
+          // view of it: leaving the files there means the next scan puts this
+          // part back, which is the one thing a user would not predict.
+          Text(
+            '只把这一条从下载列表移除，不删除已下载的文件。'
+            '想彻底移除，请到下载目录里删除对应的文件夹（文件夹名以 BV 号开头），'
+            '否则下次扫描会把它重新导入。',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
       ),
@@ -807,7 +801,7 @@ final class _DeleteTaskDialogState extends State<_DeleteTaskDialog> {
         child: const Text('取消'),
       ),
       FilledButton(
-        onPressed: () => Navigator.pop(context, _deleteFiles),
+        onPressed: () => Navigator.pop(context, true),
         child: const Text('删除任务'),
       ),
     ],
@@ -907,7 +901,7 @@ final class _DownloadSettingsDialogState
     return _defaultDirectory;
   }
 
-  Future<void> _runScan() async {
+  Future<void> _runScan({bool replaceCompleted = false}) async {
     setState(() {
       _scanning = true;
       _error = null;
@@ -915,13 +909,32 @@ final class _DownloadSettingsDialogState
     try {
       final result = await ref
           .read(downloadControllerProvider.notifier)
-          .scanShared();
+          .scanShared(replaceCompleted: replaceCompleted);
       if (mounted) setState(() => _scan = result);
     } on AppFailure catch (error) {
       if (mounted) setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
+  }
+
+  /// A new shared directory takes the list over immediately: the location line
+  /// re-reads what the platform now holds, and one replacing pass makes the
+  /// queue show that directory's parts instead of the previous one's. Waiting
+  /// for the next app start would leave a list that no longer matches the
+  /// folder the user just pointed at.
+  Future<void> _changeLocation() async {
+    final bool chosen;
+    try {
+      chosen = await chooseDownloadDestination(context, ref, force: true);
+    } on AppFailure catch (e) {
+      if (mounted) setState(() => _error = e.message);
+      return;
+    }
+    if (!chosen || !mounted) return;
+    await _loadLocations();
+    if (!mounted) return;
+    await _runScan(replaceCompleted: true);
   }
 
   Future<void> _openLocation() async {
@@ -1033,15 +1046,7 @@ final class _DownloadSettingsDialogState
               onPressed: _saving
                   ? null
                   : () async {
-                      try {
-                        await chooseDownloadDestination(
-                          context,
-                          ref,
-                          force: true,
-                        );
-                      } on AppFailure catch (e) {
-                        if (mounted) setState(() => _error = e.message);
-                      }
+                      await _changeLocation();
                     },
               icon: const Icon(Icons.folder_open),
               label: const Text('更改公共下载位置'),

@@ -272,7 +272,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, '删除任务'));
     await tester.pumpAndSettle();
-    expect(repository.removed, [('0', false)]);
+    expect(repository.removed, ['0']);
   });
 
   testWidgets(
@@ -448,7 +448,7 @@ final class _Repository implements DownloadRepository {
   DownloadQueueState _state;
   final _changes = StreamController<DownloadQueueState>.broadcast();
   int verifications = 0;
-  final List<(String, bool)> removed = [];
+  final List<String> removed = [];
 
   void setTasks(List<DownloadTask> tasks) {
     _state = DownloadQueueState(tasks: tasks, initialized: true);
@@ -493,8 +493,7 @@ final class _Repository implements DownloadRepository {
   @override
   Future<void> refresh() async {}
   @override
-  Future<void> remove(String id, {required bool deleteFiles}) async =>
-      removed.add((id, deleteFiles));
+  Future<void> remove(String id) async => removed.add(id);
   @override
   Future<void> resume(String id) async {}
   @override
@@ -505,6 +504,7 @@ final class _Repository implements DownloadRepository {
   Future<DownloadScanResult> scanShared({
     RequestCancellation? cancellation,
     void Function(DownloadTask task)? onTask,
+    bool replaceCompleted = false,
   }) async => const DownloadScanResult();
   @override
   Future<String?> lastScanStage() async => null;
