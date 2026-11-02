@@ -631,3 +631,27 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 - **撤回"退场用 180ms 控制器降 `_drawn`"。** 回推取消后没有需要收的中间态：松手未闭合直接置 idle，圆盘当帧消失。`_retreat` / `_retreatValue` / `_stepRetreat` / `_retreatToIdle` / `_drawn` 五个成员一起删掉，`TickerProviderStateMixin` 降级为 `SingleTickerProviderStateMixin`（只剩刷新用的 `_spin`）。
 - **撤回"弧端圆点换成沿切向的箭头"。** `_drawHeadArrow` 整个删除；圆环进度色改**绿色** `#7BE38B`（与闭合对钩同色，不再用 `colorScheme.primary`），因此 `armed` 也不再改变弧色，`_RingPainter` 去掉 `armed`/`arc`/`check` 三个入参。
 - 判据：`test/shared/ui/liquid_pull_refresh_test.dart` 6 项通过（数量不变，一项换语义）；`flutter analyze` 无问题。真机手感未验证。
+
+## D75：底栏液态玻璃改为设置开关，上游 Material 底栏作为可切回的默认路径
+
+**问题：** D69 用 `liquid_dock_navi` 整体替换了窄布局的 Material `NavigationBar`，替换是**不可关**的。这带来两类风险：一是玻璃合成依赖运行环境（卓易通那类翻译 GPU 栈已经证明过折射带会画错，见 D69 追加），出问题只能改代码重出包；二是替换顺带改了导航语义（多了历史与下载两个入口），一旦上游对底栏有修复，我们的 fork 面就一直背着这段偏离。
+
+**判定：保留上游实现，而不是"删掉 dock"或"再写一套"。** 三个方案比较：
+
+| 方案 | 做法 | 代价 | 取/弃 |
+| --- | --- | --- | --- |
+| A. 只留 dock | 现状 | 玻璃失效时无退路；与上游底栏永久分叉 | 弃 |
+| B. 只留上游底栏 | 删 dock 与 `liquid_dock_navi` 依赖 | 丢掉已验收的液态玻璃观感，也丢掉窄布局的历史/下载直达入口 | 弃 |
+| C. 开关（默认玻璃） | 两套底栏并存，`AppSettings.liquidGlassDock` 选择 | 底栏多一条分支；两套都要跟着导航语义变更一起改 | **取** |
+
+C 的落地要点：
+
+- **上游那套是原样搬回来的**，不是重写：`_materialBottomNavigation` 的 `NavigationBar`（`height` 52、`labelPadding: EdgeInsets.zero`、`labelTextStyle` 按选中态取 `onSurface`/`onSurfaceVariant`、`animationDuration` 在减少动画时为 0）、`!sections.contains(selected)` 时退回 `_unselectedBottomNavigation`、以及"只在该目的地自己的页面上才抑制重复点击"的 `atSelectedDestination` 判定，全部与 `upstream/master:lib/app/shell.dart` 一致。`_unselectedBottomNavigation` 本来就没被 dock 改动过，两套共用。
+- **两套的入口集合不同，这是有意的。** 窄布局下 `_compactChannels` 为真，直播不进底栏：dock 是 6 项（首页/动态/我的/历史/下载/设置——窄布局没有顶部工具条，历史与下载只能挂在底栏），Material 那套是上游的 4 项（首页/动态/我的/设置），历史走头像菜单的「历史记录」（`/me?section=history`），下载走「下载管理」（`/downloads`），与上游窄布局的可达性一致。所以关掉开关**不会**让历史/下载变成不可达，只是回到上游的入口位置——这一点由用例 `the Material bar leaves queue pages without a selection` 钉住：`/downloads` 在 Material 那套下落到全不选中的条上（`sectionForLocation` 返回 `WorkspaceSection.downloads`，不在 4 项里）。
+- **开关只作用于窄布局。** 宽布局用侧栏，`navigationBarMode` 决定底栏/侧栏，本项不参与；`dockGlassRefraction`（D69 追加）是它的子项，只在玻璃底栏生效。
+- **持久化**：`preferences.v1` 快照 `schemaVersion` 36→37，新增布尔键 `liquidGlassDock`，缺失或类型非法一律回退 `true`——升级不能把已经装好的玻璃底栏悄悄关掉。数据库 schema 无关，不动。
+- **组件依赖不变**：`liquid_dock_navi` 仍是 path 依赖，`notifyOnSelectedTap`（D73）仍需要，因为分组路由的重复点击修复在 dock 那侧靠它才成立。
+
+**验收：** 新增 `test/app/liquid_glass_dock_setting_test.dart` 3 项——默认建出 `LiquidDockNavi` 且没有 `NavigationBar`、底栏里能找到「历史」「下载」；关掉后建出 `NavigationBar` 且没有 `LiquidDockNavi`，点 `workspace-bottom-home` 能从 `/settings` 回到 `/`；关掉后 `/downloads` 落到无选中态的条。新增仓储用例 `the glass dock defaults on, survives old snapshots and round-trips`（v36 旧快照与四种非法值都回退 true，false/true 都能存回读回）。`test/features/settings/sqlite_settings_repository_test.dart` 的快照版本断言 36→37；`test/features/settings/font_selection_test.dart` 的外观用例补 `ensureVisible`——新开关把「界面字体」推到了 650×850 视口外，点击落空。`flutter analyze` 无问题。
+
+**未验证：** 真机上两套底栏的切换手感与 Material 底栏在卓易通里的表现；关掉开关后头像菜单里「下载管理」只在 `embedded` 为真时出现这一条，未在窄布局实机走一遍。

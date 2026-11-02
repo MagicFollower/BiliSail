@@ -65,6 +65,7 @@ final class AppSettings {
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
     this.dockGlassRefraction = true,
+    this.liquidGlassDock = true,
     this.allowConcurrentPlayback = false,
     this.font = AppFontPreference.harmonyOsSans,
     this.systemFontFamily = '',
@@ -134,6 +135,7 @@ final class AppSettings {
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
     this.dockGlassRefraction = true,
+    this.liquidGlassDock = true,
     this.allowConcurrentPlayback = false,
     this.videoCardHoverPlayback = true,
     this.highEnergyProgressEnabled = false,
@@ -208,6 +210,11 @@ final class AppSettings {
   /// translated GPU stacks (HarmonyOS 卓易通 container) it does not, and the
   /// lens repaints the labels underneath it. Off keeps frosted glass only.
   final bool dockGlassRefraction;
+
+  /// Whether the narrow layout's bottom bar is the liquid glass dock. Off falls
+  /// back to the Material `NavigationBar` the dock replaced, which is what a
+  /// runtime that cannot composite the glass over scrolling content needs.
+  final bool liquidGlassDock;
   final bool allowConcurrentPlayback;
   bool get concurrentPlaybackEnabled =>
       navigationMode == WorkspaceNavigationMode.multipleTabs &&
@@ -299,6 +306,7 @@ final class AppSettings {
     SidebarStyle? sidebarStyle,
     bool? sidebarCollapsed,
     bool? dockGlassRefraction,
+    bool? liquidGlassDock,
     bool? allowConcurrentPlayback,
     AppFontPreference? font,
     String? systemFontFamily,
@@ -366,6 +374,7 @@ final class AppSettings {
     sidebarStyle: sidebarStyle ?? this.sidebarStyle,
     sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
     dockGlassRefraction: dockGlassRefraction ?? this.dockGlassRefraction,
+    liquidGlassDock: liquidGlassDock ?? this.liquidGlassDock,
     allowConcurrentPlayback:
         allowConcurrentPlayback ?? this.allowConcurrentPlayback,
     font: font ?? this.font,

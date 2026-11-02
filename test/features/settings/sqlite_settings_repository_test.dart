@@ -157,7 +157,7 @@ void main() {
         final snapshot = jsonDecode(
           (await database.readSetting('preferences.v1'))!,
         );
-        expect(snapshot['schemaVersion'], 36);
+        expect(snapshot['schemaVersion'], 37);
         expect(snapshot['liveStreamPreference'], preference.toJson());
       }
       await repository.save(const AppSettings.defaults());
@@ -237,6 +237,32 @@ void main() {
         (await SqliteSettingsRepository(database).load()).checkUpdatesOnStartup,
         isFalse,
       );
+      expect(database.schemaVersion, 6);
+    },
+  );
+  test(
+    'the glass dock defaults on, survives old snapshots and round-trips',
+    () async {
+      expect(AppSettings().liquidGlassDock, isTrue);
+      expect(const AppSettings.defaults().liquidGlassDock, isTrue);
+      for (final snapshot in <Map<String, Object?>>[
+        // v36 is the snapshot the dock toggle was added after: it has no key at
+        // all, and an upgrade must not silently turn the glass bar off.
+        {'schemaVersion': 36, 'dockGlassRefraction': false},
+        for (final invalid in <Object?>[null, 'true', 1, <Object>[]])
+          {'schemaVersion': 36, 'liquidGlassDock': invalid},
+      ]) {
+        await database.writeSetting('preferences.v1', jsonEncode(snapshot));
+        final loaded = await repository.load();
+        expect(loaded.liquidGlassDock, isTrue);
+        for (final enabled in [false, true]) {
+          await repository.save(loaded.copyWith(liquidGlassDock: enabled));
+          expect(
+            (await SqliteSettingsRepository(database).load()).liquidGlassDock,
+            enabled,
+          );
+        }
+      }
       expect(database.schemaVersion, 6);
     },
   );

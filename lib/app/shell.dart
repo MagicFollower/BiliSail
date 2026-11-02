@@ -138,6 +138,7 @@ final class BiliAppShell extends StatefulWidget {
     this.sidebarStyle = SidebarStyle.automatic,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.dockGlassRefraction = true,
+    this.liquidGlassDock = true,
     this.sidebarCollapsed,
     this.onSidebarCollapsedChanged,
     this.accountIdentity,
@@ -151,6 +152,7 @@ final class BiliAppShell extends StatefulWidget {
   final SidebarStyle sidebarStyle;
   final NavigationBarMode navigationBarMode;
   final bool dockGlassRefraction;
+  final bool liquidGlassDock;
   final bool? sidebarCollapsed;
   final ValueChanged<bool>? onSidebarCollapsedChanged;
   final Object? accountIdentity;
@@ -1712,6 +1714,9 @@ final class _BiliAppShellState extends State<BiliAppShell>
       tab.location,
       compact: _compactChannels,
     );
+    if (!widget.liquidGlassDock) {
+      return _materialBottomNavigation(context, sections, tab, selected);
+    }
     // Only the messages page has no dock destination and falls back to
     // the unselected strip; downloads and history live on the glass bar.
     if (selected == WorkspaceSection.messages) {
@@ -1810,6 +1815,62 @@ final class _BiliAppShellState extends State<BiliAppShell>
           fontWeight: FontWeight.w600,
         ),
       ),
+    );
+  }
+
+  /// The Material bar the glass dock replaced, kept whole so the setting can
+  /// switch back to it. History and downloads are not destinations here: they
+  /// are pages of 我的 and of the queue, reached from the account menu, which is
+  /// how the narrow layout worked before the dock.
+  Widget _materialBottomNavigation(
+    BuildContext context,
+    List<WorkspaceSection> sections,
+    WorkspaceTab tab,
+    WorkspaceSection selected,
+  ) {
+    if (!sections.contains(selected)) {
+      return _unselectedBottomNavigation(context, sections);
+    }
+    // A highlighted group can include other pages, such as history under
+    // Mine. Suppress re-selection only on the destination's own page.
+    final atSelectedDestination = switch (selected) {
+      WorkspaceSection.mine => tab.isAccount,
+      WorkspaceSection.settings => tab.isSettings,
+      _ => tab.isBrowse,
+    };
+    return NavigationBar(
+      key: const ValueKey('workspace-bottom-navigation'),
+      animationDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
+      height: _bottomNavigationHeight,
+      labelPadding: EdgeInsets.zero,
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        final colors = Theme.of(context).colorScheme;
+        return _bottomNavigationLabelStyle.copyWith(
+          color: states.contains(WidgetState.selected)
+              ? colors.onSurface
+              : colors.onSurfaceVariant,
+        );
+      }),
+      selectedIndex: sections.indexOf(selected),
+      onDestinationSelected: (index) {
+        if (sections[index] != selected || !atSelectedDestination) {
+          _selectSection(sections[index], compact: true);
+        }
+      },
+      destinations: [
+        for (final item in sections)
+          NavigationDestination(
+            key: ValueKey('workspace-bottom-${item.name}'),
+            icon: Icon(_sectionIcon(item), size: _bottomNavigationIconSize),
+            selectedIcon: Icon(
+              _sectionIcon(item, selected: true),
+              size: _bottomNavigationIconSize,
+            ),
+            label: item.label,
+          ),
+      ],
     );
   }
 

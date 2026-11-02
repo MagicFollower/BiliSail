@@ -89,6 +89,7 @@ class SqliteSettingsRepository implements SettingsRepository {
           NavigationBarMode.automatic,
       sidebarCollapsed: boolean('sidebarCollapsed', false),
       dockGlassRefraction: boolean('dockGlassRefraction', true),
+      liquidGlassDock: boolean('liquidGlassDock', true),
       allowConcurrentPlayback: boolean('allowConcurrentPlayback', false),
       cacheImages: boolean('cacheImages', true),
       recordSearchHistory: boolean('recordSearchHistory', true),
@@ -247,13 +248,14 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        'schemaVersion': 36,
+        'schemaVersion': 37,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
         'sidebarStyle': value.sidebarStyle.name,
         'sidebarCollapsed': value.sidebarCollapsed,
         'dockGlassRefraction': value.dockGlassRefraction,
+        'liquidGlassDock': value.liquidGlassDock,
         'fullscreenSwipeControls': value.fullscreenSwipeControls,
         'navigationMode': value.navigationMode.name,
         'allowConcurrentPlayback': value.allowConcurrentPlayback,

@@ -323,6 +323,12 @@ final class _SettingsCategoryPageState
                             style: TextStyle(fontSize: 12),
                           ),
                           _toggle(
+                            '液态玻璃底栏',
+                            s.liquidGlassDock,
+                            controller.setLiquidGlassDock,
+                            '窄窗口下底部的悬浮液态玻璃导航栏，额外提供历史与下载入口。关闭后改用系统样式的底栏（历史与下载改从头像菜单进入），个别无法正确合成玻璃效果的运行环境可关掉本项。',
+                          ),
+                          _toggle(
                             '底栏玻璃折射',
                             s.dockGlassRefraction,
                             controller.setDockGlassRefraction,
