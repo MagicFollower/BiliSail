@@ -1125,16 +1125,24 @@ final class _BiliAppShellState extends State<BiliAppShell>
   /// The wash the glass boards float on. A flat `surface` gives a translucent
   /// card nothing to read against, so the treatment paints one gradient here
   /// rather than sampling the backdrop once per visible card per frame.
+  ///
+  /// The wrapper is always a `DecoratedBox`, even when the setting is off:
+  /// returning a bare `child` at this slot would change the widget *type*, and
+  /// then the shell subtree is rebuilt from scratch - every page's scroll
+  /// position with it, which is what made the setting jump the page to the top.
+  /// An empty `BoxDecoration` paints nothing (`color`, `gradient`, `image` and
+  /// `border` are all null), so the flat skin costs no draw call.
   Widget _liquidBackdrop(VideoCardSurface surface, Widget child) {
-    if (!surface.hasBackdrop) return child;
     return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [surface.backdropTop, surface.backdropBottom],
-        ),
-      ),
+      decoration: surface.hasBackdrop
+          ? BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [surface.backdropTop, surface.backdropBottom],
+              ),
+            )
+          : const BoxDecoration(),
       child: child,
     );
   }

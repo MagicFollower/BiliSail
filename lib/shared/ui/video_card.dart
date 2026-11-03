@@ -251,6 +251,13 @@ final class _VideoCardState extends State<VideoCard> {
     );
     final highlighted = (_hovered || _focused) && !_authorHovered;
     final progress = widget.progress;
+    // The board's inner corner. `Material` takes it for its shape, and the ink
+    // needs it explicitly: `InkResponse` reads its *own* `borderRadius` when it
+    // clips a splash or ripple and never falls back to the parent `Material`'s,
+    // so without this the press highlight is a rectangle inside a rounded board.
+    final boardRadius = BorderRadius.circular(
+      glass ? surface.cardRadius - 1 : 7,
+    );
     return ScrollAwareHoverRegion(
       onHover: (hovered) => _update(() => _hovered = hovered),
       child: AnimatedContainer(
@@ -258,11 +265,10 @@ final class _VideoCardState extends State<VideoCard> {
         decoration: _boardDecoration(surface, scheme, glass),
         child: Material(
           color: Colors.transparent,
-          borderRadius: BorderRadius.circular(
-            glass ? surface.cardRadius - 1 : 7,
-          ),
+          borderRadius: boardRadius,
           clipBehavior: Clip.none,
           child: InkWell(
+            borderRadius: boardRadius,
             onTap: widget.feedback == null ? () => widget.onTap() : null,
             onLongPress: widget.feedback == null ? _showMenu : null,
             hoverColor: Colors.transparent,

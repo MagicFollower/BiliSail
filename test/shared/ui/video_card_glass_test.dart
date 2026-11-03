@@ -93,6 +93,32 @@ void main() {
   double fontSizeOf(WidgetTester tester, String text) =>
       tester.widget<Text>(find.text(text).first).style?.fontSize ?? -1;
 
+  /// The card's own ink well - the outermost `InkWell` under the card, so the
+  /// menu button's and the cover's are not mistaken for it.
+  BorderRadius? inkRadius(WidgetTester tester) => tester
+      .widget<InkWell>(
+        find
+            .descendant(
+              of: find.byType(VideoCard),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      )
+      .borderRadius;
+
+  testWidgets('the press highlight is clipped to the board corner', (
+    WidgetTester tester,
+  ) async {
+    // `InkResponse` clips a splash or ripple by its *own* `borderRadius` and
+    // never falls back to the parent `Material`'s, so a card that only shapes
+    // the Material presses as a rectangle inside a rounded board.
+    await show(tester, liquid: true, item: video());
+    expect(inkRadius(tester), BorderRadius.circular(15));
+
+    await show(tester, liquid: false, item: video());
+    expect(inkRadius(tester), BorderRadius.circular(7));
+  });
+
   testWidgets(
     'the board is painted from a translucent fill, a lit rim and a lift',
     (WidgetTester tester) async {

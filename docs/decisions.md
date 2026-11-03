@@ -726,7 +726,7 @@ C 的落地要点：
 - `—`（无数据占位）不再进文本行：压在封面上它是占位，混进句子就是噪声；封面那侧照旧保留。
 - 时长回到封面（它是图像的属性），玻璃卡的封面语义只报「时长 X」，作者行里每项各带「观看 X」「弹幕 Y」标签；分隔点 `·` 用 `ExcludeSemantics` 排除，否则整卡合并成一条朗读标签后读起来是"测试UP · 观看 2.1万 ·…"。
 
-**决定四：页面渐变铺在 `Scaffold` 之后，页面底色转透明。** 半透明板子压在纯色 `surface` 上没有悬浮感。`shell.dart` 的 `_liquidBackdrop` 在 Scaffold 外套一层 `DecoratedBox`，同时 `backgroundColor` 取 `Colors.transparent`；放外面而不是 body 内，是因为 `SafeArea` 之内会把状态栏条带留在旧色上、出现接缝。开关关闭时原样返回 child。注意这条 wash 是**页面级**的，设置/消息等没有卡片的页面同样被染色——这是"全站一套背景"的有意取舍，不是遗漏。
+**决定四：页面渐变铺在 `Scaffold` 之后，页面底色转透明。** 半透明板子压在纯色 `surface` 上没有悬浮感。`shell.dart` 的 `_liquidBackdrop` 在 Scaffold 外套一层 `DecoratedBox`，同时 `backgroundColor` 取 `Colors.transparent`；放外面而不是 body 内，是因为 `SafeArea` 之内会把状态栏条带留在旧色上、出现接缝。开关关闭时原样返回 child（**此句已被 F82 推翻**：类型切换会重建整个壳子树、连带丢掉各页滚动位置，现改为 `DecoratedBox` 常驻、只换 decoration）。注意这条 wash 是**页面级**的，设置/消息等没有卡片的页面同样被染色——这是"全站一套背景"的有意取舍，不是遗漏。
 
 **两条实现约束（都是实测）：**
 
@@ -775,3 +775,24 @@ C 的落地要点：
 **顺带修掉一处自己欠的账：** `test/features/downloads/api_download_source_repository_test.dart` 在 `1d87d82`（F78）里以未格式化状态提交，导致 `check.ps1` 的 format 闸门在合并前就是红的。本轮补跑 `dart format`（3 增 5 删，纯排版，无语义改动），单独成一条提交，不混进合并。
 
 **未验证：** Android 杜比视界软解链路本轮未跑（需真机 + 本地样片服务），`tool/test-android-dolby-vision.ps1` 与 `integration_test/android_dolby_vision_test.dart` 只做了静态收编；会员彩色弹幕的在线发送未验证（协议用例走 fake transport，实际服务端是否回彩色样式没取样）；卡片长按菜单在触屏与卓易通容器里的实际手感、以及 `showModalBottomSheet` 与液态 dock 的手势冲突未验收；macOS/iOS 侧的两个修复本树不可达，只由 Dart 层用例覆盖。
+
+## F82：切换「视频条目液态卡片」不再把页面弹回顶部，按压高亮裁到板角
+
+**现象：** F79 交付后用户实机反馈两处。其一，设置 → 外观里点「视频条目液态卡片」开关，页面立刻跳回最上方（同一次点击在别的开关上没有这个行为）。其二，首页卡片按住时的高亮是一块矩形，四角顶出玻璃板的圆角，跟卡片本身不同形。
+
+**定位一：`_liquidBackdrop` 在同一槽位上换了 widget 类型。** F79 决定四把它写成"开关关闭时原样返回 child"，即开着是 `DecoratedBox(Scaffold)`、关着是裸 `Scaffold`。Flutter 复用元素的条件是"同位置 + 同 runtimeType"，`Scaffold` 的父槽因此在两种类型间来回切换，类型不符即 deactivate 旧子树并从头重建——每页的 `ScrollPosition` 挂在子树 State 上，于是滚动偏移归零。跳动不来自设置页本身，任何被这个壳包的页面都会跳，只是设置页离开关最近、最容易看见。**这条是本轮对 F79 决定四的更正**：那次只考虑了"关掉时不要多一层"，没考虑关掉这个动作本身就是一次子树重建。
+
+**改动一：** `lib/app/shell.dart:1135` 改成**无条件**套 `DecoratedBox`，开关只换 decoration 的内容：有 wash 时给竖向渐变，否则 `const BoxDecoration()`。空 decoration 的四个绘制字段（`color`/`gradient`/`image`/`border`）全为 null，不产生 draw call，扁平皮肤没有额外开销。`Scaffold.backgroundColor` 仍按 `hasBackdrop` 在透明与旧色之间取，视觉结果与 F79 逐项一致。
+
+**定位二：ink 的形状不吃父 `Material` 的圆角。** Flutter 画 splash/ripple 时只读 `InkResponse.borderRadius` 与 `customBorder`，两者皆 null 就退化成 `canvas.clipRect` 的矩形（本机 Flutter 3.47.6 源码 `packages/flutter/lib/src/material/ink_well.dart`：`_createSplash` 在 `:1090`，`widget.borderRadius`/`widget.customBorder` 于 `:1101-1102` 读出并直接传下去；`paintInkCircle` 在 `:121`，`customBorder` 为 null、`borderRadius == BorderRadius.zero` 时 `:154` 落 `canvas.clipRect(rect)`；全程没有回落到 `Material.borderRadius` 的分支）。F79 把半径给了 `Material`，`InkWell` 那侧没传，所以按住是矩形。扁平卡其实一直是同一个漏洞（板角 8、ink 矩形），只是无色板上看不出来——这也说明该修在卡片基础组件里，而不是只给玻璃档补。
+
+**改动二：** `lib/shared/ui/video_card.dart:258` 把板内角提成 `boardRadius` 算一次，同时喂给 `Material.borderRadius` 与 `InkWell.borderRadius`（`:268`、`:271`）。取值 `cardRadius − 1`（玻璃 16→15、扁平 8→7），减掉的是那 1px 亮边/边框，让高亮停在板边内侧而不是压住它。
+
+**已核：** 两条判据各自做过变异回红，然后恢复。
+
+- `test/app/liquid_video_card_backdrop_test.dart` 新增「toggling the board leaves the page scrolled where it was」：挂 40 行 `ListView`，`drag` 到 280 px 后**只换 theme** 再 pump，router 与页面树保持不变，因此偏移归零只可能来自壳自己的子树。把 `_liquidBackdrop` 改回按开关分支，用例报 `Expected: a numeric value within <1> of <280.0> / Actual: <0.0>`。既有的两项判据同步改写：`turning the setting off leaves the page flat` 现在断言"wrapper 仍在树里，但 `gradient` 与 `color` 都是 null"，而不是前一轮的"祖先不是 `DecoratedBox`"——后者会把这次的修复判成失败。
+- `test/shared/ui/video_card_glass_test.dart` 新增「the press highlight is clipped to the board corner」，断言 `InkWell.borderRadius` 为玻璃 15／扁平 7。删掉 `borderRadius: boardRadius` 那行，报 `Expected: BorderRadius.circular(15.0) / Actual: <null>`。
+- 搭第一个用例时踩到自己一处假阳性：页面最初挂在 `GoRoute.builder` 里，而 `BiliAppShell` 优先取 `pageBuilder`（`lib/app/shell.dart:1290`），挂错通路的版本连变异都不会红。现 harness 从 `pageBuilder` 供页。
+- 两个套件合跑 11 项通过；`pwsh tool/check.ps1 -Stage Lint` 全绿（含 `flutter analyze` No issues found）；`pwsh tool/check.ps1 -Stage RootTests` **4174 通过、13 跳过**（上一轮 4172，+2 为本轮新增两项）。
+
+**未验证：** 本轮未出包，真机与卓易通零取样。滚动那条只量了 `ScrollPosition.pixels`，设置页的分区卡片、`PageStorage` 与 `WorkspaceActivity` 副作用没进用例；ink 那条只断言了 `InkWell` 的入参，ripple 实际画出的像素形状没有截图核对，长按菜单的锚点位置是否跟着板角也没验。四个包的测试与原生回归本轮未重跑（改动只在根应用）。
