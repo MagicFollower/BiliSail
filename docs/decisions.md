@@ -687,3 +687,17 @@ C 的落地要点：
 **未验证：** 真机上顶部卡片在浅色/暗色主题与不同状态栏高度下的观感，以及提示压住搜索条 1.5 秒是否影响连续操作。
 
 **本轮明确不做：** 同期还做过一次"折射层每帧新建原生 `ImageFilter`"的组件修复与一组诊断埋点/锚点，装机后现象未消除，已整体回退（保留在 `snapshot/freeze-hunt-20261103` 分支上，含组件仓库同名分支），D74–D76 的实现描述不受影响。
+
+## D78：离线封面改取 CDN 尺寸变体，下载弹窗格式默认由弹窗持有
+
+下载三项优化的决策部分；实现细节、实测数字与验收见 [downloads 方案](downloads.md) 的「2026-11-03」一节。
+
+**决定一：封面在**抓取**时就要小，而不是落盘前重编码。** `cover.img` 存的是 `pic` 原图（实测 651 KB，上限 4 MiB），而它唯一的用途是列表里 160×90 逻辑像素的槽位。备选是在 `writeExtras` 里用 `package:image` 或 `dart:ui` 重编码：前者是新依赖且 JPEG 编码跑在下载收尾的 UI isolate 上，后者 `toByteData` 只出 PNG/原始位、照片类压不进 kB 级。改用既有的 `publicImageThumbnail(url, width: 480, height: 640)`——同一个函数已经在 `AppCoverImage`/`NetworkAvatar` 的线上通路上跑着，等于已被证明可用；实测该变体 5,596 B（CDN 真转码，`content-type: image/webp`）。不匹配该形态的 URL（签名、非 hdslb、gif）由函数原样返回，仍受 4 MiB 上限约束，不做二次兜底。代价：旧下载已落盘的封面不追溯变小；离线副本不再是原分辨率（用途上无意义）。
+
+**决定二：`copyPublished` 通道按调用方各给自己的名字集合，不整体放宽。** 扫描回读附属文件时，`requirePublishedSidecar` 只认 `textNames = {manifest.json, extras.json}`，`cover.img` 进不来，这是"重装后不显示封面"的第二道闸（第一道是 Dart 侧根本没发起这次复制）。把集合换成参数：复制侧用 `sidecarNames`（含封面），文本读侧保持 `textNames`——`readPublishedText` 按 UTF-8 解码，二进制走这条路只会变乱码，**不能顺手一起放开**。通道仍是"只允许我们自己的、刚列出的那个目录的直接子项"，没有变成通用文件读取器。
+
+**决定三：下载弹窗的保存格式默认由弹窗持有，不下沉到 `DownloadSelection`，也不跟随设置种子。** `initialSelection` 的两个真实入口只填 `quality`/`codec`，`output` 取的是构造函数默认 `separate`，所以把弹窗的回落值改成 MKV 不起作用。可选做法是把 `DownloadSelection.output` 的默认换成 `mkv`，但那会连带抬走仓储、清单解析等 20 余处使用者的语义（包括"老任务默认分轨"这一读取语义），因此只在 `initState` 里定默认：`canMerge` 可用取 `mkv`，不可用取 `separate`。默认必须跟着能力走，因为合并项在无 muxer 时是 disabled 的，而 `enqueue` 对 `output.isMerged && !_muxer.available` 直接抛错。
+
+**验收：** `flutter analyze` 无问题；根应用全量 `flutter test` 4098 通过、13 跳过；`:app:compileDebugKotlin` BUILD SUCCESSFUL。三条新判据（封面请求 URL 带尺寸变体、扫描把 `cover.img` 落回私有目录、能力可用时默认 MKV）逐一做过变异回红确认。
+
+**未验证：** 本轮未出包，设备端三项都没取样——尤其是 MediaStore 目的地里 `.img` 这种非媒体扩展名是否被索引（只确认了列举代码不按名字过滤），以及默认 MKV 的任务在真机上能否走完封装。

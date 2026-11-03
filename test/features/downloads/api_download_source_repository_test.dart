@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:bili_api/bili_api.dart';
@@ -150,6 +151,36 @@ void main() {
       expect(extras.warnings.any((w) => w.contains('字幕内容超过')), isTrue);
       expect(extras.warnings.any((w) => w.contains('弹幕获取失败')), isTrue);
       expect(extras.subtitles.first.cues.single.text, '字幕');
+    },
+  );
+
+  test(
+    'cover lands as the sized CDN variant instead of the archive original',
+    () async {
+      const archivePath =
+          '/bfs/archive/5242750857121e05146d5d5b13a47a2a6dd36e98.jpg';
+      final webp = Uint8List.fromList(List<int>.filled(5596, 7));
+      final requested = <String>[];
+      final extras = await HttpOverrides.runZoned(
+        () => repository.extras(
+          _item(coverUrl: 'https://i0.hdslb.com$archivePath'),
+          const DownloadSelection(
+            includeDanmaku: false,
+            includeSubtitles: false,
+          ),
+          cancellation: RequestCancellation(),
+        ),
+        createHttpClient: (context) => _CdnClient(requested, webp),
+      );
+      // The download list shows a ~160 logical px slot, so the saved cover has
+      // to be the thumbnail the CDN can serve: the original is hundreds of KB.
+      expect(
+        requested,
+        ['https://i0.hdslb.com$archivePath@480w_640h_0e.webp'],
+        reason: 'extras reported ${extras.warnings} instead of fetching',
+      );
+      expect(extras.cover, webp);
+      expect(extras.warnings, isEmpty);
     },
   );
 
@@ -326,4 +357,76 @@ final class _Transport implements ApiTransport {
     Uint8List.fromList(utf8.encode(jsonEncode(body))),
     const {},
   );
+}
+
+/// `dart:io` stand-in for the cover fetch. It records the exact URL asked of
+/// the CDN and answers one 200 body, so the size variant is observable without
+/// reaching the network.
+final class _CdnClient implements HttpClient {
+  _CdnClient(this.requested, this.body);
+
+  final List<String> requested;
+  final Uint8List body;
+
+  @override
+  Duration? connectionTimeout;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    requested.add(url.toString());
+    return _CdnRequest(body);
+  }
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+final class _CdnRequest implements HttpClientRequest {
+  _CdnRequest(this.body);
+
+  final Uint8List body;
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  Future<HttpClientResponse> close() async => _CdnResponse(body);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+final class _CdnResponse extends Stream<List<int>>
+    implements HttpClientResponse {
+  _CdnResponse(this.body);
+
+  final Uint8List body;
+
+  @override
+  int get statusCode => 200;
+
+  @override
+  int get contentLength => body.length;
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) => Stream<List<int>>.value(body).listen(
+    onData,
+    onError: onError,
+    onDone: onDone,
+    cancelOnError: cancelOnError,
+  );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
 }

@@ -56,8 +56,7 @@ final class _DownloadDialogState extends ConsumerState<DownloadDialog> {
       widget.initialSelection?.codec ?? VideoCodecPreference.h264;
   late bool _danmaku = widget.initialSelection?.includeDanmaku ?? true;
   late bool _subtitles = widget.initialSelection?.includeSubtitles ?? true;
-  late DownloadOutput _output =
-      widget.initialSelection?.output ?? DownloadOutput.separate;
+  late DownloadOutput _output;
   List<int> _qualities = const [];
   bool _loading = false;
   bool _submitting = false;
@@ -80,6 +79,13 @@ final class _DownloadDialogState extends ConsumerState<DownloadDialog> {
   @override
   void initState() {
     super.initState();
+    // The dialog owns the format default: `initialSelection` only carries
+    // quality/codec from settings, and MKV keeps AV1/HEVC plus embedded
+    // subtitles that MP4 cannot always carry. Without a usable muxer the merged
+    // choice is disabled, so the default has to land on split tracks instead.
+    _output = ref.read(downloadControllerProvider).canMerge
+        ? DownloadOutput.mkv
+        : DownloadOutput.separate;
     final source = ref.read(downloadSourceRepositoryProvider);
     _openedScope = source.accountScope;
     _openedEpoch = source.sessionEpoch;

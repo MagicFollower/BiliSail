@@ -190,7 +190,7 @@ BV1gDEUuUZA-P3 视频标题/
 
 - 只列目的地**下一层**、且必须含我们自己的 `manifest.json` 的目录；绝不递归用户其他子树。
 - 清单里的媒体字节数必须与平台实际列出的**逐一对上**，对不上只拒绝并给原因，不会把截断/被替换的文件夹当成可播。`sha256` 只在长度完整时接受，截断的按"无摘要"处理。
-- 三个新通道方法（`listFolders`、`readText`、`copyPublished`）共用 `requirePublishedSidecar`：证明目标 URI 确实是刚列出的那个目录的直接子项、且名字在 `manifest.json`/`extras.json` 之内——通道不能变成"调用方给什么路径就读什么"的通用文件读取器。
+- 三个新通道方法（`listFolders`、`readText`、`copyPublished`）共用 `requirePublishedSidecar`：证明目标 URI 确实是刚列出的那个目录的直接子项、且名字在该方法被允许的附属文件集合之内——通道不能变成"调用方给什么路径就读什么"的通用文件读取器。（当时的集合是 `manifest.json`/`extras.json`；2026-11-03 起 `copyPublished` 单独放宽到含 `cover.img`，`readText` 不变，见下文。）
 - **认领（adopt）**：`verify`/`openMedia`/`delete` 都依赖应用偏好里的 journal，而 journal 随卸载消失。扫描读到的 URI 会先逐个按目的地复检，再写回 journal，之后播放与删除沿用既有路径，不需要为导入项单开一套。复检失败则整条撤销，不留半截 journal。
 - 归属：导入项记在当前账号名下；该 id 已属于别的账号时跳过并计入 `ownedElsewhere`，**不因为谁打开了 tab 就转移所有权**。
 - 弹幕字幕以流式复制取回私有 `extras.json`（清单允许到 32 MB，读成字符串会造成几十 MB 瞬时占用），复制失败只降级报告，不影响已导入的媒体。
@@ -288,4 +288,40 @@ BV1gDEUuUZA-P3 视频标题/
 - **保留**（它们不是为定位这个 bug 加的观测，而是健壮性）：`catch (e: Throwable)` 而非 `Exception`——未捕获的 throwable 在任何线程上都会关掉整个进程；60 秒 `_deadlineMethods` 超时；`_scanRunning` 扫描重入闸门；`file:` 直读与 `fd.sync()`。
 
 验收：`flutter analyze` 无问题；`test/core/storage` + `test/features/settings` + `test/features/downloads` 全通过（迁移用例覆盖 v1/v2/v3/v5 四条链路）。**设备端未验证**：撤除埋点后卓易通上的下载 tab 仍需一次实机确认，判据是不闪退、扫描在几十毫秒内返回、下载设置对话框无红字。
+
+## 2026-11-03：封面降到 kB 级、扫描把封面取回私有目录、下载弹窗默认 MKV
+
+用户三条：① 下载目录里的封面文件过大，只要在下载界面当小图显示，压到 kB 级即可；② 重装后条目能解析出来但不显示封面；③ 下载弹窗的保存格式默认 MKV。
+
+### ① 封面按 CDN 尺寸变体抓取
+
+- 现象：`cover.img` 存的是 `pic` 原图。本机对一张公开封面实测：原图 `https://i1.hdslb.com/bfs/archive/….jpg` = **651,508 B**（`image/jpeg`），同一 URL 加 `@480w_640h_0e.webp` = **5,596 B**（`image/webp`，CDN 确实转码了，不是原样透传），`@640w` 为 8,070 B。4K 封面能顶到 `_cover()` 既有的 4 MiB 上限。
+- 定位：这张图唯一的用途是下载列表/离线页里 160×90（窄屏 96×54）逻辑像素的槽位，原图分辨率对显示没有意义，却要随发布整份进公共目录。
+- 改动：抓取前套一次既有的 `publicImageThumbnail(coverUrl, width: 480, height: 640)`。480w 够覆盖 3 倍设备像素比；`0e` 是"落在两边之内不裁切"，`1e` 会填满边界反而可能更大（该函数原有注释已说明）。
+- 为什么不在 Dart 侧重编码：`package:image` 是新依赖，且 JPEG 编码会跑在下载收尾的 UI isolate 上；`dart:ui` 的 `toByteData` 只出 PNG/原始位，照片类压不出 kB 级。复用已在跑的这条 CDN 变换通路（`AppCoverImage`/`NetworkAvatar` 用的就是同一个函数，等于已被线上行为证明）。签名 URL、非 hdslb 宿主、gif 等不匹配的形态由该函数原样返回，仍走 4 MiB 上限。
+- 范围：只对**新下载**生效，已落盘的旧封面不改。
+
+### ② 扫描把 `cover.img` 取回私有目录（原生 + 仓储两层）
+
+- 现象：重装后指向同一目录，列表有条目、能播，封面位只有占位图标。
+- 定位：两处叠加。列表的封面是 `FileImage(<私有目录>/cover.img)`（`bili_app.dart` 的 `downloadCoverProvider`），而扫描只把 `extras.json` 复制回私有目录，封面留在公共目录；导入项的清单不存 URL，`coverUrl` 是空串，所以网络兜底也不会显示。第二道闸在原生：`copyPublished` 与 `readText` 共用的 `requirePublishedSidecar` 只接受 `textNames = {manifest.json, extras.json}`，`cover.img` 会被 `require` 直接拒掉，即使 Dart 侧发起也拿不到。
+- 改动：Kotlin 侧给 `requirePublishedSidecar` 加 `allowedNames` 参数——`copyPublished` 传 `sidecarNames`（含 `cover.img`），`readText` 仍传 `textNames`，因为它是按 UTF-8 解码成字符串的，二进制过去只会变乱码，文本读取的集合不放宽；`copyPublished` 的目标名校验同步换成 `sidecarNames`。Dart 侧 `_scanPass` 把附属复制改成 `extras.json` + `cover.img` 两项循环，失败只 `note` 降级报告，不影响已导入的媒体（沿用既有口径）。
+- 三条目的地（`file:` / MediaStore / SAF）的列举本来就返回目录里的每个文件、发布侧早就按 `sidecarNames` 接受 `cover.img`，本次只补"回读"这一半。
+- 边界：**已扫描导入过一次的库不补**——清单字节与修改时间命中缓存、任务又 completed 时整条跳过，这是快路的设计。重装、清数据或清单变化才会重新取回；用户报的正是重装场景。
+
+### ③ 下载弹窗默认合并 MKV
+
+- 此前默认值来自 `initialSelection.output`，而两个入口（`bili_app.dart`）传的种子只填 `quality`/`codec`，`output` 取的是 `DownloadSelection` 的构造默认 `separate`——等于弹窗永远从分轨开始，改 `?? DownloadOutput.mkv` 这种写法不起作用。
+- 改动：格式默认由弹窗自己定，在 `initState` 读 `canMerge`：可用则 `mkv`，不可用则 `separate`；种子继续只决定清晰度/编码/弹幕字幕，不改动 `DownloadSelection` 的构造默认（它还有仓储、清单解析等 20 余处使用者）。
+- 为什么默认要跟着能力走：muxer 不可用时合并项是 disabled 的，默认停在 MKV 就是"选中一个按不了的项"，而 `enqueue` 对 `output.isMerged && !_muxer.available` 直接抛 `当前无法合并音视频，请选择分轨保存`。
+- 为什么是 MKV：AV1/HEVC 与嵌入字幕在 MP4 侧约束更多，两种容器的清单与离线读取同构，不需要额外兼容。
+
+验收：
+
+- `flutter analyze` 无问题；`:app:compileDebugKotlin` **BUILD SUCCESSFUL**（182 任务，6 executed）。下载四个测试文件 **71 通过、13 跳过**（跳过项是 Windows 建链权限）；根应用全量 `flutter test` **4098 通过、13 跳过**（基线 4096 + 封面变体、默认格式两条新用例）。
+- 三条新判据都做过**变异回红确认**：摘掉 `publicImageThumbnail(...)` → 封面用例红；删掉循环里的 `('cover.img', '封面')` → 扫描用例红；把默认改回 `separate` → 默认格式用例红。
+- 封面用例依赖本轮新增的 `dart:io` 替身（`HttpOverrides.runZoned` + 假 `HttpClient`，记录请求 URL 并回一个 200 体）：`_cover` 用的是裸 `HttpClient`，不经过 `bili_api` 的 transport，所以此前下载测试里从未真正发出过封面请求，既有两条封面用例断言的都是"取不到时只报告警"。
+- 弹窗既有用例按新契约改写：原先靠点"音视频分轨"那段文本打开下拉，那是**选中项的显示副本**，默认改成 MKV 后该文本只剩被 `IgnorePointer` 挡住的尺寸副本（点不动），因此改为点 `DropdownButtonFormField<DownloadOutput>` 本体；能力不可用那条额外断言 `initialValue` 是分轨。
+
+未验证：三件事都没上设备。① 新下载实际落盘的 `cover.img` 字节数与列表清晰度；② 卸载重装后指向同一目录时封面是否真的显示——尤其 MediaStore 目的地里 `.img` 这种非媒体扩展名会不会被索引（本轮只确认列举代码不做名字过滤，没有实测），`file:`/SAF 目录没有这个疑问；③ 默认 MKV 的任务在设备上真的走完封装。本轮未出包。
 

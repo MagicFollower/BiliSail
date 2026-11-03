@@ -256,14 +256,17 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
     }
 
     /**
-     * Proves [uri] is one of our own text sidecars directly inside [folder],
-     * under the destination the caller claims. Shared by the manifest reader and
-     * the sidecar copy so neither can be pointed at an arbitrary file.
+     * Proves [uri] is one of our own published sidecars directly inside
+     * [folder], under the destination the caller claims. Shared by the manifest
+     * reader and the sidecar copy so neither can be pointed at an arbitrary
+     * file. [allowedNames] stays per-call: only the copier may move the binary
+     * cover, because the reader decodes UTF-8 text.
      */
     private fun requirePublishedSidecar(
         destination: String,
         folder: String,
         uri: Uri,
+        allowedNames: Set<String>,
     ) {
         if (destination.startsWith("file:")) {
             require(uri.scheme == "file")
@@ -271,7 +274,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             externalDirectory(directory.parentFile?.path ?: throw IllegalArgumentException())
             val file = File(uri.path ?: throw IllegalArgumentException())
             require(file.parentFile?.absolutePath == directory.absolutePath)
-            require(file.name in textNames)
+            require(file.name in allowedNames)
             require(!isLink(file) && file.isFile)
             return
         }
@@ -287,7 +290,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             )?.use {
                 if (!it.moveToFirst()) throw java.io.FileNotFoundException()
                 require(it.getString(0) == folder)
-                require((it.getString(1) ?: "") in textNames)
+                require((it.getString(1) ?: "") in allowedNames)
             } ?: throw java.io.FileNotFoundException()
             return
         }
@@ -299,15 +302,15 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
             uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null,
         )?.use {
             if (!it.moveToFirst()) throw java.io.FileNotFoundException()
-            require((it.getString(0) ?: "") in textNames)
+            require((it.getString(0) ?: "") in allowedNames)
         } ?: throw java.io.FileNotFoundException()
     }
 
     /**
      * Streams a published sidecar back into the task's private directory, so an
-     * imported part plays with its danmaku and subtitles exactly like a part
-     * this install downloaded. Copied rather than read into a string because the
-     * sidecar is allowed to reach tens of megabytes.
+     * imported part plays with its danmaku, subtitles and cover exactly like a
+     * part this install downloaded. Copied rather than read into a string
+     * because the sidecar is allowed to reach tens of megabytes.
      */
     private fun copyPublished(call: MethodCall) {
         val destination = call.argument<String>("destination") ?: throw IllegalArgumentException()
@@ -316,14 +319,14 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         val target = call.argument<String>("targetPath") ?: throw IllegalArgumentException()
         val limit = (call.argument<Int>("maxBytes") ?: 33554432).toLong()
         val uri = Uri.parse(raw)
-        requirePublishedSidecar(destination, folder, uri)
+        requirePublishedSidecar(destination, folder, uri, sidecarNames)
         if (destination == "downloads") {
             resolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null)?.use {
                 if (it.moveToFirst() && !it.isNull(0)) require(it.getLong(0) <= limit)
             }
         }
         val file = File(target)
-        require(file.parentFile?.isDirectory == true && file.name in textNames)
+        require(file.parentFile?.isDirectory == true && file.name in sidecarNames)
         val temp = File("${file.path}.tmp")
         try {
             // A `file:` child is a plain file: reading it through the resolver
@@ -370,7 +373,7 @@ internal class DownloadStorageHandler(private val activity: Activity, messenger:
         val limit = call.argument<Int>("maxBytes") ?: 262144
         require(limit in 1..1048576)
         val uri = Uri.parse(raw)
-        requirePublishedSidecar(destination, folder, uri)
+        requirePublishedSidecar(destination, folder, uri, textNames)
         if (destination.startsWith("file:")) {
             val file = File(uri.path ?: throw IllegalArgumentException())
             require(file.length() <= limit)

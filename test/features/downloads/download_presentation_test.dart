@@ -245,7 +245,24 @@ void main() {
     await repository.close();
   });
 
-  for (final output in [DownloadOutput.mp4, DownloadOutput.mkv]) {
+  testWidgets('format defaults to merged MKV while the muxer is available', (
+    tester,
+  ) async {
+    final repository = _DownloadRepository(canMerge: true);
+    await _pump(
+      tester,
+      DownloadDialog(items: [_item(1)]),
+      repository,
+      _SourceRepository(),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('开始下载'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(repository.selection?.output, DownloadOutput.mkv);
+    await repository.close();
+  });
+
+  for (final output in [DownloadOutput.mp4, DownloadOutput.separate]) {
     testWidgets('${output.name} format is explicit and passed to the queue', (
       tester,
     ) async {
@@ -257,8 +274,9 @@ void main() {
         _SourceRepository(),
       );
       expect(repository.enqueued, isEmpty);
-      await tester.ensureVisible(find.text('音视频分轨').last);
-      await tester.tap(find.text('音视频分轨').last);
+      final format = find.byType(DropdownButtonFormField<DownloadOutput>);
+      await tester.ensureVisible(format);
+      await tester.tap(format);
       await tester.pumpAndSettle();
       await tester.tap(find.text(output.label).last);
       await tester.pumpAndSettle();
@@ -279,8 +297,17 @@ void main() {
       repository,
       _SourceRepository(),
     );
-    await tester.ensureVisible(find.text('音视频分轨').last);
-    await tester.tap(find.text('音视频分轨').last);
+    final format = find.byType(DropdownButtonFormField<DownloadOutput>);
+    await tester.ensureVisible(format);
+    // Without a usable muxer the default has to be the format that can still
+    // be written, not a merged choice the queue would refuse.
+    expect(
+      tester
+          .widget<DropdownButtonFormField<DownloadOutput>>(format)
+          .initialValue,
+      DownloadOutput.separate,
+    );
+    await tester.tap(format);
     await tester.pumpAndSettle();
     final mp4 = tester.widget<DropdownMenuItem<DownloadOutput>>(
       find.widgetWithText(DropdownMenuItem<DownloadOutput>, '合并 MP4').last,

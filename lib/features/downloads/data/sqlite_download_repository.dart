@@ -1154,18 +1154,24 @@ final class SqliteDownloadRepository implements DownloadRepository {
         bytes: manifest.bytes,
         modifiedMs: manifest.modifiedMs,
       );
-      final sidecar = folder.named('extras.json');
-      if (sidecar != null) {
+      // Both sidecars only add convenience: the part plays without them, so a
+      // failed copy is a reported degradation instead of a refusal. The cover
+      // belongs here because the list renders it from the private directory -
+      // an imported row would otherwise show nothing but a placeholder.
+      for (final (name, label) in const [
+        ('extras.json', '弹幕字幕'),
+        ('cover.img', '封面'),
+      ]) {
+        final sidecar = folder.named(name);
+        if (sidecar == null) continue;
         try {
           await storage.copyPublishedSidecar(
             folder: folder.key,
             uri: sidecar.uri,
-            targetPath: (await _files.taskFile(task, 'extras.json')).path,
+            targetPath: (await _files.taskFile(task, name)).path,
           );
         } on AppFailure catch (error) {
-          // The media still plays; losing the sidecar is a degradation the scan
-          // reports, not a reason to refuse the part.
-          note('${folder.name}: 弹幕字幕未能取回（${error.message}）');
+          note('${folder.name}: $label未能取回（${error.message}）');
         }
       }
       if (existing == null) {

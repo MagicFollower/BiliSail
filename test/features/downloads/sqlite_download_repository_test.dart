@@ -222,12 +222,20 @@ void main() {
               bytes: 64,
               modifiedMs: 12,
             ),
+            PublishedFile(
+              name: 'cover.img',
+              uri: 'content://test/cover',
+              bytes: 5596,
+              modifiedMs: 13,
+            ),
           ],
         ),
       ];
       storage.texts['content://test/manifest'] = _publishedManifest();
       const extras = '{"version":1,"comments":[],"subtitles":[],"warnings":[]}';
       storage.texts['content://test/extras'] = extras;
+      const cover = 'WEBPWEBP';
+      storage.texts['content://test/cover'] = cover;
 
       final first = await repository.scanShared();
       expect(first.imported, 1, reason: '${first.reasons}');
@@ -236,12 +244,16 @@ void main() {
       expect(task.item.video.title, '扫描到的视频');
       expect(task.publicFiles['media.mp4'], 'content://test/media');
       expect(task.publicFiles['extras.json'], 'content://test/extras');
+      expect(task.publicFiles['cover.img'], 'content://test/cover');
       // The sidecar comes back into the private directory, which is where
       // offline playback already looks for danmaku and subtitles.
       expect(
         await File('${task.directory}/extras.json').readAsString(),
         extras,
       );
+      // The list paints the cover from the same private directory, so an
+      // imported part would show a placeholder without this copy.
+      expect(await File('${task.directory}/cover.img').readAsString(), cover);
       expect(storage.adopted.single.$1, _scannedId);
       expect(storage.readRequests, hasLength(1));
 
