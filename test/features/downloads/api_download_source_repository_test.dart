@@ -174,11 +174,9 @@ void main() {
       );
       // The download list shows a ~160 logical px slot, so the saved cover has
       // to be the thumbnail the CDN can serve: the original is hundreds of KB.
-      expect(
-        requested,
-        ['https://i0.hdslb.com$archivePath@480w_640h_0e.webp'],
-        reason: 'extras reported ${extras.warnings} instead of fetching',
-      );
+      expect(requested, [
+        'https://i0.hdslb.com$archivePath@480w_640h_0e.webp',
+      ], reason: 'extras reported ${extras.warnings} instead of fetching');
       expect(extras.cover, webp);
       expect(extras.warnings, isEmpty);
     },
