@@ -1,7 +1,9 @@
 name: bilisail
 description: BiliSail, a cross-platform third-party Bilibili client focused on the viewing experience, built with Flutter.
 publish_to: none
-version: 1.2.6+4
+# Fork line: major is upstream's major plus five, the rest tracks upstream verbatim.
+# Upstream 1.2.6+4 therefore reads 6.2.6+4 here; see docs/decisions.md D80.
+version: 6.2.6+4
 
 environment:
   sdk: '>=3.13.0 <4.0.0'

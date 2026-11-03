@@ -728,3 +728,21 @@ C 的落地要点：
 **验收：** 新增 `test/shared/ui/video_card_glass_test.dart` 7 项，玻璃与扁平在同一用例里互为对照（板半径 16 与渐变上实下虚、亮边 alpha > 0、投影 `blurRadius > 0` 且 `offset.dy > 0`、封面 8 对 6；计数与作者同一行 `dy` 相差 ≤2 对扁平卡在作者上方 >20；窄板 150 保 `2.1万` 掉 `3-5`；三档字号 13/14/15 与 10/11/12；长短标题卡高相等）。新增 `test/app/liquid_video_card_backdrop_test.dart` 2 项，判据是"Scaffold 的**最近**祖先是不是带渐变的 `DecoratedBox` + `backgroundColor` 是不是透明"，用最近祖先而不是 `find.ancestor`，避免无关的 `DecoratedBox` 让断言假过。仓储新增默认值/旧快照/非法值回退与往返用例，快照版本断言 37→38。随新契约更新三处既有判据：`android_system_ui_test` 宽布局的透明手势条下现在量到 wash 底色，且"条带不与内容分色"从逐字节相等改为 24px 内相差 ≤1 字节（渐变本来就不是常量）；`search_screen_test` 的 `dm=null` 从「渲染 `—`」改为「不渲染该段、也不渲染 `0`」；`video_grid_test` 的静止悬停边框从 `transparent` 改为 `rimHover`，并显式断言它不等于焦点用的 accent（hover 不得伪装成 focus）。`dart format` 与 `flutter analyze` 无问题；根应用全量 `flutter test` **4108 通过、13 跳过**（改造前基线 4098，+10 为本轮新增用例）。
 
 **未验证：** 本轮未出包，真机（含卓易通）零取样——暗色 0x1F/0x0F 的填充够不够读出"板子"、大字体缩放（1.3×/2×）下合并行会不会整条掉光、长列表滚动里投影的实际帧率代价，都只有桌面单测层面的几何与绘制属性断言。宽布局（侧栏那套）同样吃到这些令牌与页面渐变，同样没在真机看过。既有 4 个包的测试与原生回归本轮未重跑（改动只在根应用）。
+
+## D80：分支版本号改为上游 major+5，根应用交付身份 6.2.6+4
+
+**要求：** 在 `1.2.6+4` 最前面加一位，之后本分支统一带上这个前缀，尾段与上游保持一致。
+
+**为什么落不到字面的四段：** `pubspec.yaml` 的 `version:` 必须是 pub 的三段 SemVer。实测（临时包 `dart pub get`）报 `Invalid version number: Could not parse "2.1.2.6+4"`——写进去会让 `pub get` 直接失败，工程连依赖都解析不了。四段同样过不了两处 compact 公式：`android/app/build.gradle.kts:16` 的 `compactAndroidVersionCode` 与 `tool/android-version.ps1:2` 的 `Get-AndroidVersionCode` 都按 `major.minor.patch+build` 校验并加权（`major*10000 + minor*1000 + patch*100 + build`，且 minor/patch ≤ 9、build ≤ 99）。经确认改为：**major 取上游 major+5，minor/patch/build 与上游逐字一致**，范围只根应用——`bili_api`／`bili_player`／`bili_danmaku`／`bili_mux` 保持各自的 `0.1.0`，它们是 path 依赖、不对外交付，抬成 2.x 只会把与上游无关的号段也带走。
+
+**规则与代价：**
+
+- `1.2.6+4` → `6.2.6+4`；上游 bump 到 `1.3.0+5` 时本分支写 `6.3.0+5`。合并时仍会在这行冲突，但冲突内容是"加 5"这一条机械规则，不需要判断。
+- versionCode 重算为 `6*10000 + 2*1000 + 6*100 + 4 = 62604`（旧 `1.2.6+4` 是 12604），仍然单调上升，覆盖升级成立；既有边界不变，所以**上游 minor 或 patch 一旦到 10，两套 compact 公式都会拒绝**——这是原有约束，不是本轮新增。
+- 更新检查按 `lib/features/settings/application/app_update_controller.dart:124` 的 `release.version.compareTo(installed) > 0` 判定。装的是 6.x，上游 1.x 的 release 永远不算更新，手动检查只会回"已是最新"。fork 保持领先是本来的意图，但要知道这等于关掉了"提示去跟上游更新"。
+- 交付名都吃这同一个字符串：`tool/build-release.ps1:131` 拆 `--build-name`/`--build-number`、产物文件名、MSIX 用 `$Version.Replace('+','.')`（→ `6.2.6.4`，四段在 MSIX 侧合法）；CI 不传 `inputs.version` 时由 `tool/ci-build-plan.ps1` 回读 pubspec，这些路径都不需要改。
+- README 的下载表仍指向上游已发布的 `v1.2.6+3` 资产——那是真实存在的 release 链接，改了会断链，本轮不动。设置页关于栏经 `PackageInfo` 取 versionName，自动显示新号。
+
+**验收：** `flutter pub get` 通过（这本身就是 `6.2.6+4` 为合法 pub 版本的证据）；`pwsh tool/test-ci-build-plan.ps1` 27 项通过，其中「空版本请求回落 pubspec.yaml」那条取到的就是新号；`pwsh tool/test-android-version.ps1` 41 项通过；`Get-AndroidVersionCode '6.2.6+4'` 实测返回 62604，与旧值 12604 比较为上升。**这批 PS 脚本必须用 pwsh 7 跑**：`ci-build-plan.ps1:24` 用了 `ConvertFrom-Json -NoEnumerate`（PS7 才有），Windows PowerShell 5.1 下报 `NamedParameterNotFound`；5.1 还会因为「给 `$env:NAME` 赋空串即删除变量」（实测 `Test-Path Env:PROBE` 为 False）让 `REQUESTED_VERSION` 的回落路径直接抛 null。曾试着给 `ci-build-plan.ps1` 加一条 null 容错，实测 pwsh 7 下原脚本本就 27 项全过，故该改动已撤回，脚本未留差异。
+
+**未验证：** 本轮未出包。APK 里的 `versionName=6.2.6`/`versionCode=62604` 只由脚本与 gradle 公式推导，没有 `aapt dump badging` 复核；gradle 侧 `compactAndroidVersionCode` 未实际执行（本轮无 Kotlin 改动，`:app:compileDebugKotlin` 与全量 `flutter test` 未重跑）。
