@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('notice is compact, below center and dismissed after 1.5s', (
+  testWidgets('notice sits at the top and retires on the 1.5s hold', (
     tester,
   ) async {
     await _pumpHost(tester);
@@ -11,17 +11,24 @@ void main() {
     await tester.pump();
 
     final notice = find.text('操作成功');
-    final surface = find.ancestor(of: notice, matching: find.byType(Material));
+    final surface = find.ancestor(
+      of: notice,
+      matching: find.byType(DecoratedBox),
+    );
     final rect = tester.getRect(surface);
-    expect(rect.width, lessThan(200));
-    expect(rect.height, lessThan(60));
     expect(rect.center.dx, closeTo(400, 1));
-    expect(rect.center.dy, inExclusiveRange(360, 450));
+    // Over the header, not over the bottom navigation the app docks there.
+    expect(rect.center.dy, lessThan(120));
+    expect(rect.width, lessThanOrEqualTo(420));
     expect(find.byType(SnackBar), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 1499));
     expect(notice, findsOneWidget);
+    // The hold expires at 1500ms and the card then plays a ~160ms exit; it is
+    // gone by the end of that, not the instant the timer fires.
     await tester.pump(const Duration(milliseconds: 1));
+    expect(notice, findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
     expect(notice, findsNothing);
   });
 
@@ -39,10 +46,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('视频链接已复制'), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
     expect(find.text('视频链接已复制'), findsNothing);
   });
 
-  testWidgets('notice does not intercept taps and disposes its timer', (
+  testWidgets('tapping the notice dismisses it and stops there', (
     tester,
   ) async {
     var taps = 0;
@@ -50,10 +58,43 @@ void main() {
     await tester.tap(find.text('显示提示'));
     await tester.pump();
     await tester.tapAt(tester.getCenter(find.text('操作成功')));
-    expect(taps, 1);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('操作成功'), findsNothing);
+    // The card is a hit target by design, so the page underneath does not
+    // also act on that tap - the cost of "tap to dismiss", and the reason a
+    // notice over the tab strip blocks the strip for its hold.
+    expect(taps, 0);
+  });
+
+  testWidgets('notice disposes its timer with the host', (tester) async {
+    await _pumpHost(tester);
+    await tester.tap(find.text('显示提示'));
+    await tester.pump();
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a host-less embedding falls back instead of throwing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showAppNotice(context, '操作成功'),
+              child: const Text('显示提示'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('显示提示'));
+    await tester.pump();
+    expect(find.text('操作成功'), findsOneWidget);
+    expect(find.byType(SnackBar), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

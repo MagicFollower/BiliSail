@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/ui/app_dialog.dart';
+import '../../../shared/ui/app_notice.dart';
 import '../../../core/presentation/workspace_activity.dart';
 import '../../../shared/ui/scroll_collapsing_header.dart';
 import '../../../domain/app_failure.dart';
@@ -142,8 +143,7 @@ final class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     }
   }
 
-  void _notice(String text) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  void _notice(String text) => showAppNotice(context, text);
 
   Future<void> _remove(DownloadTask task) async {
     final confirmed = await showAppDialog<bool>(

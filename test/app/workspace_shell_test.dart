@@ -1928,6 +1928,11 @@ void main() {
       for (var index = 0; index < 18; index++) {
         await tester.tap(find.byKey(const ValueKey('new-workspace-tab')));
         await tester.pumpAndSettle();
+        // Past the cap the answer is a transient notice, and that card is a
+        // tap target sitting over the strip: let it retire so the next
+        // iteration reaches the button instead of dismissing the notice.
+        await tester.pump(const Duration(milliseconds: 1600));
+        await tester.pumpAndSettle();
       }
       expect(find.text('page tab-15'), findsOneWidget);
       expect(

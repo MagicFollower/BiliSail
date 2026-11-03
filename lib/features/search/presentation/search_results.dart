@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/platform/external_links.dart';
 import '../../../domain/user.dart';
 import '../../../shared/ui/app_cover_image.dart';
+import '../../../shared/ui/app_notice.dart';
 import '../../../shared/ui/bili_badges.dart';
 import '../../../shared/ui/network_avatar.dart';
 import '../../../shared/ui/video_card.dart';
@@ -128,8 +129,7 @@ final class SearchResults extends ConsumerWidget {
   ) async {
     final opened = await ref.read(externalLinkOpenerProvider)(item.id.url);
     if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('无法打开专栏，请检查系统浏览器')));
+      showAppNotice(context, '无法打开专栏，请检查系统浏览器');
     }
   }
 }

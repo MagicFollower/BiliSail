@@ -671,3 +671,19 @@ C 的落地要点：
 **验收：** `flutter pub get` 与 `flutter analyze` 无问题；根应用全量 `flutter test` **4093 通过、13 跳过**（合并前 4055，+38 为上游新增的睡眠定时器、清晰度、光标闲置与全屏指针用例）；`packages/bili_player` 包 138 项通过（含上游新增 `native_video_color_test.dart`）。这轮上游没有再写死旧的 `schemaVersion` 断言，D73 记的那条坑本轮未复现，但**合并后必跑全量**这条流程照旧。
 
 **未验证：** Dolby Vision P5→SDR 只在 Windows 生效，本树无法取样；`native_video_color.dart` 依赖真实容器元数据（`track-list/*/dolby-vision-profile`），单测用的是假 `read`；听模式睡眠定时器、紧凑控制里的清晰度选择、全屏闲置光标三处只过了 widget 用例，Android 实机（含卓易通容器）未跑；本轮未重跑 `bili_api`/`bili_danmaku`/`bili_mux` 三个包（上游未触碰）。
+
+## D77：提示统一到顶部液态玻璃卡片，下载不再用底部 SnackBar
+
+**现象：** 下载视频后底部弹 `SnackBar`（「已添加 1 项下载任务」），压在液态玻璃 dock 上，观感差。
+
+**定位：** 全站本来就有一套 `AppNoticeHost`（`shared/ui/app_notice.dart`，经 `MaterialApp.builder` 挂在所有路由与对话框之上），而下载三处绕开它直接用 `ScaffoldMessenger.showSnackBar`。SnackBar 和 dock 挂在**同一个 Scaffold**（`shell.dart` 的 `bottomNavigationBar`）上，提示动画因此和底栏绑在同一条重绘链里。
+
+**改动：** `AppNoticeHost` 改为顶部居中、最大宽 420 的深色玻璃卡（填充 + 亮边渐变，**不用 `BackdropFilter`**——它压在滚动的 feed 上，取背景等于用户每滚一帧重录一次，理由与 D74 的圆盘同源），1500ms 自动退场、可点击提前关闭，进出场 180/160ms 位移淡入，减少动画时直接落位；连续提示原地换字不重播入场，避免闪烁。`showAppNotice` 不再在找不到宿主时 `throw`，改为回落 `ScaffoldMessenger`——提示缺失比从调用方的点击里抛异常好。下载添加成功、下载页 `_notice`、专栏打不开三处改走同一入口，底部不再有任何动画。设置页与仓储无需改动：`AppIconSettings` 一类按枚举遍历的 UI 自动跟随，`preferences.v1` 不动。
+
+**已知代价：** 卡片可点击 ⇒ 它矩形内的点击被吃掉。桌面多标签下「最多打开 16 个标签页」的提示正好压在标签条上，测试里出现 tap 落空；已把该用例改成显式等提示退场再断言，并新增用例把契约钉住（断言页面自身收不到那次点击）。Android 顶部是搜索条，1.5s 内不可点，接受。
+
+**验收：** `flutter analyze` 无问题；全量 `flutter test` 通过。`test/shared/ui/app_notice_test.dart` 原有 6 条用例全部保留，其中「不拦截点击」按新契约**反转**为「拦截并关闭」、「低于中线」改为「贴顶」，1500ms 保持时机的判据未放宽；新增无宿主回落用例。
+
+**未验证：** 真机上顶部卡片在浅色/暗色主题与不同状态栏高度下的观感，以及提示压住搜索条 1.5 秒是否影响连续操作。
+
+**本轮明确不做：** 同期还做过一次"折射层每帧新建原生 `ImageFilter`"的组件修复与一组诊断埋点/锚点，装机后现象未消除，已整体回退（保留在 `snapshot/freeze-hunt-20261103` 分支上，含组件仓库同名分支），D74–D76 的实现描述不受影响。

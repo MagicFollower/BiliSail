@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/ui/app_dialog.dart';
+import '../../../shared/ui/app_notice.dart';
 import '../../../domain/app_failure.dart';
 import '../../../domain/request_cancellation.dart';
 import '../../../domain/video_codec.dart';
@@ -234,11 +235,10 @@ final class _DownloadDialogState extends ConsumerState<DownloadDialog> {
         setState(() => _error = '账号已变化，请重新打开下载窗口');
         return;
       }
-      final messenger = ScaffoldMessenger.maybeOf(context);
+      // Before the pop: the host is found by walking this element's ancestors,
+      // and a popped dialog's context is deactivated.
+      showAppNotice(context, '已添加 ${selected.length} 项下载任务');
       Navigator.pop(context);
-      messenger?.showSnackBar(
-        SnackBar(content: Text('已添加 ${selected.length} 项下载任务')),
-      );
     } on AppFailure catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
