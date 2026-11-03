@@ -20,8 +20,15 @@ Widget _app({
   double width = 300,
   double scale = 1,
   bool dark = false,
+  // These cases pin the author row as the flat card draws it: badges, name and
+  // publish date on one line, none of them dropped. The glass board measures the
+  // same line and sheds 时间/弹幕 when the card is narrow, which
+  // `video_card_glass_test.dart` asserts instead.
+  bool liquid = false,
 }) => MaterialApp(
-  theme: dark ? BiliTheme.dark() : BiliTheme.light(),
+  theme: dark
+      ? BiliTheme.dark(liquidVideoCards: liquid)
+      : BiliTheme.light(liquidVideoCards: liquid),
   home: Scaffold(
     body: MediaQuery(
       data: MediaQueryData(textScaler: TextScaler.linear(scale)),

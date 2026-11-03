@@ -219,7 +219,14 @@ Widget _app({
   String danmakuLabel = '',
   int seconds = 6656,
 }) {
-  final theme = BiliTheme.light();
+  final theme = BiliTheme.light(
+    // This suite measures the cover's own count row, which only the flat card
+    // draws - the board moves those counts onto the meta line. The probe below
+    // keys on the white overlay text, so the liquid skin would leave it blind
+    // rather than prove anything. `video_card_glass_test` covers the merged
+    // line's measurement path.
+    liquidVideoCards: false,
+  );
   final textTheme = theme.textTheme.apply(fontFamily: fontFamily);
   return MaterialApp(
     debugShowCheckedModeBanner: false,

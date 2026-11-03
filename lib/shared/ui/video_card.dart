@@ -5,6 +5,7 @@ import 'bili_badges.dart';
 import 'highlighted_text.dart';
 import 'video_card_cover.dart';
 import 'video_card_interaction_scope.dart';
+import 'video_card_surface.dart';
 import 'scroll_aware_hover_region.dart';
 import 'video_card_feedback.dart';
 import 'text_measurement_cache.dart';
@@ -203,10 +204,17 @@ final class _VideoCardState extends State<VideoCard> {
   }
 
   @override
-  Widget build(BuildContext context) => _card ??= LayoutBuilder(
-    builder: (context, constraints) =>
-        _buildCard(context, constraints.maxWidth),
-  );
+  Widget build(BuildContext context) {
+    // The card itself is built inside a LayoutBuilder, whose builder context is
+    // not this element's, so a theme change would otherwise leave the cached
+    // card painted with the previous theme - the liquid-card setting toggling in
+    // the settings tab would not reach the boards already on screen.
+    Theme.of(context);
+    return _card ??= LayoutBuilder(
+      builder: (context, constraints) =>
+          _buildCard(context, constraints.maxWidth),
+    );
+  }
 
   Widget _buildCard(BuildContext context, double cardWidth) {
     final theme = Theme.of(context);
@@ -218,8 +226,16 @@ final class _VideoCardState extends State<VideoCard> {
       widget.danmakuCountText,
     );
     final textScaler = MediaQuery.textScalerOf(context);
+    final surface = videoCardSurfaceOf(context);
+    final glass = surface.enabled;
+    // The board insets the content, so the typography step follows the room the
+    // text actually has rather than the card box: a 250 board writes on 234, and
+    // sizing from 250 would set more characters into a narrower line than the
+    // flat card at 234 - which is how a title that used to fit two lines starts
+    // ellipsizing.
+    final textWidth = cardWidth - surface.inset * 2;
     final titleStyle = theme.textTheme.bodyMedium?.copyWith(
-      fontSize: _titleFontSize,
+      fontSize: glass ? surface.titleFor(textWidth) : _titleFontSize,
       fontWeight: FontWeight.w500,
       height: 1.4,
     );
@@ -229,176 +245,244 @@ final class _VideoCardState extends State<VideoCard> {
       onHover: (hovered) => _update(() => _hovered = hovered),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: _focused ? scheme.primary : Colors.transparent,
-          ),
-        ),
+        decoration: _boardDecoration(surface, scheme, glass),
         child: Material(
           color: Colors.transparent,
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(
+            glass ? surface.cardRadius - 1 : 7,
+          ),
           clipBehavior: Clip.none,
           child: InkWell(
             onTap: widget.feedback == null ? () => widget.onTap() : null,
             hoverColor: Colors.transparent,
             hoverDuration: Duration.zero,
             onFocusChange: (value) => _update(() => _focused = value),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: switch (widget.feedback) {
-                    final feedback? => VideoCardFeedbackCover(
-                      feedback: VideoCardFeedback(
-                        busy: feedback.busy,
-                        onUndo: feedback.onUndo == null
-                            ? null
-                            : () => widget.feedback?.onUndo?.call(),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                surface.inset,
+                surface.inset,
+                surface.inset,
+                surface.bottomGap,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: switch (widget.feedback) {
+                      final feedback? => VideoCardFeedbackCover(
+                        feedback: VideoCardFeedback(
+                          busy: feedback.busy,
+                          onUndo: feedback.onUndo == null
+                              ? null
+                              : () => widget.feedback?.onUndo?.call(),
+                        ),
+                        background: video.coverUrl.isEmpty
+                            ? _coverFallback(context)
+                            : AppCoverImage(
+                                url: video.coverUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) =>
+                                    _coverFallback(context),
+                              ),
                       ),
-                      background: video.coverUrl.isEmpty
-                          ? _coverFallback(context)
-                          : AppCoverImage(
-                              url: video.coverUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) =>
-                                  _coverFallback(context),
-                            ),
-                    ),
-                    null => VideoCardCover(
-                      video: video,
-                      showWatchLaterButton: widget.showWatchLaterButton,
-                      focused: _focused,
-                      hovered: _hovered,
-                      // VideoCardCover clips the complete cover and overlays.
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (video.coverUrl.isNotEmpty)
-                            AppCoverImage(
-                              url: video.coverUrl,
-                              fit: BoxFit.cover,
-                              excludeFromSemantics: true,
-                              errorBuilder: (_, _, _) =>
-                                  _coverFallback(context),
-                              frameBuilder: (_, child, frame, _) =>
-                                  frame != null
-                                  ? child
-                                  : _coverFallback(context),
-                            )
-                          else
-                            _coverFallback(context),
-                          Align(
-                            alignment: Alignment.bottomCenter,
-                            child: SizedBox(
-                              width: double.infinity,
-                              height: textScaler.scale(36) + 20,
-                              child: const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.transparent,
-                                      Color(0xC4000000),
-                                    ],
+                      null => VideoCardCover(
+                        video: video,
+                        // The board is 16 and the cover sits 8 inside it, so 8
+                        // keeps the two corners concentric rather than fighting.
+                        borderRadius: surface.coverRadius,
+                        showWatchLaterButton: widget.showWatchLaterButton,
+                        focused: _focused,
+                        hovered: _hovered,
+                        // VideoCardCover clips the complete cover and overlays.
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (video.coverUrl.isNotEmpty)
+                              AppCoverImage(
+                                url: video.coverUrl,
+                                fit: BoxFit.cover,
+                                excludeFromSemantics: true,
+                                errorBuilder: (_, _, _) =>
+                                    _coverFallback(context),
+                                frameBuilder: (_, child, frame, _) =>
+                                    frame != null
+                                    ? child
+                                    : _coverFallback(context),
+                              )
+                            else
+                              _coverFallback(context),
+                            Align(
+                              alignment: Alignment.bottomCenter,
+                              child: SizedBox(
+                                width: double.infinity,
+                                height: textScaler.scale(36) + 20,
+                                child: const DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        Color(0xC4000000),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                          Positioned(
-                            left: 7,
-                            right: 7,
-                            bottom: 7,
-                            child: Semantics(
-                              label:
-                                  '观看 $playLabel，'
-                                  '弹幕 $danmakuLabel，'
-                                  '时长 ${durationLabel(video.duration)}',
-                              excludeSemantics: true,
-                              child: _CoverMetadata(
-                                video: video,
-                                cardWidth: cardWidth,
-                                playLabel: playLabel,
-                                danmakuLabel: danmakuLabel,
-                              ),
-                            ),
-                          ),
-                          if (progress != null)
-                            Align(
-                              alignment: Alignment.bottomLeft,
-                              child: LinearProgressIndicator(
-                                value: progress.clamp(0.0, 1.0),
-                                minHeight: 3,
-                                backgroundColor: Colors.transparent,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  },
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 9, bottom: 1),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Reserve two scaled lines so author rows align across cards.
-                      SizedBox(
-                        width: double.infinity,
-                        height: textScaler.scale(_titleFontSize) * 1.4 * 2 + 2,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: HighlightedText(
-                                video.title,
-                                query: widget.highlightQuery,
-                                maxLines: 2,
-                                showOverflowTooltip: true,
-                                style: titleStyle?.copyWith(
-                                  color: highlighted
-                                      ? scheme.primary
-                                      : scheme.onSurface,
+                            Positioned(
+                              left: 7,
+                              right: 7,
+                              bottom: 7,
+                              child: Semantics(
+                                label: glass
+                                    ? '时长 ${durationLabel(video.duration)}'
+                                    : '观看 $playLabel，'
+                                          '弹幕 $danmakuLabel，'
+                                          '时长 ${durationLabel(video.duration)}',
+                                excludeSemantics: true,
+                                child: _CoverMetadata(
+                                  video: video,
+                                  cardWidth: textWidth,
+                                  playLabel: playLabel,
+                                  danmakuLabel: danmakuLabel,
+                                  // On the glass board the counts move into the
+                                  // card's own meta line; the cover keeps only
+                                  // the duration, which belongs to the image.
+                                  showCounts: !glass,
                                 ),
                               ),
                             ),
-                            if (widget.feedback == null)
-                              if (widget.menu case final menu?)
-                                _menuButton(menu, cardWidth),
+                            if (progress != null)
+                              Align(
+                                alignment: Alignment.bottomLeft,
+                                child: LinearProgressIndicator(
+                                  value: progress.clamp(0.0, 1.0),
+                                  minHeight: 3,
+                                  backgroundColor: Colors.transparent,
+                                ),
+                              ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      _AuthorMetadata(
-                        video: video,
-                        onOpenUser: widget.feedback == null
-                            ? widget.onOpenUser == null
-                                  ? null
-                                  : (id) => widget.onOpenUser?.call(id)
-                            : null,
-                        hovered: _authorHovered,
-                        onHover: (value) =>
-                            _update(() => _authorHovered = value),
-                        showUpBadge: widget.showUpBadge,
-                        reason: widget.showRecommendationReason
-                            ? video.recommendationReason
-                            : null,
-                        showFollowed:
-                            widget.showRecommendationReason &&
-                            video.isFollowed == true,
-                        publishText: widget.publishText,
-                        publishTooltip: widget.publishTooltip,
-                      ),
-                    ],
+                    },
                   ),
-                ),
-              ],
+                  SizedBox(height: surface.titleGap),
+                  _titleBlock(
+                    glass: glass,
+                    surface: surface,
+                    textWidth: textWidth,
+                    titleStyle: titleStyle,
+                    titleColor: highlighted ? scheme.primary : scheme.onSurface,
+                  ),
+                  SizedBox(height: surface.metaGap),
+                  _AuthorMetadata(
+                    video: video,
+                    merged: glass,
+                    metaFontSize: surface.metaFor(textWidth),
+                    playLabel: playLabel,
+                    danmakuLabel: danmakuLabel,
+                    onOpenUser: widget.feedback == null
+                        ? widget.onOpenUser == null
+                              ? null
+                              : (id) => widget.onOpenUser?.call(id)
+                        : null,
+                    hovered: _authorHovered,
+                    onHover: (value) => _update(() => _authorHovered = value),
+                    showUpBadge: widget.showUpBadge,
+                    reason: widget.showRecommendationReason
+                        ? video.recommendationReason
+                        : null,
+                    showFollowed:
+                        widget.showRecommendationReason &&
+                        video.isFollowed == true,
+                    publishText: widget.publishText,
+                    publishTooltip: widget.publishTooltip,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// The board under the card. Painted from a translucent body gradient, one
+  /// lit hairline and a shadow — no `BackdropFilter`, because a grid would
+  /// sample the backdrop for every visible card on every scrolled frame. The
+  /// flat card keeps its focus-only hairline.
+  BoxDecoration _boardDecoration(
+    VideoCardSurface surface,
+    ColorScheme scheme,
+    bool glass,
+  ) {
+    if (!glass) {
+      return BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: _focused ? scheme.primary : Colors.transparent,
+        ),
+      );
+    }
+    return BoxDecoration(
+      borderRadius: BorderRadius.circular(surface.cardRadius),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [surface.bodyTop, surface.bodyBottom],
+      ),
+      border: Border.all(
+        color: _focused
+            ? scheme.primary
+            : _hovered
+            ? surface.rimHover
+            : surface.rim,
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: surface.shadowColor,
+          blurRadius: surface.shadowBlur,
+          offset: surface.shadowOffset,
+        ),
+      ],
+    );
+  }
+
+  /// Title with its menu button, pinned to two scaled lines in both skins.
+  ///
+  /// A grid cannot stretch a row to its tallest card instead: the card picks
+  /// its typography tier from a `LayoutBuilder`, and `LayoutBuilder` refuses to
+  /// report intrinsic dimensions, so `IntrinsicHeight` over a row of cards
+  /// throws during layout. On the board the unused second line reads as the
+  /// padding under the text rather than as a hole in a flat list.
+  Widget _titleBlock({
+    required bool glass,
+    required VideoCardSurface surface,
+    required double textWidth,
+    required TextStyle? titleStyle,
+    required Color titleColor,
+  }) {
+    final fontSize = glass ? surface.titleFor(textWidth) : _titleFontSize;
+    return SizedBox(
+      width: double.infinity,
+      height: MediaQuery.textScalerOf(context).scale(fontSize) * 1.4 * 2 + 2,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: HighlightedText(
+              widget.video.title,
+              query: widget.highlightQuery,
+              maxLines: 2,
+              showOverflowTooltip: true,
+              style: titleStyle?.copyWith(color: titleColor),
+            ),
+          ),
+          if (widget.feedback == null)
+            if (widget.menu case final menu?) _menuButton(menu, textWidth),
+        ],
       ),
     );
   }
@@ -553,6 +637,7 @@ final class _CoverMetadata extends StatefulWidget {
     required this.cardWidth,
     required this.playLabel,
     required this.danmakuLabel,
+    this.showCounts = true,
   });
 
   final VideoSummary video;
@@ -560,11 +645,15 @@ final class _CoverMetadata extends StatefulWidget {
   final String playLabel;
   final String danmakuLabel;
 
+  /// False on the glass board, where the counts move into the card's meta line
+  /// and only the duration stays over the image.
+  final bool showCounts;
+
   @override
   State<_CoverMetadata> createState() => _CoverMetadataState();
 }
 
-typedef _CoverTextMetricsKey = ({
+typedef _CardTextMetricsKey = ({
   String label,
   TextStyle style,
   TextScaler textScaler,
@@ -572,11 +661,19 @@ typedef _CoverTextMetricsKey = ({
   Locale? locale,
 });
 
-final class _CoverMetadataState extends State<_CoverMetadata> {
-  // Three labels across three width tiers; changing data cannot grow the cache.
-  static const _maximumCachedWidths = 9;
-  final _textWidths = <_CoverTextMetricsKey, double>{};
+/// Single-line label widths for the card's two responsive rows. The grid shares
+/// one cache across a row, a font change clears the local entries, and the
+/// bounded LRU keeps changing labels from growing them.
+mixin _MeasuresCardText<T extends StatefulWidget> on State<T> {
+  static const _maximumCachedWidths = 12;
+  final _textWidths = <_CardTextMetricsKey, double>{};
   TextMeasurementCache? _measurements;
+
+  @override
+  void initState() {
+    super.initState();
+    PaintingBinding.instance.systemFonts.addListener(_fontsChanged);
+  }
 
   @override
   void didChangeDependencies() {
@@ -585,22 +682,14 @@ final class _CoverMetadataState extends State<_CoverMetadata> {
   }
 
   @override
-  void initState() {
-    super.initState();
-    PaintingBinding.instance.systemFonts.addListener(_fontsChanged);
-  }
-
-  void _fontsChanged() {
-    setState(_textWidths.clear);
-  }
-
-  @override
   void dispose() {
     PaintingBinding.instance.systemFonts.removeListener(_fontsChanged);
     super.dispose();
   }
 
-  double _textWidth(_CoverTextMetricsKey key) {
+  void _fontsChanged() => setState(_textWidths.clear);
+
+  double measureWidth(_CardTextMetricsKey key) {
     final cached = _textWidths.remove(key);
     if (cached != null) {
       _textWidths[key] = cached;
@@ -629,7 +718,10 @@ final class _CoverMetadataState extends State<_CoverMetadata> {
     _textWidths[key] = width;
     return width;
   }
+}
 
+final class _CoverMetadataState extends State<_CoverMetadata>
+    with _MeasuresCardText {
   static const _regularFontSize = 12.0;
   static const _style = TextStyle(
     color: Colors.white,
@@ -666,13 +758,26 @@ final class _CoverMetadataState extends State<_CoverMetadata> {
       final textScaler = MediaQuery.textScalerOf(context);
       final direction = Directionality.of(context);
       final locale = Localizations.maybeLocaleOf(context);
-      double textWidth(String label) => _textWidth((
+      double textWidth(String label) => measureWidth((
         label: label,
         style: effectiveStyle,
         textScaler: textScaler,
         direction: direction,
         locale: locale,
       ));
+
+      if (!widget.showCounts) {
+        // Nothing to measure: the counts live in the card's meta line now.
+        return Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            timeLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        );
+      }
 
       // Measure the actual labels, icons and gaps before moving time below counts.
       final countsWidth =
@@ -737,7 +842,18 @@ final class _CoverMetadataState extends State<_CoverMetadata> {
   );
 }
 
-final class _AuthorMetadata extends StatelessWidget {
+/// The card's metadata line.
+///
+/// Flat (`merged == false`) builds badges, author on the left and publish date
+/// on the right, exactly as before, so switching the board off returns the card
+/// to the layout it had.
+///
+/// Merged — the glass board's single line `UP主 · ▶播放 · 💬弹幕 · 时间` — is
+/// measured before it is built: a 140px card cannot hold all four, so segments
+/// drop from the right in that order and the author takes whatever is left and
+/// ellipsizes. Guessing from the character count would ellipsize the numbers
+/// instead, which is the one part of the line that carries no other cue.
+final class _AuthorMetadata extends StatefulWidget {
   const _AuthorMetadata({
     required this.video,
     required this.onOpenUser,
@@ -748,6 +864,10 @@ final class _AuthorMetadata extends StatelessWidget {
     required this.showFollowed,
     required this.publishText,
     required this.publishTooltip,
+    this.merged = false,
+    this.metaFontSize = 12,
+    this.playLabel = '',
+    this.danmakuLabel = '',
   });
   final VideoSummary video;
   final ValueChanged<UserId>? onOpenUser;
@@ -758,25 +878,42 @@ final class _AuthorMetadata extends StatelessWidget {
   final bool showFollowed;
   final String publishText;
   final String? publishTooltip;
+  final bool merged;
+  final double metaFontSize;
+  final String playLabel, danmakuLabel;
+
+  @override
+  State<_AuthorMetadata> createState() => _AuthorMetadataState();
+}
+
+final class _AuthorMetadataState extends State<_AuthorMetadata>
+    with _MeasuresCardText {
+  /// A count the server did not send renders as `—`, which reads as noise
+  /// inside a text line rather than as a number on the cover.
+  static bool _hasCount(String label) =>
+      label.trim().isNotEmpty && label.trim() != '—';
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final video = widget.video;
     final id = video.authorId;
-    final openUser = onOpenUser;
+    final openUser = widget.onOpenUser;
     final date = video.publishedAt?.toLocal();
     final dateText = date == null
-        ? publishText
+        ? widget.publishText
         : date.year == DateTime.now().year
         ? '${date.month}-${date.day}'
         : '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    final reasonText = reason?.trim() ?? '';
+    final reasonText = widget.reason?.trim() ?? '';
     final labels = [
       if (reasonText.isNotEmpty) reasonText,
-      if (showFollowed && !const {'已关注', '新关注'}.contains(reasonText)) '已关注',
+      if (widget.showFollowed && !const {'已关注', '新关注'}.contains(reasonText))
+        '已关注',
     ];
     final author = ScrollAwareHoverRegion(
-      onHover: onHover,
+      onHover: widget.onHover,
       child: InkWell(
         onTap: id != null && id.isValid && openUser != null
             ? () => openUser(id)
@@ -786,7 +923,7 @@ final class _AuthorMetadata extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (showUpBadge) ...[
+            if (widget.showUpBadge) ...[
               const BiliUpBadge(size: 16),
               const SizedBox(width: 4),
             ],
@@ -796,7 +933,8 @@ final class _AuthorMetadata extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: hovered ? theme.colorScheme.primary : null,
+                  color: widget.hovered ? scheme.primary : null,
+                  fontSize: widget.merged ? widget.metaFontSize : null,
                 ),
               ),
             ),
@@ -824,29 +962,33 @@ final class _AuthorMetadata extends StatelessWidget {
         ),
       ),
     );
+    Widget badgesBox(double cap) => ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: cap),
+      child: labels.length == 1
+          ? badge(labels.single)
+          : Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [for (final label in labels) badge(label)],
+            ),
+    );
     final published = Text(
       dateText,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: theme.textTheme.bodySmall,
+      style: theme.textTheme.bodySmall?.copyWith(
+        fontSize: widget.merged ? widget.metaFontSize : null,
+      ),
     );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Row(
+    final publishedNode = widget.publishTooltip == null
+        ? published
+        : Tooltip(message: widget.publishTooltip!, child: published);
+    if (!widget.merged) {
+      return LayoutBuilder(
+        builder: (context, constraints) => Row(
           children: [
             if (labels.isNotEmpty) ...[
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: constraints.maxWidth * .35,
-                ),
-                child: labels.length == 1
-                    ? badge(labels.single)
-                    : Wrap(
-                        spacing: 4,
-                        runSpacing: 4,
-                        children: [for (final label in labels) badge(label)],
-                      ),
-              ),
+              badgesBox(constraints.maxWidth * .35),
               const SizedBox(width: 6),
             ],
             Expanded(
@@ -858,10 +1000,114 @@ final class _AuthorMetadata extends StatelessWidget {
                 constraints: BoxConstraints(
                   maxWidth: constraints.maxWidth * .4,
                 ),
-                child: publishTooltip == null
-                    ? published
-                    : Tooltip(message: publishTooltip, child: published),
+                child: publishedNode,
               ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final style = (theme.textTheme.bodySmall ?? const TextStyle()).copyWith(
+      fontSize: widget.metaFontSize,
+    );
+    final iconSize = widget.metaFontSize;
+    final iconGap = widget.metaFontSize * .2;
+    final separatorGap = widget.metaFontSize * .4;
+    final direction = Directionality.of(context);
+    final locale = Localizations.maybeLocaleOf(context);
+    final textScaler = MediaQuery.textScalerOf(context);
+    double width(String label, [TextStyle? override]) => measureWidth((
+      label: label,
+      style: override ?? style,
+      textScaler: textScaler,
+      direction: direction,
+      locale: locale,
+    ));
+    final separatorWidth = width('·') + separatorGap * 2;
+
+    // The dot is punctuation for the eye; read aloud it would be a separate
+    // segment between every pair of the line's values.
+    Widget separator() => ExcludeSemantics(
+      child: Text('·', style: style.copyWith(color: scheme.outlineVariant)),
+    );
+    Widget count(IconData icon, String label, String semantics) => Semantics(
+      label: semantics,
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: iconSize, color: style.color),
+          SizedBox(width: iconGap),
+          Text(label, maxLines: 1, style: style),
+        ],
+      ),
+    );
+
+    // Left to right is also the priority order: 时间 drops before 弹幕, and 弹幕
+    // before 播放.
+    final items = <({double width, Widget node})>[
+      if (_hasCount(widget.playLabel))
+        (
+          width: width(widget.playLabel) + iconSize + iconGap + separatorWidth,
+          node: count(
+            BiliIcons.playCount,
+            widget.playLabel,
+            '观看 ${widget.playLabel}',
+          ),
+        ),
+      if (_hasCount(widget.danmakuLabel))
+        (
+          width:
+              width(widget.danmakuLabel) + iconSize + iconGap + separatorWidth,
+          node: count(
+            BiliIcons.danmaku,
+            widget.danmakuLabel,
+            '弹幕 ${widget.danmakuLabel}',
+          ),
+        ),
+      if (dateText.isNotEmpty)
+        (width: width(dateText) + separatorWidth, node: publishedNode),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxWidth;
+        final badgeWidth = labels.isEmpty
+            ? 0.0
+            : (width(labels.join('    '), const TextStyle(fontSize: 11)) +
+                          labels.length * 8)
+                      .clamp(0, available * .35) +
+                  6;
+        var room = available - badgeWidth;
+        if (room <= 0) {
+          return Row(children: [if (labels.isNotEmpty) badgesBox(available)]);
+        }
+        // The counts are why the line is merged, so they are kept ahead of the
+        // author, which only has to truncate: a segment survives while it fits
+        // in what a three-character name still leaves over. Right-most items
+        // drop first, so 时间 goes before 弹幕 before 播放.
+        final kept = <Widget>[];
+        var budget = room - widget.metaFontSize * 3;
+        for (final item in items) {
+          if (item.width > budget) break;
+          budget -= item.width;
+          kept.add(item.node);
+        }
+        return Row(
+          children: [
+            if (labels.isNotEmpty) ...[
+              badgesBox(available * .35),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Align(alignment: Alignment.centerLeft, child: author),
+            ),
+            for (final node in kept) ...[
+              SizedBox(width: separatorGap),
+              separator(),
+              SizedBox(width: separatorGap),
+              node,
             ],
           ],
         );

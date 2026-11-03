@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:bilisail/app/shell.dart';
 import 'package:bilisail/app/theme.dart';
 import 'package:bilisail/core/presentation/android_system_ui.dart';
+import 'package:bilisail/shared/ui/video_card_surface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -194,8 +195,34 @@ void main() {
         }
 
         final bottom = size.height.toInt() - 1;
-        expect(pixel(1, bottom), theme.colorScheme.surface);
-        expect(pixel(1, bottom), pixel(1, bottom - 24));
+        // Under the transparent bar, the narrow layout keeps its measured
+        // `surface` pixel; the wide layout has no bottom bar there, so what
+        // reaches the screen edge is the backdrop wash the liquid boards float
+        // on - the page stopped painting its own colour for exactly that reason.
+        final surface = theme.extension<VideoCardSurface>()!;
+        expect(
+          pixel(1, bottom),
+          size.width >= 600 && surface.hasBackdrop
+              ? surface.backdropBottom
+              : theme.colorScheme.surface,
+        );
+        // The bar must not add a band of its own. The wash is a gradient, so
+        // "the same colour" is now "within one byte over these 24 pixels".
+        List<int> bytes(Color color) => [
+          (color.r * 255).round(),
+          (color.g * 255).round(),
+          (color.b * 255).round(),
+        ];
+
+        final bar = bytes(pixel(1, bottom));
+        final content = bytes(pixel(1, bottom - 24));
+        for (var channel = 0; channel < 3; channel++) {
+          expect(
+            (bar[channel] - content[channel]).abs(),
+            lessThanOrEqualTo(1),
+            reason: 'channel $channel: $bar over $content',
+          );
+        }
       },
       variant: TargetPlatformVariant.only(TargetPlatform.android),
     );

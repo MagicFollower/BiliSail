@@ -448,6 +448,10 @@ Widget _app({
   bool dark = false,
   bool showUpBadge = false,
   bool showReason = false,
+  // These cases pin the cover metadata row: counts and duration over the
+  // image. That row is the flat card; the glass board moves the counts into the
+  // card's own meta line, which `video_card_glass_test.dart` covers instead.
+  bool liquid = false,
   String query = '',
   String? reason = '3万点赞',
   VideoSummary? video,
@@ -457,7 +461,9 @@ Widget _app({
   VideoCardMenu? menu,
   VoidCallback? onTap,
 }) => MaterialApp(
-  theme: dark ? BiliTheme.dark() : BiliTheme.light(),
+  theme: dark
+      ? BiliTheme.dark(liquidVideoCards: liquid)
+      : BiliTheme.light(liquidVideoCards: liquid),
   home: Scaffold(
     body: MediaQuery(
       data: MediaQueryData(textScaler: TextScaler.linear(scale)),

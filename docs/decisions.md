@@ -701,3 +701,30 @@ C 的落地要点：
 **验收：** `flutter analyze` 无问题；根应用全量 `flutter test` 4098 通过、13 跳过；`:app:compileDebugKotlin` BUILD SUCCESSFUL。三条新判据（封面请求 URL 带尺寸变体、扫描把 `cover.img` 落回私有目录、能力可用时默认 MKV）逐一做过变异回红确认。
 
 **未验证：** 本轮未出包，设备端三项都没取样——尤其是 MediaStore 目的地里 `.img` 这种非媒体扩展名是否被索引（只确认了列举代码不按名字过滤），以及默认 MKV 的任务在真机上能否走完封装。
+
+## D79：视频条目画成悬浮的液态圆角卡片，卡片文本按文字实际宽度重排
+
+**现象：** 首页/热门/搜索/历史/收藏/动态共用的 `VideoCard` 是贴在 `surface` 底色上的扁平块（圆角 8）：播放量与弹幕数压在封面右下角，UP 主与投稿时间在下一行两端。要求把条目做成"悬浮于背景的液态圆角卡片"并优化卡片内文本。
+
+**决定一：「液态」用绘制，不用 `BackdropFilter`。** 与 D74（下拉圆盘）、D77（顶部提示卡）同一条约束：卡片随列表逐帧重绘，模糊层等于每个可见卡片每帧重新采样一次背景；卓易通那类翻译 GPU 栈上 backdrop 已经证明过会画错（D69 追加）。实际画的是对角渐变的半透明填充 + 1px 亮边（hover 加亮、焦点换 primary）+ 一枚向下偏移的投影，页面另在 `Scaffold` 之外铺一条竖向渐变。三个备选——`ImageFilter.blur`、`backdrop` 包一层、每卡自带背景图——前两个是每帧采样/新增离屏纹理，第三个读不出"悬浮"。
+
+**决定二：范围是全站卡片 + 一条可回退的设置，而不是只改首页。** 令牌集中成 `ThemeExtension`（`shared/ui/video_card_surface.dart`），`BiliTheme` 按 `AppSettings.liquidVideoCards` 装入，卡片与页面读 `videoCardSurfaceOf(context)`，缺失回落 `flat`。持久化沿用 D75：`preferences.v1` 快照 `schemaVersion` 37→38，新增布尔键 `liquidVideoCards`，缺失或类型非法回退 `true`；数据库 schema 不动。入口在设置 → 外观「视频条目液态卡片」，紧跟「底栏玻璃折射」。关闭即回到改造前的扁平条目，几何值逐项复刻（圆角 8、封面 6、无内缩、间距 9/6/1、标题 15 / meta 12），并显式钉住：`video_card_variants`、`video_card_recommendation`、`video_card_measurement_cache` 三套既有用例改为在自己的 `_app` 里传 `liquidVideoCards: false`——它们断言的是封面角标与封面计数行的旧布局，不钉住就等于悄悄换了口径。
+
+**决定三：整卡是玻璃板，封面内缩再圆角，文本重排。**
+
+- 板 16、内缩 8、封面 8：`16 − 8 = 8` 让两个角同心，而不是"封面角比板角更方"地互相顶撞。
+- **字号档位按文字实际宽度取（`cardWidth − 2×inset`），不按卡片宽度取。** 这条是被测试逼出来的：250 宽的板内缩后标题只剩 234，按 250 选档就会把扁平卡 234 宽能装下的字数塞进更窄的行，两行装不下 → 触发溢出 tooltip，而 tooltip 的 message 与标题同字符串、经 `OverlayPortal` 仍算卡片的后代，`find.text` 一次命中两个。玻璃档标题 13/14/15、meta 10/11/12（扁平维持 15/12）。
+- meta 合并成一行 `UP主 · ▶播放 · 💬弹幕 · 时间`，**按实测宽度**从右往左降级：时间先掉，弹幕再掉，播放最后掉；作者保留 3 个字符的底线后 ellipsize。用字符数估不行——数字比汉字窄，估宽会先截掉数字，而数字是这一行里唯一没有别的线索的项。测量沿用既有 `TextMeasurementCacheScope`（每行共享）+ 每卡有界 LRU（上限 12），并监听 `systemFonts` 失效。
+- `—`（无数据占位）不再进文本行：压在封面上它是占位，混进句子就是噪声；封面那侧照旧保留。
+- 时长回到封面（它是图像的属性），玻璃卡的封面语义只报「时长 X」，作者行里每项各带「观看 X」「弹幕 Y」标签；分隔点 `·` 用 `ExcludeSemantics` 排除，否则整卡合并成一条朗读标签后读起来是"测试UP · 观看 2.1万 ·…"。
+
+**决定四：页面渐变铺在 `Scaffold` 之后，页面底色转透明。** 半透明板子压在纯色 `surface` 上没有悬浮感。`shell.dart` 的 `_liquidBackdrop` 在 Scaffold 外套一层 `DecoratedBox`，同时 `backgroundColor` 取 `Colors.transparent`；放外面而不是 body 内，是因为 `SafeArea` 之内会把状态栏条带留在旧色上、出现接缝。开关关闭时原样返回 child。注意这条 wash 是**页面级**的，设置/消息等没有卡片的页面同样被染色——这是"全站一套背景"的有意取舍，不是遗漏。
+
+**两条实现约束（都是实测）：**
+
+- **`VideoCardSurface` 必须有值相等。** `MaterialApp` 会动画主题切换，每一帧都 `ThemeData.lerp` 出新实例；扩展类若没有 `operator ==`，`ThemeData.==` 就判不相等，于是封面自己的 `_coverConfiguration` 比较（其一是 `Theme.of(context)`）每帧失效，缓存被逐帧丢弃、包在里面的 hover 预览反复重建——`sliver_video_card_hover_test` 里表现为第二次静止悬停后预览面没出现、且多出第 3 个引擎。补上按字段记录的 `==`/`hashCode` 后该用例一字未改就通过。
+- **标题的两行预留在两种皮肤下都保留。** 用户提的「取消固定两行预留」这一项**没交付**：卡片靠 `LayoutBuilder` 读自己的宽度来选字号档，而 `LayoutBuilder` 拒绝报告固有尺寸，把它包进 `IntrinsicHeight` 让一行卡片等高会在布局期直接抛 `LayoutBuilder does not support returning intrinsic dimensions`——实测把全量用例打红 134 条（含 `tablet_feed_layout_test`），因此整条等高方案已回退。要同时保住"同一行底边对齐"和"取消预留"，只能改成外部传入固定行数或换 sliver 的行高策略，属于另一次重构。玻璃卡上第二行的空白读作板子的下内距，而不是扁平列表里的空洞。
+
+**验收：** 新增 `test/shared/ui/video_card_glass_test.dart` 7 项，玻璃与扁平在同一用例里互为对照（板半径 16 与渐变上实下虚、亮边 alpha > 0、投影 `blurRadius > 0` 且 `offset.dy > 0`、封面 8 对 6；计数与作者同一行 `dy` 相差 ≤2 对扁平卡在作者上方 >20；窄板 150 保 `2.1万` 掉 `3-5`；三档字号 13/14/15 与 10/11/12；长短标题卡高相等）。新增 `test/app/liquid_video_card_backdrop_test.dart` 2 项，判据是"Scaffold 的**最近**祖先是不是带渐变的 `DecoratedBox` + `backgroundColor` 是不是透明"，用最近祖先而不是 `find.ancestor`，避免无关的 `DecoratedBox` 让断言假过。仓储新增默认值/旧快照/非法值回退与往返用例，快照版本断言 37→38。随新契约更新三处既有判据：`android_system_ui_test` 宽布局的透明手势条下现在量到 wash 底色，且"条带不与内容分色"从逐字节相等改为 24px 内相差 ≤1 字节（渐变本来就不是常量）；`search_screen_test` 的 `dm=null` 从「渲染 `—`」改为「不渲染该段、也不渲染 `0`」；`video_grid_test` 的静止悬停边框从 `transparent` 改为 `rimHover`，并显式断言它不等于焦点用的 accent（hover 不得伪装成 focus）。`dart format` 与 `flutter analyze` 无问题；根应用全量 `flutter test` **4108 通过、13 跳过**（改造前基线 4098，+10 为本轮新增用例）。
+
+**未验证：** 本轮未出包，真机（含卓易通）零取样——暗色 0x1F/0x0F 的填充够不够读出"板子"、大字体缩放（1.3×/2×）下合并行会不会整条掉光、长列表滚动里投影的实际帧率代价，都只有桌面单测层面的几何与绘制属性断言。宽布局（侧栏那套）同样吃到这些令牌与页面渐变，同样没在真机看过。既有 4 个包的测试与原生回归本轮未重跑（改动只在根应用）。

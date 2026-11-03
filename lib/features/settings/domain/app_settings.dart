@@ -66,6 +66,7 @@ final class AppSettings {
     this.sidebarCollapsed = false,
     this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
+    this.liquidVideoCards = true,
     this.allowConcurrentPlayback = false,
     this.font = AppFontPreference.harmonyOsSans,
     this.systemFontFamily = '',
@@ -136,6 +137,7 @@ final class AppSettings {
     this.sidebarCollapsed = false,
     this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
+    this.liquidVideoCards = true,
     this.allowConcurrentPlayback = false,
     this.videoCardHoverPlayback = true,
     this.highEnergyProgressEnabled = false,
@@ -215,6 +217,14 @@ final class AppSettings {
   /// back to the Material `NavigationBar` the dock replaced, which is what a
   /// runtime that cannot composite the glass over scrolling content needs.
   final bool liquidGlassDock;
+
+  /// Video items as painted glass boards: a translucent rounded surface with a
+  /// lit rim, floating over the page backdrop, with the item text re-laid for
+  /// that board. Painted only, never a `BackdropFilter` - a grid of cards would
+  /// sample its backdrop on every scrolled frame. Off keeps the flat card
+  /// exactly as it was, which is what a runtime that cannot composite glass
+  /// over scrolling content needs, the same reason as [liquidGlassDock].
+  final bool liquidVideoCards;
   final bool allowConcurrentPlayback;
   bool get concurrentPlaybackEnabled =>
       navigationMode == WorkspaceNavigationMode.multipleTabs &&
@@ -307,6 +317,7 @@ final class AppSettings {
     bool? sidebarCollapsed,
     bool? dockGlassRefraction,
     bool? liquidGlassDock,
+    bool? liquidVideoCards,
     bool? allowConcurrentPlayback,
     AppFontPreference? font,
     String? systemFontFamily,
@@ -375,6 +386,7 @@ final class AppSettings {
     sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
     dockGlassRefraction: dockGlassRefraction ?? this.dockGlassRefraction,
     liquidGlassDock: liquidGlassDock ?? this.liquidGlassDock,
+    liquidVideoCards: liquidVideoCards ?? this.liquidVideoCards,
     allowConcurrentPlayback:
         allowConcurrentPlayback ?? this.allowConcurrentPlayback,
     font: font ?? this.font,

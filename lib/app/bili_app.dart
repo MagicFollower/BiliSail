@@ -464,10 +464,12 @@ class _BiliAppState extends ConsumerState<BiliApp> {
         theme: BiliTheme.light(
           font: settings.font,
           systemFontFamily: settings.systemFontFamily,
+          liquidVideoCards: settings.liquidVideoCards,
         ),
         darkTheme: BiliTheme.dark(
           font: settings.font,
           systemFontFamily: settings.systemFontFamily,
+          liquidVideoCards: settings.liquidVideoCards,
         ),
         themeMode: switch (settings.theme) {
           AppThemePreference.system => ThemeMode.system,

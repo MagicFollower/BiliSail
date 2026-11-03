@@ -157,7 +157,7 @@ void main() {
         final snapshot = jsonDecode(
           (await database.readSetting('preferences.v1'))!,
         );
-        expect(snapshot['schemaVersion'], 37);
+        expect(snapshot['schemaVersion'], 38);
         expect(snapshot['liveStreamPreference'], preference.toJson());
       }
       await repository.save(const AppSettings.defaults());
@@ -237,6 +237,32 @@ void main() {
         (await SqliteSettingsRepository(database).load()).checkUpdatesOnStartup,
         isFalse,
       );
+      expect(database.schemaVersion, 6);
+    },
+  );
+  test(
+    'the liquid video cards default on, survive old snapshots and round-trip',
+    () async {
+      expect(AppSettings().liquidVideoCards, isTrue);
+      expect(const AppSettings.defaults().liquidVideoCards, isTrue);
+      for (final snapshot in <Map<String, Object?>>[
+        // v37 is the snapshot the card toggle was added after: it has no key at
+        // all, and an upgrade must not silently flatten the boards.
+        {'schemaVersion': 37, 'liquidGlassDock': false},
+        for (final invalid in <Object?>[null, 'true', 1, <Object>[]])
+          {'schemaVersion': 37, 'liquidVideoCards': invalid},
+      ]) {
+        await database.writeSetting('preferences.v1', jsonEncode(snapshot));
+        final loaded = await repository.load();
+        expect(loaded.liquidVideoCards, isTrue);
+        for (final enabled in [false, true]) {
+          await repository.save(loaded.copyWith(liquidVideoCards: enabled));
+          expect(
+            (await SqliteSettingsRepository(database).load()).liquidVideoCards,
+            enabled,
+          );
+        }
+      }
       expect(database.schemaVersion, 6);
     },
   );

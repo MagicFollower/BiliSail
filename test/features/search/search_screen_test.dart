@@ -222,6 +222,9 @@ void main() {
     }
   }
 
+  // `—` is what a missing count used to print over the cover. On the board the
+  // absent segment drops out of the merged meta line instead, so the judgment
+  // that survives here is that null maps through without becoming a zero.
   for (final (count, label) in [(14010, '1.4万'), (0, '0'), (null, '—')]) {
     testWidgets(
       'featured UP preview maps dm=$count through to the video card',
@@ -242,8 +245,14 @@ void main() {
         expect(tester.widget<VideoCard>(card).video.danmakuCount, count);
         expect(
           find.descendant(of: card, matching: find.text(label)),
-          findsOneWidget,
+          count == null ? findsNothing : findsOneWidget,
         );
+        if (count == null) {
+          expect(
+            find.descendant(of: card, matching: find.text('0')),
+            findsNothing,
+          );
+        }
         expect(tester.takeException(), isNull);
       },
     );

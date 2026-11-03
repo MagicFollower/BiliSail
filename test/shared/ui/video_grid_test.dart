@@ -3,6 +3,7 @@ import 'package:bilisail/domain/user.dart';
 import 'package:bilisail/domain/video.dart';
 import 'package:bilisail/shared/ui/responsive_card_grid.dart';
 import 'package:bilisail/shared/ui/video_card.dart';
+import 'package:bilisail/shared/ui/video_card_surface.dart';
 import 'package:bilisail/shared/ui/video_grid.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -186,7 +187,11 @@ void main() {
       addTearDown(pointer.removePointer);
       await pointer.moveTo(tester.getCenter(find.byType(VideoCard)));
       await tester.pumpAndSettle();
-      expect(_borderColor(tester), Colors.transparent);
+      // Hovering lights the board's rim, but it must not read as focus: the
+      // focus hairline is the accent colour asserted below after tabbing in.
+      final rim = BiliTheme.light().extension<VideoCardSurface>()!.rimHover;
+      expect(_borderColor(tester), rim);
+      expect(_borderColor(tester), isNot(BiliTheme.accent));
       expect(
         tester.widget<Text>(find.text(_videos.first.title)).style?.color,
         BiliTheme.accent,

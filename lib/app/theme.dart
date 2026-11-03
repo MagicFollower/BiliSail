@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../features/settings/domain/app_settings.dart';
+import '../shared/ui/video_card_surface.dart';
 
 abstract final class BiliTheme {
   static const accent = Color(0xFFD94B68);
@@ -10,13 +11,27 @@ abstract final class BiliTheme {
   static ThemeData light({
     AppFontPreference font = AppFontPreference.harmonyOsSans,
     String systemFontFamily = '',
-  }) => _build(Brightness.light, font.resolveFamily(systemFontFamily));
+    bool liquidVideoCards = true,
+  }) => _build(
+    Brightness.light,
+    font.resolveFamily(systemFontFamily),
+    liquidVideoCards,
+  );
   static ThemeData dark({
     AppFontPreference font = AppFontPreference.harmonyOsSans,
     String systemFontFamily = '',
-  }) => _build(Brightness.dark, font.resolveFamily(systemFontFamily));
+    bool liquidVideoCards = true,
+  }) => _build(
+    Brightness.dark,
+    font.resolveFamily(systemFontFamily),
+    liquidVideoCards,
+  );
 
-  static ThemeData _build(Brightness brightness, String? fontFamily) {
+  static ThemeData _build(
+    Brightness brightness,
+    String? fontFamily,
+    bool liquidVideoCards,
+  ) {
     final dark = brightness == Brightness.dark;
     final surface = dark ? const Color(0xFF1C2530) : canvas;
     final foreground = dark ? const Color(0xFFEAEAEA) : ink;
@@ -98,6 +113,42 @@ abstract final class BiliTheme {
           side: BorderSide(color: border),
         ),
       ),
+      extensions: [
+        liquidVideoCards
+            ? VideoCardSurface(
+                enabled: true,
+                cardRadius: 16,
+                // The cover sits inside `inset`, so board 16 - inset 8 = cover 8
+                // keeps the two curves concentric instead of fighting.
+                coverRadius: 8,
+                inset: 8,
+                titleGap: 8,
+                metaGap: 5,
+                bottomGap: 9,
+                bodyTop: dark
+                    ? const Color(0x1FFFFFFF)
+                    : const Color(0xCCFFFFFF),
+                bodyBottom: dark
+                    ? const Color(0x0FFFFFFF)
+                    : const Color(0xA8FFFFFF),
+                rim: dark ? const Color(0x30FFFFFF) : const Color(0xE6FFFFFF),
+                rimHover: dark ? const Color(0x50FFFFFF) : Colors.white,
+                shadowColor: dark
+                    ? const Color(0x80000000)
+                    : const Color(0x2610243A),
+                shadowBlur: dark ? 16 : 14,
+                shadowOffset: Offset(0, dark ? 8 : 6),
+                backdropTop: dark
+                    ? const Color(0xFF223141)
+                    : const Color(0xFFF1F6FB),
+                backdropBottom: dark
+                    ? const Color(0xFF131C26)
+                    : const Color(0xFFDFE9F3),
+                titleSizes: const (compact: 13, medium: 14, regular: 15),
+                metaSizes: const (compact: 10, medium: 11, regular: 12),
+              )
+            : VideoCardSurface.flat,
+      ],
       dividerTheme: DividerThemeData(color: border, thickness: 1, space: 1),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
