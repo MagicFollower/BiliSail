@@ -2,6 +2,8 @@
 
 记录日期：2026-10-05。D1–D7 记录初始设计决定；D8 起记录实际实现与验证后的选择。未完成的平台和能力仍不能视为通过验收。
 
+编号归属（2026-11-03 起）：`D` 号留给上游 `CKopoer/BiliSail` 自己的决策，按上游原文与编号收录；本分支（`liquid_dock`）自有决策从 **F69** 起用 `F` 号——此前它们也写作 D69–D80，与上游新增的 D69（杜比视界）撞号后整体改前缀，映射为 D69→F69 … D80→F80，引用一并在本文件内更新。改号之前推送的提交信息里写的 D7x/D8x 指的是现在对应的 F 号。
+
 ## D1：Flutter UI，优先三个原生平台
 
 **决定**：Android、Windows、macOS 共用 Flutter 页面、领域逻辑与组件；按窗口宽度和输入方式适配。首批 ABI 是 Android arm64、Windows x64、macOS arm64。
@@ -514,7 +516,13 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 本机 H.264／HEVC／AV1 自动模式实读为 `d3d11va`；三组 Profile 交叉对照同时记录 CPU、GPU、频率、功耗、内存和掉帧。该选择不等于 DXGI／原生视频平面，不更改弹幕或自动解码偏好，也不保证未测 GPU 的直通。完整证据、版本升级的归因限制与未测项见[实施记录](validation/windows-angle-direct-hwdec-2026-11-01.md)。
 
-## D69：移动底栏改用 liquid_dock_navi 液态玻璃 Dock
+## D69：杜比视界优先正确映射，不支持时自动选兼容在线视频流
+
+**决定（2026-11-03）**：按用户明确选择，Profile 5 必须经过保留 RPU 的色彩转换后输出 SDR 纹理。Android 仅对此源采用软件 HEVC／gpu-next，其他嵌入式后端通过 libplacebo 滤镜转换；根据固定原生库的运行时能力和实际输出检查是否支持，不从平台名称推断。普通视频继续使用原解码路径，不改用户保存的偏好。
+
+转换不可用或输出准备超时时，由通用播放器返回格式不兼容错误；应用会话最多重新解析一次兼容画质／编码，保留位置、播放意图、倍速和音量，并共享启动预算和打开次数上限。Bilibili 画质规则留在应用层；离线内容不请求在线替代源。这不是 HDR／Dolby Vision 透传，软件解码有功耗成本。源码范围、公开样片、Android 真机证据和 Apple／Linux 未验收项见[跨平台验证](validation/dolby-vision-cross-platform-2026-11-03.md)。
+
+## F69：移动底栏改用 liquid_dock_navi 液态玻璃 Dock
 
 **决定（2026-11-01）**：按用户要求，一级底栏的选中态分支以 Git 依赖 `https://github.com/MagicFollower/liquid_dock_navi.git`（MIT，纯 Flutter，无平台通道，钉完整提交 `28e9b7a4991ac31d92003475dfbbac614d4fa383`）的 `LiquidDockNavi` 替换 Material `NavigationBar`，保留 `workspace-bottom-navigation` 键、52 高度、四节标签、即时 `_selectSection` 切换、`withClampedTextScaling(1.3)` 及禁用动画下弹簧直落的行为；消息／下载页的无选中扁条与侧边栏、导航模式设置不变。悬浮玻璃 Dock 替代原 surface 底条成为新增外观；组件标签颜色跟随选中态，与原 `labelTextStyle` 语义一致。
 
@@ -551,13 +559,13 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 本质（用户复述确认后的结论）：不是"鸿蒙画错了"，而是一个装饰性效果把正确性押在一条从未验证的坐标系假设上，且它的失效方式是覆盖内容而不是优雅退化。拆开是四层——① 折射层的"透明"是假的：着色器硬写 `alpha = 1`，它靠原地采样把脚下像素重画一遍才显得透明，所以透明没有独立保证，全靠采样算对；② `IMPELLER_TARGET_OPENGLES` 只能回答"编给哪个后端"，回答不了"这台设备交回的纹理是什么朝向"，后者由引擎当次走 in-pass 还是离屏 subpass 决定，是运行时属性，宏被当成了它的替身；③ 唯一实机记录是 Impeller Vulkan，而该翻转只在 GLES 目标生效——一行从未在任何设备上跑过的代码被当作既成事实依赖，直到出现真正走 GLES 的容器环境；④ 前三层任一破裂的表现都不是"玻璃不好看"，而是选中项消失／页面顶部被镜像进底栏，即纯装饰层拿到了遮挡内容的权力。推广到本仓：任何读屏再重绘的效果（backdrop 模糊、折射、shader mask）的正确性上限，就是它对底层渲染目标约定的假设有多准，因此它必须能退化成"不可见"，并且它声称支持的每个后端族都要真机验过，不能靠宏推断。
 
-## D70：启动更新检查改为可选，弹窗附完整请求记录
+## F70：启动更新检查改为可选，弹窗附完整请求记录
 
 **决定（2026-11-02）**：按用户要求，`AppSettings.checkUpdatesOnStartup` 默认关闭，打开应用不再自动查询 GitHub Release；"设置 → 关于"提供开关，手动检查始终可用且不受开关与每日限额约束。关闭时不写当日尝试记录，因此当天任意时刻开启仍能完成那一次检查。偏好 JSON 快照 `schemaVersion` 34 → 35，SQLite schema 不变。
 
 发现新版本时（自动与手动共用同一弹窗）除更新说明外还显示本机版本、发布时间、Release 地址与附件清单，并可展开、复制本次请求的完整记录（端点、实际请求头、状态码、解码后字节数、耗时、渠道选择、候选与被排除计数），使反馈可复核而不必抓包。无更新与失败仍只在设置页显示单行结果，不弹窗。协议、边界与验证见[关于页与每日更新检查](validation/app-updates.md)。
 
-## D71：下载改为每个分 P 一个可读目录，附属内容与清单随媒体同放
+## F71：下载改为每个分 P 一个可读目录，附属内容与清单随媒体同放
 
 **决定（2026-11-02）**：按用户要求，下载目的地从"只放一个媒体文件"改为**每个分 P 一个可读目录**，目录里同时放媒体、`extras.json`（弹幕与字幕）、`cover.img` 和自描述清单，为"重装应用后指向同一目录即可重新识别"提供前提。动因是既有布局在 Android 上无法承载这个需求：弹幕字幕只写在应用私有目录，而私有目录随卸载一起消失；公共目录里今天没有任何能说明"这是哪条视频"的文件。
 
@@ -565,7 +573,7 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 本条只交付发布面。扫描导入、账号归属规则（导入项归谁）与删除任务时的目录连带策略在后续条目单独决策与验收，详见[下载与离线播放方案](downloads.md)"2026-11-02：每个分 P 一个可读目录"一节；其中已记录的既有边界包括：MediaStore 空目录不参与冲突判定、SAF 云盘 provider 可能不支持建子目录且未做平铺回退。
 
-## D72：下载 tab 扫描共享目录导入离线内容，快路靠缓存而非并发
+## F72：下载 tab 扫描共享目录导入离线内容，快路靠缓存而非并发
 
 **决定（2026-11-02）**：按用户要求，下载页支持"快速高效地从下载目录解析离线的数据显示"。既有 `refresh()` 只逐条核对数据库中已有的任务，共享目录里新出现的文件夹永远不会被发现，重装后数据库为空时列表也就什么都没有。新增 `scanShared()`：列出目的地下一层含 `manifest.json` 的目录 → 读清单 → 校验 → 认领 → 把弹幕字幕取回私有目录；对话框加手动扫描入口并显示结果摘要，tab 首次打开自动扫一次。
 
@@ -575,7 +583,7 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 **归属规则。** 导入项记在当前账号名下；该任务 id 已属于其他账号时跳过并单独计数，不因为谁打开了 tab 就转移所有权。弹幕字幕以流式复制取回私有 `extras.json`（该文件允许到 32 MB，读成字符串会造成几十 MB 瞬时占用），复制失败只降级报告，不影响已导入的媒体。细节、判据与未验证项见[下载与离线播放方案](downloads.md)"2026-11-02：下载 tab 从共享目录扫描并导入离线内容"一节。
 
-## D73：上游 15 个提交的合并判定（2026-11-02）
+## F73：上游 15 个提交的合并判定（2026-11-02）
 
 `liquid_dock` 与 `upstream/master` 的分叉点是 `b41d1fd`；本次取到 `2053716`（15 个提交、66 文件、+3302/−285），与本地 33 个提交在 15 个文件上交叠，7 处冲突。逐条判定：
 
@@ -583,7 +591,7 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 | --- | --- | --- |
 | `settings/data/sqlite_settings_repository.dart` 与 `test/.../sqlite_settings_repository_test.dart` 的 `preferences.v1` 版本号 | **取 36** | 上游把快照写到 35（新增 `fullscreenSwipeControls`），我们此前为 `dockGlassRefraction` 抬到 36；合并后的负载同时含两个键，比上游多一项，号必须更高。读侧不按版本号分支，号只是记录，不改变解析。 |
 | `feed/data/api_feed_repository.dart` 的 Web 推荐采样器 | **整体取上游，丢掉本地实现** | 同一个 bug（刷新不推进 `fresh_idx`）两边各修了一次。上游用 `Expando<_RecommendationPull>` 按取消作用域记 pull，并带 `sessionEpoch` 与"空成功也消耗一次采样"的判定，覆盖本地版本的全部语义且多了旧响应守卫；保留本地会把同一处变成每次合并必冲突的分叉。 |
-| `app/shell.dart` 底栏分组页面重击（上游 `f865d36`） | **取上游规则，落到 dock 上** | 上游修的是 Material `NavigationBar`，而该组件已被 D69 的液态玻璃 dock 替换。把"仅在目的地自身页面抑制重选"的判据搬进 dock（`onOwnDestination`：`mine → tab.isAccount`、`settings → tab.isSettings`、其余 `tab.isBrowse`），本地为 `/history` 特判的高亮规则保留。 |
+| `app/shell.dart` 底栏分组页面重击（上游 `f865d36`） | **取上游规则，落到 dock 上** | 上游修的是 Material `NavigationBar`，而该组件已被 F69 的液态玻璃 dock 替换。把"仅在目的地自身页面抑制重选"的判据搬进 dock（`onOwnDestination`：`mine → tab.isAccount`、`settings → tab.isSettings`、其余 `tab.isBrowse`），本地为 `/history` 特判的高亮规则保留。 |
 | 同上，dock 收不到点击 | **改组件加开关** | `LiquidDockNavi._select` 写死 `index != currentIndex` 才回调，点当前高亮项在宿主侧永远收不到事件，上游语义无法表达。组件新增 `notifyOnSelectedTap`（默认 false，旧行为不变），宿主传 true。见组件仓库 `36624f5`。 |
 | `macos/Runner/MainFlutterWindow.swift`、`tool/macos-release-validation.ps1`、`tool/test-macos-release-validation.ps1`（modify/delete） | **保持删除** | 当前工作树没有 `macos/` 工程（`git ls-files` 中 `windows/`、`macos/` 命中 0），恢复三个孤立文件只会造出指向不存在工程的东西。要回到三端交付时按 `git checkout upstream/master -- <路径>` 取上游版本再评估。 |
 | `test/app/bottom_navigation_destination_test.dart`（上游新增） | **收下并适配** | 它按 `workspace-bottom-<section>` 定位条目，而 dock 的条目由组件内部绘制、没有逐项 key（组件也不提供注入点），因此加了一条"按 dock 绘制的标签命中"的回退 finder，其余断言原样保留。 |
@@ -594,13 +602,13 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 验收：合并后 `flutter analyze` 无问题；`flutter test` 全量 **4052 通过、13 跳过**（含上游新增的导航、搜索建议、弹幕发送样式、playurl 清晰度与 Web 推荐刷新用例）；组件仓库 `flutter test` 20 项通过（新增 2 项覆盖开关的默认关闭与开启）。**未验证**：真机上从稍后再看/收藏页点高亮的"我的"是否跳回 `/me`，以及上游这批改动在卓易通容器上的表现。
 
-## D74：下拉刷新改为闭合圆环手势，首页/动态/热门/历史四处统一
+## F74：下拉刷新改为闭合圆环手势，首页/动态/热门/历史四处统一
 
 **为什么不能用 `RefreshIndicator`。** 3.47 的实现里，拖拽阶段圆环 value 被 `_threeQuarterTween` 钉在 0–0.75 圈（拖到底也不会闭合），触发阈值是私有常量 `_kDragSizeFactorLimit`（容器高度的 0.1），且没有 `shouldTriggerRefresh` 这类钩子。"圆环全部闭合才触发"必须自绘，Material 那个整体替换掉。
 
 **新组件 `lib/shared/ui/liquid_pull_refresh.dart`。** 监听 `OverscrollNotification`（要求 `dragDetails != null` 且在前缘）累加**未阻尼的手指位移**，`progress = 已拉 / triggerDistance`（默认 96 逻辑像素）；圆环扫过角度就是 progress，满一圈进入 armed，`ScrollEndNotification` 到达时 armed 才调 `onRefresh`，未闭合则回弹且不发请求。刷新中圆盘停在 `settleOffset` 显示四分之一圈行进弧，完成后收起。`_running` 保证一次刷新进行中任何新手势都不起第二次。
 
-**玻璃质感用分层填充，不用 `BackdropFilter`。** 指示器每跟手一帧都要重绘，模糊层正好落在这个手势最需要掉帧的窗口上（D69 在卓易通的 GLES 上已吃过 backdrop 的亏）。现在画的是：径向渐变的磨砂盘 + 1px 亮边 + 轨道环 + 进度弧（armed 换 tertiary 色）。真 blur 若要做，应当只在静止态（armed / refreshing）启用，并复用「底栏玻璃折射」那类质量闸门。
+**玻璃质感用分层填充，不用 `BackdropFilter`。** 指示器每跟手一帧都要重绘，模糊层正好落在这个手势最需要掉帧的窗口上（F69 在卓易通的 GLES 上已吃过 backdrop 的亏）。现在画的是：径向渐变的磨砂盘 + 1px 亮边 + 轨道环 + 进度弧（armed 换 tertiary 色）。真 blur 若要做，应当只在静止态（armed / refreshing）启用，并复用「底栏玻璃折射」那类质量闸门。
 
 **保留的即时入口。** 键盘刷新快捷键与右下角浮动刷新按钮仍直接调 `controller.refresh()`，是"立刻刷新"；下拉手势是"闭合才刷新"。两者语义不同是有意的：前者是给知道自己在做什么的入口，后者要防的是误触。
 
@@ -608,7 +616,7 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 **未验证：** 真机手感（96 像素的阈值是否偏手紧、圆环跟随是否掉帧）；首页顶部有搜索栏与词条 tab，指示器目前画在视口顶部（`edgeOffset = 0`），会不会被 header 盖住需实机确认；动态/热门/历史三处只换了组件，未各自调 `edgeOffset`。
 
-**D74 追加（同日调优）：** 三处按真机反馈调整，其中一处是缺陷。
+**F74 追加（同日调优）：** 三处按真机反馈调整，其中一处是缺陷。
 
 - **回推必须减进度。** 原先累加用的是 `overscroll.abs()`，上划反而继续加进度；而且只算 overscroll 不够——从半程往回推时列表是**正常滚动**，那部分位移走 `ScrollUpdateNotification.scrollDelta`。现在两条通道都按同一符号规则计入（`down → -delta`、`up → +delta`，与 `RefreshIndicator` 的读法一致），`_pulled` 下限夹在 0。新用例 `pushing back up unwinds the ring and disarms it` 就是这条的判据：拉满进入 armed 后回推 120 像素，必须退回百分比态且松手不发请求。
 - **闭合距离 96 → 140 逻辑像素**（圆环不再太快要满），直径 44 → 46，描边 3 → 3.5。
@@ -616,7 +624,7 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 - **顺滑**：绘制进度用 `TweenAnimationBuilder`（110ms、easeOutCubic）追手指，圆盘位置跟同一个值，二者不错位；未闭合松手不再瞬间消失，而是走退场（`Timer` 220ms 后收起，`dispose` 里取消）。语义播报仍取**真实**进度而非平滑值。
 - 复验：`test/shared/ui/liquid_pull_refresh_test.dart` 5 项通过；全量 `flutter test` 4057 通过、13 跳过；`flutter analyze` 无问题。真机手感仍未验证，140 像素与 110ms 都是可单点调的参数。
 
-**D74 第二次追加（同日，真机五条反馈）：** 圆环改成**跟手指坐标**而不是内容位移，并调了外观。
+**F74 第二次追加（同日，真机五条反馈）：** 圆环改成**跟手指坐标**而不是内容位移，并调了外观。
 
 - **进度来源换成指针位移。** 之前累加 overscroll/scrollDelta，等于问"内容被推走了多少"：首页顶部 header 会先把这段位移吃掉（既不产生 overscroll，也不落到我们读的那条 delta 上），圆环就在用户明确在"往下拉"的时候不动。现在按下时记锚点 `y`，`_pulled = 当前 y - 锚点 y`，下滑涨、上划退，1:1 无滞后。
 - **中途到顶才开始计。** 锚点在列表还能滚的时候**跟随手指滑动**（`_pulled == 0` 且不在前缘 → 更新锚点），列表滚到顶后手指再往下的位移才计进圆环。这样深位置往下拖不会误武装（列表还在正常滚动），但一旦到顶，剩余行程立刻算数。
@@ -625,16 +633,16 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 - 判据：`test/shared/ui/liquid_pull_refresh_test.dart` 6 项通过——新增 `a pull that reaches the top mid-gesture counts from there`（先滚进内容 300 像素，再按 25 像素分步下拉：前 250 像素圆环必须不出现，越过顶部后才武装，松手刷新一次）；`pushing back up unwinds the ring and disarms it` 仍在。全量 `flutter test` 4058 通过、13 跳过；`flutter analyze` 无问题。
 - 仍待真机确认：绿色对钩出现在**闭合（armed）**这一刻——如果用户要的其实是"刷新完成"那一刻出现，是一处单点改动。
 
-**D74 第三次追加（同日，撤回第二次追加里的三项）：** 上一条追加的三个决定被真机反馈推翻，这里显式更正，不要按上一条实现。
+**F74 第三次追加（同日，撤回第二次追加里的三项）：** 上一条追加的三个决定被真机反馈推翻，这里显式更正，不要按上一条实现。
 
 - **撤回"回推必须减进度"。** 第一次追加要求回推减进度、第二次追加把它改成跟指针 1:1（上划就退）。现在改为**棘轮**：一次手势内进度只增不减，`_pulled = max(_pulled, travel)`。理由是回推会让指示器和"已经发生的那次下拉"互相矛盾——用户看不出松手到底按哪个值算。对应的用例 `pushing back up unwinds the ring and disarms it` 已删除，换成 `travelling back up keeps what the ring already reached`（拉满 armed 后回推 120 像素仍是 `松手刷新`，松手刷新一次）。
 - **撤回"退场用 180ms 控制器降 `_drawn`"。** 回推取消后没有需要收的中间态：松手未闭合直接置 idle，圆盘当帧消失。`_retreat` / `_retreatValue` / `_stepRetreat` / `_retreatToIdle` / `_drawn` 五个成员一起删掉，`TickerProviderStateMixin` 降级为 `SingleTickerProviderStateMixin`（只剩刷新用的 `_spin`）。
 - **撤回"弧端圆点换成沿切向的箭头"。** `_drawHeadArrow` 整个删除；圆环进度色改**绿色** `#7BE38B`（与闭合对钩同色，不再用 `colorScheme.primary`），因此 `armed` 也不再改变弧色，`_RingPainter` 去掉 `armed`/`arc`/`check` 三个入参。
 - 判据：`test/shared/ui/liquid_pull_refresh_test.dart` 6 项通过（数量不变，一项换语义）；`flutter analyze` 无问题。真机手感未验证。
 
-## D75：底栏液态玻璃改为设置开关，上游 Material 底栏作为可切回的默认路径
+## F75：底栏液态玻璃改为设置开关，上游 Material 底栏作为可切回的默认路径
 
-**问题：** D69 用 `liquid_dock_navi` 整体替换了窄布局的 Material `NavigationBar`，替换是**不可关**的。这带来两类风险：一是玻璃合成依赖运行环境（卓易通那类翻译 GPU 栈已经证明过折射带会画错，见 D69 追加），出问题只能改代码重出包；二是替换顺带改了导航语义（多了历史与下载两个入口），一旦上游对底栏有修复，我们的 fork 面就一直背着这段偏离。
+**问题：** F69 用 `liquid_dock_navi` 整体替换了窄布局的 Material `NavigationBar`，替换是**不可关**的。这带来两类风险：一是玻璃合成依赖运行环境（卓易通那类翻译 GPU 栈已经证明过折射带会画错，见 F69 追加），出问题只能改代码重出包；二是替换顺带改了导航语义（多了历史与下载两个入口），一旦上游对底栏有修复，我们的 fork 面就一直背着这段偏离。
 
 **判定：保留上游实现，而不是"删掉 dock"或"再写一套"。** 三个方案比较：
 
@@ -648,37 +656,37 @@ C 的落地要点：
 
 - **上游那套是原样搬回来的**，不是重写：`_materialBottomNavigation` 的 `NavigationBar`（`height` 52、`labelPadding: EdgeInsets.zero`、`labelTextStyle` 按选中态取 `onSurface`/`onSurfaceVariant`、`animationDuration` 在减少动画时为 0）、`!sections.contains(selected)` 时退回 `_unselectedBottomNavigation`、以及"只在该目的地自己的页面上才抑制重复点击"的 `atSelectedDestination` 判定，全部与 `upstream/master:lib/app/shell.dart` 一致。`_unselectedBottomNavigation` 本来就没被 dock 改动过，两套共用。
 - **两套的入口集合不同，这是有意的。** 窄布局下 `_compactChannels` 为真，直播不进底栏：dock 是 6 项（首页/动态/我的/历史/下载/设置——窄布局没有顶部工具条，历史与下载只能挂在底栏），Material 那套是上游的 4 项（首页/动态/我的/设置），历史走头像菜单的「历史记录」（`/me?section=history`），下载走「下载管理」（`/downloads`），与上游窄布局的可达性一致。所以关掉开关**不会**让历史/下载变成不可达，只是回到上游的入口位置——这一点由用例 `the Material bar leaves queue pages without a selection` 钉住：`/downloads` 在 Material 那套下落到全不选中的条上（`sectionForLocation` 返回 `WorkspaceSection.downloads`，不在 4 项里）。
-- **开关只作用于窄布局。** 宽布局用侧栏，`navigationBarMode` 决定底栏/侧栏，本项不参与；`dockGlassRefraction`（D69 追加）是它的子项，只在玻璃底栏生效。
+- **开关只作用于窄布局。** 宽布局用侧栏，`navigationBarMode` 决定底栏/侧栏，本项不参与；`dockGlassRefraction`（F69 追加）是它的子项，只在玻璃底栏生效。
 - **持久化**：`preferences.v1` 快照 `schemaVersion` 36→37，新增布尔键 `liquidGlassDock`，缺失或类型非法一律回退 `true`——升级不能把已经装好的玻璃底栏悄悄关掉。数据库 schema 无关，不动。
-- **组件依赖不变**：`liquid_dock_navi` 仍是 path 依赖，`notifyOnSelectedTap`（D73）仍需要，因为分组路由的重复点击修复在 dock 那侧靠它才成立。
+- **组件依赖不变**：`liquid_dock_navi` 仍是 path 依赖，`notifyOnSelectedTap`（F73）仍需要，因为分组路由的重复点击修复在 dock 那侧靠它才成立。
 
 **验收：** 新增 `test/app/liquid_glass_dock_setting_test.dart` 3 项——默认建出 `LiquidDockNavi` 且没有 `NavigationBar`、底栏里能找到「历史」「下载」；关掉后建出 `NavigationBar` 且没有 `LiquidDockNavi`，点 `workspace-bottom-home` 能从 `/settings` 回到 `/`；关掉后 `/downloads` 落到无选中态的条。新增仓储用例 `the glass dock defaults on, survives old snapshots and round-trips`（v36 旧快照与四种非法值都回退 true，false/true 都能存回读回）。`test/features/settings/sqlite_settings_repository_test.dart` 的快照版本断言 36→37；`test/features/settings/font_selection_test.dart` 的外观用例补 `ensureVisible`——新开关把「界面字体」推到了 650×850 视口外，点击落空。`flutter analyze` 无问题。
 
 **未验证：** 真机上两套底栏的切换手感与 Material 底栏在卓易通里的表现；关掉开关后头像菜单里「下载管理」只在 `embedded` 为真时出现这一条，未在窄布局实机走一遍。
 
-## D76：上游 8 个提交的合并判定（2026-11-02 第二轮）
+## F76：上游 8 个提交的合并判定（2026-11-02 第二轮）
 
-分叉点 `2053716`（D73 那轮的 tip），本次取到 `5d7c48b`：8 个提交、41 文件、+2350/−71，全部集中在播放侧——听模式睡眠定时器、Dolby Vision Profile 5 在 Windows 上转 SDR、紧凑控制保留并加清晰度选择、全屏指针输入隔离与闲置光标隐藏、macOS 烟测预算、版本号 1.2.6+4。本地这一轮只动了下载诊断撤除、下拉圆环与底栏开关，**与上游零交叠**：除下表 7 处 modify/delete 外全部自动合并。
+分叉点 `2053716`（F73 那轮的 tip），本次取到 `5d7c48b`：8 个提交、41 文件、+2350/−71，全部集中在播放侧——听模式睡眠定时器、Dolby Vision Profile 5 在 Windows 上转 SDR、紧凑控制保留并加清晰度选择、全屏指针输入隔离与闲置光标隐藏、macOS 烟测预算、版本号 1.2.6+4。本地这一轮只动了下载诊断撤除、下拉圆环与底栏开关，**与上游零交叠**：除下表 7 处 modify/delete 外全部自动合并。
 
 | 项 | 判定 | 依据 |
 | --- | --- | --- |
-| `integration_test/windows_audio_quality_test.dart`、`windows_playback_test.dart`、`tool/fixtures/macos-smoke-process.ps1`、`tool/{macos-release-validation,macos-smoke-worker,test-macos-release-validation,test-windows-media}.ps1`（上游改、本地删） | **保持删除** | `f8e5506` 平台收敛已把 `windows/ macos/ ios/ linux/` 工程整链摘掉（`git ls-files` 命中 0），这些脚本与集成测试只服务不存在的工程；与 D73 同一处置。要回到多平台交付时按 `git checkout upstream/master -- <路径>` 取上游版本再评估。 |
+| `integration_test/windows_audio_quality_test.dart`、`windows_playback_test.dart`、`tool/fixtures/macos-smoke-process.ps1`、`tool/{macos-release-validation,macos-smoke-worker,test-macos-release-validation,test-windows-media}.ps1`（上游改、本地删） | **保持删除** | `f8e5506` 平台收敛已把 `windows/ macos/ ios/ linux/` 工程整链摘掉（`git ls-files` 命中 0），这些脚本与集成测试只服务不存在的工程；与 F73 同一处置。要回到多平台交付时按 `git checkout upstream/master -- <路径>` 取上游版本再评估。 |
 | 上游新增 `integration_test/windows_dolby_vision_test.dart`、`tool/test-windows-dolby-vision.ps1` | **不收** | 同一条理由：新增文件也是指向已删工程的入口，收了就是一处必然腐烂的死路径。 |
 | 上游新增 `docs/validation/{dolby-vision-profile5-2026-11-02,fullscreen-pointer-input-2026-11-02,listening-sleep-timer,player-compact-audio-controls-2026-11-02}.md` 与 `macos-release-startup.md` 的改动 | **收下** | 平台收敛只删构建链，文档保留（`docs/validation/` 现有 15 篇 Windows/macOS 记录）；新文档没有指向已删脚本的 markdown 链接，不产生断链。 |
 | `packages/bili_player` 的 Dolby Vision 路径（`native_video_color.dart` + `media_kit_engine.dart:706`） | **原样收下** | 钩子挂在 `Platform.isWindows && !audioOnly` 上，本树不可达但不报错。保持与上游逐字一致，是为了下次合并这里不再成为分叉点——为"我们跑不到"而删掉它，等于把上游的修复变成永久冲突源。 |
 | `pubspec.yaml` 版本 `1.2.6+3` → `1.2.6+4` | **取上游** | 版本号归上游，本地不另起序列。 |
 
-**验收：** `flutter pub get` 与 `flutter analyze` 无问题；根应用全量 `flutter test` **4093 通过、13 跳过**（合并前 4055，+38 为上游新增的睡眠定时器、清晰度、光标闲置与全屏指针用例）；`packages/bili_player` 包 138 项通过（含上游新增 `native_video_color_test.dart`）。这轮上游没有再写死旧的 `schemaVersion` 断言，D73 记的那条坑本轮未复现，但**合并后必跑全量**这条流程照旧。
+**验收：** `flutter pub get` 与 `flutter analyze` 无问题；根应用全量 `flutter test` **4093 通过、13 跳过**（合并前 4055，+38 为上游新增的睡眠定时器、清晰度、光标闲置与全屏指针用例）；`packages/bili_player` 包 138 项通过（含上游新增 `native_video_color_test.dart`）。这轮上游没有再写死旧的 `schemaVersion` 断言，F73 记的那条坑本轮未复现，但**合并后必跑全量**这条流程照旧。
 
 **未验证：** Dolby Vision P5→SDR 只在 Windows 生效，本树无法取样；`native_video_color.dart` 依赖真实容器元数据（`track-list/*/dolby-vision-profile`），单测用的是假 `read`；听模式睡眠定时器、紧凑控制里的清晰度选择、全屏闲置光标三处只过了 widget 用例，Android 实机（含卓易通容器）未跑；本轮未重跑 `bili_api`/`bili_danmaku`/`bili_mux` 三个包（上游未触碰）。
 
-## D77：提示统一到顶部液态玻璃卡片，下载不再用底部 SnackBar
+## F77：提示统一到顶部液态玻璃卡片，下载不再用底部 SnackBar
 
 **现象：** 下载视频后底部弹 `SnackBar`（「已添加 1 项下载任务」），压在液态玻璃 dock 上，观感差。
 
 **定位：** 全站本来就有一套 `AppNoticeHost`（`shared/ui/app_notice.dart`，经 `MaterialApp.builder` 挂在所有路由与对话框之上），而下载三处绕开它直接用 `ScaffoldMessenger.showSnackBar`。SnackBar 和 dock 挂在**同一个 Scaffold**（`shell.dart` 的 `bottomNavigationBar`）上，提示动画因此和底栏绑在同一条重绘链里。
 
-**改动：** `AppNoticeHost` 改为顶部居中、最大宽 420 的深色玻璃卡（填充 + 亮边渐变，**不用 `BackdropFilter`**——它压在滚动的 feed 上，取背景等于用户每滚一帧重录一次，理由与 D74 的圆盘同源），1500ms 自动退场、可点击提前关闭，进出场 180/160ms 位移淡入，减少动画时直接落位；连续提示原地换字不重播入场，避免闪烁。`showAppNotice` 不再在找不到宿主时 `throw`，改为回落 `ScaffoldMessenger`——提示缺失比从调用方的点击里抛异常好。下载添加成功、下载页 `_notice`、专栏打不开三处改走同一入口，底部不再有任何动画。设置页与仓储无需改动：`AppIconSettings` 一类按枚举遍历的 UI 自动跟随，`preferences.v1` 不动。
+**改动：** `AppNoticeHost` 改为顶部居中、最大宽 420 的深色玻璃卡（填充 + 亮边渐变，**不用 `BackdropFilter`**——它压在滚动的 feed 上，取背景等于用户每滚一帧重录一次，理由与 F74 的圆盘同源），1500ms 自动退场、可点击提前关闭，进出场 180/160ms 位移淡入，减少动画时直接落位；连续提示原地换字不重播入场，避免闪烁。`showAppNotice` 不再在找不到宿主时 `throw`，改为回落 `ScaffoldMessenger`——提示缺失比从调用方的点击里抛异常好。下载添加成功、下载页 `_notice`、专栏打不开三处改走同一入口，底部不再有任何动画。设置页与仓储无需改动：`AppIconSettings` 一类按枚举遍历的 UI 自动跟随，`preferences.v1` 不动。
 
 **已知代价：** 卡片可点击 ⇒ 它矩形内的点击被吃掉。桌面多标签下「最多打开 16 个标签页」的提示正好压在标签条上，测试里出现 tap 落空；已把该用例改成显式等提示退场再断言，并新增用例把契约钉住（断言页面自身收不到那次点击）。Android 顶部是搜索条，1.5s 内不可点，接受。
 
@@ -686,9 +694,9 @@ C 的落地要点：
 
 **未验证：** 真机上顶部卡片在浅色/暗色主题与不同状态栏高度下的观感，以及提示压住搜索条 1.5 秒是否影响连续操作。
 
-**本轮明确不做：** 同期还做过一次"折射层每帧新建原生 `ImageFilter`"的组件修复与一组诊断埋点/锚点，装机后现象未消除，已整体回退（保留在 `snapshot/freeze-hunt-20261103` 分支上，含组件仓库同名分支），D74–D76 的实现描述不受影响。
+**本轮明确不做：** 同期还做过一次"折射层每帧新建原生 `ImageFilter`"的组件修复与一组诊断埋点/锚点，装机后现象未消除，已整体回退（保留在 `snapshot/freeze-hunt-20261103` 分支上，含组件仓库同名分支），F74–F76 的实现描述不受影响。
 
-## D78：离线封面改取 CDN 尺寸变体，下载弹窗格式默认由弹窗持有
+## F78：离线封面改取 CDN 尺寸变体，下载弹窗格式默认由弹窗持有
 
 下载三项优化的决策部分；实现细节、实测数字与验收见 [downloads 方案](downloads.md) 的「2026-11-03」一节。
 
@@ -702,13 +710,13 @@ C 的落地要点：
 
 **未验证：** 本轮未出包，设备端三项都没取样——尤其是 MediaStore 目的地里 `.img` 这种非媒体扩展名是否被索引（只确认了列举代码不按名字过滤），以及默认 MKV 的任务在真机上能否走完封装。
 
-## D79：视频条目画成悬浮的液态圆角卡片，卡片文本按文字实际宽度重排
+## F79：视频条目画成悬浮的液态圆角卡片，卡片文本按文字实际宽度重排
 
 **现象：** 首页/热门/搜索/历史/收藏/动态共用的 `VideoCard` 是贴在 `surface` 底色上的扁平块（圆角 8）：播放量与弹幕数压在封面右下角，UP 主与投稿时间在下一行两端。要求把条目做成"悬浮于背景的液态圆角卡片"并优化卡片内文本。
 
-**决定一：「液态」用绘制，不用 `BackdropFilter`。** 与 D74（下拉圆盘）、D77（顶部提示卡）同一条约束：卡片随列表逐帧重绘，模糊层等于每个可见卡片每帧重新采样一次背景；卓易通那类翻译 GPU 栈上 backdrop 已经证明过会画错（D69 追加）。实际画的是对角渐变的半透明填充 + 1px 亮边（hover 加亮、焦点换 primary）+ 一枚向下偏移的投影，页面另在 `Scaffold` 之外铺一条竖向渐变。三个备选——`ImageFilter.blur`、`backdrop` 包一层、每卡自带背景图——前两个是每帧采样/新增离屏纹理，第三个读不出"悬浮"。
+**决定一：「液态」用绘制，不用 `BackdropFilter`。** 与 F74（下拉圆盘）、F77（顶部提示卡）同一条约束：卡片随列表逐帧重绘，模糊层等于每个可见卡片每帧重新采样一次背景；卓易通那类翻译 GPU 栈上 backdrop 已经证明过会画错（F69 追加）。实际画的是对角渐变的半透明填充 + 1px 亮边（hover 加亮、焦点换 primary）+ 一枚向下偏移的投影，页面另在 `Scaffold` 之外铺一条竖向渐变。三个备选——`ImageFilter.blur`、`backdrop` 包一层、每卡自带背景图——前两个是每帧采样/新增离屏纹理，第三个读不出"悬浮"。
 
-**决定二：范围是全站卡片 + 一条可回退的设置，而不是只改首页。** 令牌集中成 `ThemeExtension`（`shared/ui/video_card_surface.dart`），`BiliTheme` 按 `AppSettings.liquidVideoCards` 装入，卡片与页面读 `videoCardSurfaceOf(context)`，缺失回落 `flat`。持久化沿用 D75：`preferences.v1` 快照 `schemaVersion` 37→38，新增布尔键 `liquidVideoCards`，缺失或类型非法回退 `true`；数据库 schema 不动。入口在设置 → 外观「视频条目液态卡片」，紧跟「底栏玻璃折射」。关闭即回到改造前的扁平条目，几何值逐项复刻（圆角 8、封面 6、无内缩、间距 9/6/1、标题 15 / meta 12），并显式钉住：`video_card_variants`、`video_card_recommendation`、`video_card_measurement_cache` 三套既有用例改为在自己的 `_app` 里传 `liquidVideoCards: false`——它们断言的是封面角标与封面计数行的旧布局，不钉住就等于悄悄换了口径。
+**决定二：范围是全站卡片 + 一条可回退的设置，而不是只改首页。** 令牌集中成 `ThemeExtension`（`shared/ui/video_card_surface.dart`），`BiliTheme` 按 `AppSettings.liquidVideoCards` 装入，卡片与页面读 `videoCardSurfaceOf(context)`，缺失回落 `flat`。持久化沿用 F75：`preferences.v1` 快照 `schemaVersion` 37→38，新增布尔键 `liquidVideoCards`，缺失或类型非法回退 `true`；数据库 schema 不动。入口在设置 → 外观「视频条目液态卡片」，紧跟「底栏玻璃折射」。关闭即回到改造前的扁平条目，几何值逐项复刻（圆角 8、封面 6、无内缩、间距 9/6/1、标题 15 / meta 12），并显式钉住：`video_card_variants`、`video_card_recommendation`、`video_card_measurement_cache` 三套既有用例改为在自己的 `_app` 里传 `liquidVideoCards: false`——它们断言的是封面角标与封面计数行的旧布局，不钉住就等于悄悄换了口径。
 
 **决定三：整卡是玻璃板，封面内缩再圆角，文本重排。**
 
@@ -729,7 +737,7 @@ C 的落地要点：
 
 **未验证：** 本轮未出包，真机（含卓易通）零取样——暗色 0x1F/0x0F 的填充够不够读出"板子"、大字体缩放（1.3×/2×）下合并行会不会整条掉光、长列表滚动里投影的实际帧率代价，都只有桌面单测层面的几何与绘制属性断言。宽布局（侧栏那套）同样吃到这些令牌与页面渐变，同样没在真机看过。既有 4 个包的测试与原生回归本轮未重跑（改动只在根应用）。
 
-## D80：分支版本号改为上游 major+5，根应用交付身份 6.2.6+4
+## F80：分支版本号改为上游 major+5，根应用交付身份 6.2.6+4
 
 **要求：** 在 `1.2.6+4` 最前面加一位，之后本分支统一带上这个前缀，尾段与上游保持一致。
 
@@ -746,3 +754,24 @@ C 的落地要点：
 **验收：** `flutter pub get` 通过（这本身就是 `6.2.6+4` 为合法 pub 版本的证据）；`pwsh tool/test-ci-build-plan.ps1` 27 项通过，其中「空版本请求回落 pubspec.yaml」那条取到的就是新号；`pwsh tool/test-android-version.ps1` 41 项通过；`Get-AndroidVersionCode '6.2.6+4'` 实测返回 62604，与旧值 12604 比较为上升。**这批 PS 脚本必须用 pwsh 7 跑**：`ci-build-plan.ps1:24` 用了 `ConvertFrom-Json -NoEnumerate`（PS7 才有），Windows PowerShell 5.1 下报 `NamedParameterNotFound`；5.1 还会因为「给 `$env:NAME` 赋空串即删除变量」（实测 `Test-Path Env:PROBE` 为 False）让 `REQUESTED_VERSION` 的回落路径直接抛 null。曾试着给 `ci-build-plan.ps1` 加一条 null 容错，实测 pwsh 7 下原脚本本就 27 项全过，故该改动已撤回，脚本未留差异。
 
 **未验证：** 本轮未出包。APK 里的 `versionName=6.2.6`/`versionCode=62604` 只由脚本与 gradle 公式推导，没有 `aapt dump badging` 复核；gradle 侧 `compactAndroidVersionCode` 未实际执行（本轮无 Kotlin 改动，`:app:compileDebugKotlin` 与全量 `flutter test` 未重跑）。
+
+## F81：并入上游 10 个提交（2026-11-03 第三轮），决策编号改按 D／F 分轨
+
+分叉点 `5d7c48b`，本次取到 `102a2cc`：10 提交、105 文件、+4696/−526，merge-base 就是 `5d7c48b`（上一轮 F76 已接平）。落地 99 个文件，6 个按平台收敛口径保持删除。内容集中在四处：杜比视界跨后端解码与自动换兼容流（上游 D69）、会员彩色弹幕（协议＋渲染＋发送面板）、卡片长按自适应操作菜单、触摸拖动进度时缩略图延后隐藏，外加 macOS/iOS 播放收尾与 CI 修补。
+
+| 项 | 判定 | 依据 |
+| --- | --- | --- |
+| 上游新增 `## D69：杜比视界优先正确映射`，与本分支 D69（玻璃 Dock）撞号 | **本分支自有决策改用 `F` 前缀**（用户选定，弃"本分支整体 +1"与"新条目接链尾"两案） | `D69–D80 → F69–F80`，本文件内 31 处引用同步改号；`D` 号从此只按上游原文与编号收录。改号前已推送的提交信息（`1d87d82`／`2bc65f1` 提到 D78／D79／D80）指现在对应的 F 号，映射表就写在本节。弃另两案的理由：+1 要给 12 个标题和全部引用换号且让历史提交信息失配；接链尾则要长期维护"文档号≠上游号"两套映射 |
+| `integration_test/windows_dolby_vision_test.dart`、`macos/Runner/MainFlutterWindow.swift`、`macos/RunnerTests/RunnerTests.swift`、`tool/macos-release-validation.ps1`、`tool/test-macos-release-validation.ps1`、`tool/test-windows-dolby-vision.ps1`（上游改、本地删） | **保持删除** | 与 F73／F76 同一口径：`f8e5506` 已把 `windows/ macos/ ios/ linux/` 工程整链摘掉，这些文件只服务不存在的工程。要回到多平台交付时按 `git checkout upstream/master -- <路径>` 取上游版本再评估 |
+| 上游新增 Android 杜比视界链路：`integration_test/android_dolby_vision_test.dart`、`tool/test-android-dolby-vision.ps1`、`tool/dolby-vision-fixtures.ps1`、`tool/validation/android_dolby_vision_server.py`、`tool/validation/dolby_vision_driver.dart` | **收下** | 与 F76 那批"指向已删工程"的新文件不同：目标平台是仍要交付的 Android，且 `integration_test/`、`tool/validation/` 在本树里本来就有同类入口 |
+| `test/features/playback/macos_fullscreen_close_test.dart` 与 `docs/validation/{dolby-vision-cross-platform,macos-fullscreen-playback-close,vip-danmaku}-2026-11-03.md` | **收下** | 前者是纯 Dart 用例（不引用 `macos/` 工程文件，实测计入根应用全量通过），文档按 F76 既定"构建链删、记录留"的口径收 |
+| `lib/shared/ui/video_card.dart`（上游长按菜单 × 本分支液态卡） | **两边都要，手工合** | 只有 1 处真冲突：本分支把封面块重排进带内缩的板面，上游在同一位置改缩进并给标题加了 `tooltipTriggerMode`。取本分支结构，落回上游的 `_canShowMenu`／`_menuAnchor`／`InkWell.onLongPress`／自适应 `_showMenu`（`showModalBottomSheet` 与 `showMenu` 按平台分流），并把 `tooltipTriggerMode` 带进本分支的 `_titleBlock`：卡片带菜单时长按菜单，溢出提示转 `manual`，不跟长按抢手势 |
+| `pubspec.yaml` 版本 `1.2.6+5` | 取 **`6.2.6+5`** | F80 规则：major = 上游 major+5，minor/patch/build 逐字跟上 |
+| `preferences.v1` 快照号：上游为弹幕 VIP／彩色键写 36，本分支已把 36 用给 `dockGlassRefraction`（另有 37／38） | **合并后取 39** | 36 这个号在两条线上各指一组新键，合并后的快照同时含双方全部键，取两侧最大值再进一位。上游新测试里写死的 36 抬到 39（改的是号，不是把断言放宽）——这是 F73 记过的"上游新测试钉死旧 `schemaVersion`"第 3 次复现，合并后必跑全量这条流程仍然成立 |
+| `README.md` 下载表（上游 `925ceab` 抬到 v1.2.6+4） | **取上游** | 整张表指向上游 `CKopoer` 的 release 资产，本分支不另起发布通道；上一轮 F80 里"README 仍指向 v1.2.6+3"的说法随上游自更新作废 |
+
+**已核：** pwsh 7 下 `tool/check.ps1` 三段全绿——`-Stage Lint`（CI 计划 27 项、release CI 复用 node 用例、Android version 41 项、签名 21 项、开发包身份 7 项、媒体通知资源 25 项；根应用与四包 `dart format --set-exit-if-changed`；`flutter analyze` 无问题）、`-Stage RootTests` **4172 通过、13 跳过**（合并前 4108，净增 64 为上游新用例，含卡片长按菜单与弹幕会员样式；`video_card_menu_test` 走真实 feed 路由，因此它验的就是本分支的玻璃卡）、`-Stage PackageTests` bili_api 547、bili_player 142、bili_danmaku 161、bili_mux 5 通过／10 跳过（未设 `BILI_MUX_LIBRARY`，mux 原生用例按既有口径跳过，不算原生通过）。冲突与手工合的结果都用 `git diff HEAD --stat` 复核过：`video_card.dart` +178/−79，无残留标记，99 文件落地数与上游 105 减 6 吻合。
+
+**顺带修掉一处自己欠的账：** `test/features/downloads/api_download_source_repository_test.dart` 在 `1d87d82`（F78）里以未格式化状态提交，导致 `check.ps1` 的 format 闸门在合并前就是红的。本轮补跑 `dart format`（3 增 5 删，纯排版，无语义改动），单独成一条提交，不混进合并。
+
+**未验证：** Android 杜比视界软解链路本轮未跑（需真机 + 本地样片服务），`tool/test-android-dolby-vision.ps1` 与 `integration_test/android_dolby_vision_test.dart` 只做了静态收编；会员彩色弹幕的在线发送未验证（协议用例走 fake transport，实际服务端是否回彩色样式没取样）；卡片长按菜单在触屏与卓易通容器里的实际手感、以及 `showModalBottomSheet` 与液态 dock 的手势冲突未验收；macOS/iOS 侧的两个修复本树不可达，只由 Dart 层用例覆盖。

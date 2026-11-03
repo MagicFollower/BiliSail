@@ -124,6 +124,8 @@ abstract interface class PlayerEngine {
 
 2026-11-02 修复 Windows Dolby Vision Profile 5 的绿／紫偏色：从容器元数据识别后，在解码前设置 libplacebo RPU／色彩转换，输出 BT.709／sRGB 的 SDR 纹理；该源自动模式使用 copy 硬解，其他视频保留原路径。公开样片、实际纹理对照及大会员／其他平台未测项见[Profile 5 验证](validation/dolby-vision-profile5-2026-11-02.md)。
 
+2026-11-03 扩展到共享跨平台检查：Android 的 Profile 5 使用保留 RPU 的软件 HEVC 和 gpu-next SDR 映射，其他嵌入式后端须具有 libplacebo 滤镜能力。原生库不支持或映射失败时返回专用错误，由应用会话对在线视频最多切换一次兼容画质／编码，保留播放位置、意图、倍速和音量；离线内容不请求在线替代源。普通视频沿用原解码路径。设备证据与未测范围见[跨平台验证](validation/dolby-vision-cross-platform-2026-11-03.md)。
+
 当前设置已提供 H.264/HEVC/AV1 点播编码偏好，以及三类播放共用的自动/软件解码方式。默认 H.264 和 SDK 自动模式；同清晰度优先匹配编码，缺失时使用其他已识别编码。源 generation 捕获偏好，下次打开/重新加载时应用；软件解码保持 GPU 渲染开启。具体选择顺序、SDK 差异和 Windows/其他平台验证边界见 [视频编解码设置](validation/video-codec-settings.md)。
 
 ## 3. DASH 分轨处理
@@ -251,6 +253,8 @@ estimatedPosition = anchorPosition + (monotonicNow - anchorTime) × playbackRate
 两个时钟都只在确认 Playing 且未 buffering/seeking 时前推；位置样本超过 700ms 未更新时冻结，避免后端已停而弹幕继续跑。暂停/缓冲冻结，seek 清空活动项并从目标时间附近二分检索重建；历史事件的媒体年龄按当前倍速换算为动画年龄，回看范围同时覆盖仍可见的项。回退 seek 允许弹幕再次出现；已调度 ID 只保留在有界当前时间窗，正常刷新不会重播已丢弃或过期的项。实现和测试边界见 [弹幕速度与播放倍速](validation/danmaku-playback-rate.md)。
 
 ### 渲染与轨道
+
+2026-11-03 补齐会员彩色弹幕显示与发送：字段 24 的 `colorful=60001` 经在线／离线数据和成功回显进入同一有界绘制链路，显示白字配粉蓝渐变描边。显示无需会员，发送依据已验证账号权益并提交独立 `colorful` 参数；默认显示开关、迁移与验证边界见 [#35 专项记录](validation/vip-danmaku-2026-11-03.md)。
 
 现有播放器与全局设置已共用弹幕配置入口，支持独立字体、加粗、阴影/描边/无效果、时间偏移、重复合并、同屏密度、权重/颜色/本地关键词过滤。点播按偏移后的时间调度，直播只允许消息延后；权重过滤仅适用于点播。具体默认值、范围、持久化与未测项见 [弹幕配置验证](validation/danmaku-style-settings.md)。
 

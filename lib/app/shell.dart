@@ -307,6 +307,13 @@ final class _BiliAppShellState extends State<BiliAppShell>
       (widget.navigationMode ?? defaultWorkspaceNavigationMode) ==
       WorkspaceNavigationMode.singlePage;
 
+  bool get _playerShowsNavigation => switch (Theme.of(context).platform) {
+    TargetPlatform.android => _singlePage || _dualTabs,
+    // Single/dual mode already has a persistent playback header on iOS.
+    TargetPlatform.iOS => !_singlePage && !_dualTabs,
+    _ => false,
+  };
+
   @override
   void initState() {
     super.initState();
@@ -1281,8 +1288,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
                                           _goBack();
                                         },
                                   onHome: _playbackHome,
-                                  showInPlayer:
-                                      _android && (_singlePage || _dualTabs),
+                                  showInPlayer: _playerShowsNavigation,
                                   child: _android
                                       ? _workspaceFrame(context, view, page)
                                       : page,

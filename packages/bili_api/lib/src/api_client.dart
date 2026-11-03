@@ -1952,6 +1952,8 @@ final class BiliApiClient {
     );
     return ApiNavInfo(
       isLogin: _bool(data['isLogin']) ?? false,
+      isVip:
+          _int(data['vipStatus'] ?? _optionalMap(data['vip'])?['status']) == 1,
       mid: data['mid'] == null ? null : _id(data['mid'], 'nav'),
       name: _string(data['uname']),
       avatarUrl: _uri(data['face']),
@@ -2735,7 +2737,7 @@ List<ApiDanmakuItem> decodeDanmakuSegment(Uint8List bytes) {
       final element = _ProtoReader(reader.bytes(4096));
       String id = '';
       var progress = 0, mode = 1, fontSize = 25, color = 0xffffff;
-      var weight = 0;
+      var weight = 0, colorful = 0;
       String content = '';
       while (!element.done) {
         final field = element.varint();
@@ -2756,6 +2758,8 @@ List<ApiDanmakuItem> decodeDanmakuSegment(Uint8List bytes) {
               color = value;
             case 9:
               weight = value.clamp(0, 10);
+            case 24:
+              colorful = value;
           }
         } else if (wire == 2) {
           final value = element.bytes(1024);
@@ -2785,6 +2789,7 @@ List<ApiDanmakuItem> decodeDanmakuSegment(Uint8List bytes) {
             color: color,
             content: content,
             weight: weight,
+            colorful: colorful,
           ),
         );
       }

@@ -36,6 +36,7 @@
 | [搜索历史与热搜](validation/search-discovery-2026-11-01.md) | 居中搜索动效、宽窄屏入口、账号历史存储、热搜协议与自动验证边界 |
 | [密码、短信与移动登录窗口](validation/password-sms-login.md) | 三种 Web 登录、交互验证码、安全会话与小屏/键盘布局 |
 | [播放、直播与弹幕](playback-and-danmaku.md) | DASH 分轨、播放状态机、直播连接、渲染时钟与性能 |
+| [会员彩色弹幕](validation/vip-danmaku-2026-11-03.md) | #35 渐变显示／发送、权限与回显、离线保存及验证边界 |
 | [1080P60 播放请求对照](validation/playurl-quality-2026-11-01.md) | PiliPlus 请求上下文、最高档发现／缺档补取、普通账号在线证据与大会员验收边界 |
 | [DLNA 投屏](validation/dlna-casting.md) | 视频／影视 TV 地址、设备发现与控制、生命周期及平台验收边界 |
 | [系统媒体通知与控制](validation/system-media-controls.md) | Android 通知、Apple 正在播放、Windows SMTC、Linux MPRIS、会话目标与验证边界 |
@@ -65,6 +66,7 @@
 | [直通硬解调研与方案](hardware-decoding-plan-2026-11-01.md) | #44 发布追溯、Bili.Libre.Speed／Predidit 路径、各平台硬解设置与自有 fork 分阶段维护 |
 | [Windows ANGLE 直通硬解](validation/windows-angle-direct-hwdec-2026-11-01.md) | copy 回退修复、PiliPlus 实际链路差异、三组 Profile 交叉对照及原生验收边界 |
 | [Windows 杜比视界 Profile 5 偏色](validation/dolby-vision-profile5-2026-11-02.md) | 解码前色彩转换、公开 Dolby 样片、实际纹理颜色回归与平台边界 |
+| [跨平台杜比视界与兼容回退](validation/dolby-vision-cross-platform-2026-11-03.md) | Android RPU／gpu-next 真机对照、原生能力检查、共享兼容流回退及各平台未测项 |
 | [听视频与音频控件](validation/listen-video.md) | 独立音轨、常驻响应式控件、切换／检查点及原生验证 |
 | [充电专属与付费视频](validation/video-access.md) | 权益分类、播放限制提示、官网入口与共享视频卡角标 |
 | [实施与验收](implementation-plan.md) | 技术验证、开发里程碑、测试、构建与发布要求 |

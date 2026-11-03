@@ -119,8 +119,10 @@ class SqliteSettingsRepository implements SettingsRepository {
               .firstOrNull ??
           AppIconPreference.bilisail,
       danmakuEnabled: boolean('danmakuEnabled', true),
+      danmakuShowVip: boolean('danmakuShowVip', true),
       danmakuOpacity: number('danmakuOpacity', 0.8),
       danmakuSendStyle: (
+        colorful: boolean('danmakuSendColorful', false),
         mode: switch (decoded['danmakuSendMode']) {
           final int mode => mode,
           _ => 1,
@@ -249,7 +251,10 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        'schemaVersion': 38,
+        // 38 was this branch's liquid-card setting; upstream numbered its
+        // danmaku VIP/colour keys 36 for the same snapshot. The merged keys are
+        // new to both lines, so the snapshot takes one step past either.
+        'schemaVersion': 39,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
@@ -275,6 +280,8 @@ class SqliteSettingsRepository implements SettingsRepository {
         'danmakuOpacity': value.danmakuOpacity,
         'danmakuSendMode': value.danmakuSendStyle.mode,
         'danmakuSendColor': value.danmakuSendStyle.color,
+        'danmakuSendColorful': value.danmakuSendStyle.colorful,
+        'danmakuShowVip': value.danmakuShowVip,
         'danmakuFontScale': value.danmakuFontScale,
         'autoPlay': value.autoPlay,
         'defaultShowComments': value.defaultShowComments,
