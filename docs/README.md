@@ -124,6 +124,7 @@
 | [合集订阅按钮](validation/collection-subscription.md) | 合集订阅态、粉色按钮、显式订阅/取消与账号隔离 |
 | [合集异常与播放崩溃](validation/collection-playback-crash.md) | 合集状态字段修正、Windows 原生转储与无障碍树更新规避 |
 | [Windows 悬停预览销毁崩溃](validation/windows-preview-dispose.md) | mpv 渲染资源释放顺序、可复现原生补丁与针对性检查 |
+| [Android 退出播放页后的卡死与闪退](validation/android-playback-release-ordering.md) | 表面与核心的释放顺序、`current-vo` 判据、有界等待与残余风险 |
 | [悬停预览与主视频出帧争用](validation/video-preview-contention.md) | 渲染线程尺寸查询、保留 GPU 的修复与 Windows Profile 对照 |
 | [Windows 硬解输出性能](validation/windows-video-render-performance-2026-10-11.md) | 中间纹理尺寸、渲染通知合并、GPU 与音画同步对照及验收边界 |
 | [硬解播放后端调研](validation/playback-backend-research-2026-10-11.md) | Flutter 纹理交付、fvp/Media3/libmpv 候选与分轨、许可和同步验证门槛 |

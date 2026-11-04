@@ -795,4 +795,28 @@ C 的落地要点：
 - 搭第一个用例时踩到自己一处假阳性：页面最初挂在 `GoRoute.builder` 里，而 `BiliAppShell` 优先取 `pageBuilder`（`lib/app/shell.dart:1290`），挂错通路的版本连变异都不会红。现 harness 从 `pageBuilder` 供页。
 - 两个套件合跑 11 项通过；`pwsh tool/check.ps1 -Stage Lint` 全绿（含 `flutter analyze` No issues found）；`pwsh tool/check.ps1 -Stage RootTests` **4174 通过、13 跳过**（上一轮 4172，+2 为本轮新增两项）。
 
+## F83：Android 退出播放页的卡死与闪退按释放顺序修（Dart 层先行，随后补插件层补丁）
+
+**现象：** 用户实机描述——浏览播放视频后退出播放页回到主页，偶发立刻卡死约 3–5 秒，随后闪退；与底栏是液态玻璃还是原生 dock 无关。
+
+**定位：** 用户点名要求从代码逻辑层分析，本轮未构建、未取转储。事实部分是锁定副本里可逐行核对的释放顺序：`media_kit@73771ec3` 的 `Player.dispose()` 只给核心 2 秒收尾（`stop(synchronized:false).timeout(2s)`），而本工程 `network-timeout=30s`，退出时若在等网必然截断；随后 `super.dispose()` 的 `release` 钩子走到 `VideoOutput.java:149-174`，**立即** `surfaceTextureEntry.release()` + `surface.release()`，只用一个硬编码 5 秒 `postDelayed` 兜 JNI 引用；真正的核心销毁 `mpv_terminate_destroy(ctx)` 却由裸 `Timer(5s)` 在 Dart UI 线程上执行，应用层等不到也取消不了。渲染表面先死、核心后死，中间靠两个互不相知的写死 5 秒。推断部分是致毁路径（UI 线程被 `mpv_terminate_destroy` 阻塞＝卡死；核心随后拆 VO 踩已释放窗口＝闪退），**没有 Android tombstone 佐证，与 Windows 那次有转储的闭环不同，这一条要标注为机制推断**。Release 里未捕获的 Dart 异常不杀进程，故闪退必然来自原生层。这与 F 系列之前记录过的 `docs/validation/windows-preview-dispose.md` 是同一类：Windows 用 `windows/patches/media_kit_video` 在插件边界建立了完成顺序，同文档写明"Android/macOS 保持既有实现"，而本树只有 `android/` 工程。
+
+**决定（首轮用户选"只改 Dart 应用/包层"，弃"再加 Android 插件补丁"与"先只加取证"两案；随后用户要求「彻底闭环」，第二案补做）：** 把"猜时间"换成"等可观测事实"，并且不替上游做任何它已经在做的事。
+
+| 项 | 判定 | 依据 |
+| --- | --- | --- |
+| 加 `android/patches/media_kit_video`，照 Windows 先例改写 `VideoOutput.java`，让 `surface.release()` 等到核心销毁之后再执行 | **随后按用户「彻底闭环」要求补做** | 首轮用户选"只改 Dart 层"，因此这一条当时没做；补做时沿用同目录 `audio_service` 补丁的 Gradle 机制（同步到插件构建目录副本、重定向 `srcDirs`、不动 Pub 缓存），但把锚点文本替换换成「校验上游 SHA-256 + 用完整改写副本覆盖」——三个文件多处改动，锚点太脆。核心事实：`mpv_terminate_destroy` 仍不可取消，所以补丁做的是让表面退休晚于核心，而不是让核心变得可等 |
+| 先只加诊断打点＋抓 tombstone/ANR，确认卡死确实落在 `mpv_terminate_destroy` | **不做** | 取证需要设备侧操作，只能由用户在真机完成；代码侧的错序本身已足以成立，先修再验 |
+| 由应用层自己调 `mpv_terminate_destroy` 或取消那个 5 秒 Timer | **不可行** | Timer 在 media_kit 内部且未暴露；重复销毁同一 `mpv_handle` 是双重释放 |
+| 等 `mkv.Video` 真正卸载再销毁 player，用 `current-vo` 证明核心已放下视频输出 | **采用** | 两条判据都在应用层可观测：元素树的挂载/卸载由 `_SurfacePresence` 报告；`current-vo` 本工程已用于杜比映射判定（`media_kit_engine.dart:889`），且该 fork `typedef Player = NativePlayer`，属性读取直接可用 |
+| `PlaybackSession.detach()`/`close()` 的 fire-and-forget 结构 | **不改** | 原生顺序现在由 `_releasePlayer` 内部保证，动那里只扩大改动面 |
+
+**改动：** `packages/bili_player/lib/src/media_kit_video_output.dart`（计数 + `awaitSurfaceDetached` + `_SurfacePresence`，并把只服务视口的一条通道字段改名 `_pluginChannel`，因为它现在还载 `ReleaseSurface`）；新增 `packages/bili_player/lib/src/android_output_release.dart`（`detachSurface → stop → 轮询 current-vo`，3s/600ms/20ms 全有界，返回是否确认）；`packages/bili_player/lib/src/media_kit_engine.dart:1293`（仅 Android 插入该协调，确认后才调 `ReleaseSurface`）；新增 `android/patches/media_kit_video/`（三个 Java 改写副本 + `apply.gradle` + `SurfaceReleaseOrderingTest.java`，接在 `android/build.gradle.kts:20`）；新增 `tool/test-android-media-kit-patch.ps1` 并接进 `tool/check.ps1` 的 Lint 段；`lib/features/playback/application/playback_manager.dart:92`（`session.close()` 故意重抛的第一个清理失败原先变成无人处理的异步错误，且被拒 future 留在 `_releases` 里会让 `drainReleases()` 连带抛，改为收口后入池）；`.gitattributes` 补一行 `android/patches/** text eol=lf`（顺带也护住既有 `audio_service` 的锚点文本——它在 autocrlf=true 下被 checkout 成 CRLF 就会匹配不上）。
+
+**已核：** `pwsh tool/check.ps1 -SkipPub` 三段全绿——Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25、**新增的 media_kit_video 补丁 5**；五工程 `dart format` 共 871 文件 0 改动；`flutter analyze` No issues found）、RootTests **4174 通过、13 跳过**、PackageTests bili_api 547／bili_player **153**／bili_danmaku 161／bili_mux 5 通过 10 跳过（未设 `BILI_MUX_LIBRARY`，按既有口径不算原生通过）。定向另跑过：`packages/bili_player` 两个相关文件 21 项、根应用四个相关文件 771 项。插件与构建侧都是实跑：`./gradlew :media_kit_video:prepareBilisailMediaKitVideo :media_kit_video:testBilisailMediaKitVideoRelease` → `22 assertions passed`；`:media_kit_video:compileReleaseJavaWithJavac` 成功后 `javap` 读构建产物 `VideoOutputManager.class`，里面有 `pendingReleases` 与 `releaseNative(long)`；`tool/build-android-development.ps1 -Mode Release -SkipMuxBuild` → `√ Built ... app-arm64-v8a-release.apk (60.7MB)`，交付件 63,677,572 字节、`68e7535d…c6c58`、身份 `dev.bilisail.bilisail.test`／`BiliSail 测试版`／`6.2.6+5`，从该 APK 解出的 `classes.dex` 命中 `VideoOutputManager.ReleaseSurface`。**引脚守卫做过反向验证**：把期望哈希临时改成全 0，任务以 `media_kit_video VideoOutput.java changed; review the surface release ordering patch (got c2cd529f…, expected 0000…)` 失败，改回即通过。判据侧共五处单点变异回红再恢复，每次只动一处：`awaitSurfaceDetached` 直接返回 → `media_kit_video_output_test.dart:385`；协调器 `stop` 提前 → `+4 -2`；`_surfaceMounted()` 计数清空 → `+11 -2`；协调器超时分支 `return false`→`true` → 恰一条转红 `+5 -1`；补丁侧把兜底延时改成 5000L → 必须报 `Fallback must outlive the core's five-second destroy timer`，Java 侧 `dispose()` 改成立即退休 → 必须报 `Texture entry released during dispose`。恢复后用 `diff` 核对与变异前逐字一致，`git status` 只剩本任务文件。
+
+**顺带修掉一处既有脆弱：** `.gitattributes` 此前只管 `*.sh`，而 `audio_service` 的补丁脚本用**内联锚点文本**替换，锚点取自脚本自身；`core.autocrlf=true` 下新 clone 会把脚本 checkout 成 CRLF，锚点因此与 LF 归一后的目标源码对不上，`count(before) != 1` 直接让构建失败。本轮补 `android/patches/** text eol=lf` 一并护住；自己的补丁改用"校验上游 SHA-256 + 完整改写副本覆盖"，从根上不吃锚点文本。
+
+**未验证（重要边界）：** `mpv_terminate_destroy` 仍由 media_kit 内部那个不可取消、不可等待的 5 秒裸 Timer 在 UI 线程执行——本轮改的是它的前置条件（从"赌核心已收尾"变成"确认核心已放下输出"）与原生表面的退休时机（确认后立即、确认不了则晚于核心），**没有让核心销毁本身变成可等待的**，所以不能按"已根除"理解。APK 只构建未安装：真机反复"播放→退出→回主页"、尤其在网络卡住/缓冲转圈时退出、停止预览后超过 6 秒的窗口、`ReleaseSurface` 通路在运行时是否真被调用（本轮只证明它进了产物和单测桩）、全屏切换／多标签并发／页面回收／超时换备用地址、卓易通容器内的同一行为，全部未测；Android tombstone/ANR 未取，致毁路径仍是推断。释放失败本轮改为不可见（没有新增上报通道），只换来不再误导。详见 [Android 退出播放页后的卡死与闪退](validation/android-playback-release-ordering.md)。
+
 **未验证：** 本轮未出包，真机与卓易通零取样。滚动那条只量了 `ScrollPosition.pixels`，设置页的分区卡片、`PageStorage` 与 `WorkspaceActivity` 副作用没进用例；ink 那条只断言了 `InkWell` 的入参，ripple 实际画出的像素形状没有截图核对，长按菜单的锚点位置是否跟着板角也没验。四个包的测试与原生回归本轮未重跑（改动只在根应用）。

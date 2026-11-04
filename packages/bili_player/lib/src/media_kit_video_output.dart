@@ -92,7 +92,7 @@ final class MediaKitVideoOutput
     );
   }
 
-  static const _viewportChannel = MethodChannel(
+  static const _pluginChannel = MethodChannel(
     'com.alexmercerind/media_kit_video',
   );
   Object? _viewportOwner;
@@ -145,6 +145,39 @@ final class MediaKitVideoOutput
   }
 
   int _bindingRevision = 0;
+
+  /// Video surfaces currently attached to the element tree. The native plugin
+  /// releases the Android `Surface` and its texture entry while disposing the
+  /// player, so a caller that is about to dispose must be able to prove the
+  /// texture has actually left the tree, not merely been asked to leave it.
+  int _mountedSurfaces = 0;
+  final _detachWaiters = <Completer<void>>[];
+
+  /// Resolves once no video surface remains mounted. Bounded because a bound
+  /// controller that was never mounted, or a surface stuck behind a paused
+  /// frame pipeline, must not pin the caller's release sequence.
+  Future<void> awaitSurfaceDetached({
+    Duration timeout = const Duration(milliseconds: 400),
+  }) async {
+    if (_disposed || _mountedSurfaces == 0) return;
+    final waiter = Completer<void>();
+    _detachWaiters.add(waiter);
+    await waiter.future.timeout(timeout, onTimeout: () {});
+  }
+
+  void _surfaceMounted() => _mountedSurfaces++;
+
+  void _surfaceUnmounted() {
+    // A keyed surface swap mounts its replacement before the old element is
+    // unmounted, so waiters resolve on the count reaching zero rather than on
+    // any promise that a later mount might have superseded.
+    _mountedSurfaces--;
+    if (_mountedSurfaces > 0) return;
+    for (final waiter in _detachWaiters) {
+      waiter.complete();
+    }
+    _detachWaiters.clear();
+  }
 
   Future<void> bindPlayer(
     mk.Player player, {
@@ -202,7 +235,7 @@ final class MediaKitVideoOutput
       _androidSurfaceSizeFailed = false;
       _androidSurfaceSize = () async {
         try {
-          await _viewportChannel
+          await _pluginChannel
               .invokeMethod<void>('VideoOutputManager.SetSurfaceTextureSize', {
                 'handle': player.handle.toString(),
                 'width': dimensions.width.toString(),
@@ -257,6 +290,25 @@ final class MediaKitVideoOutput
 
   void cancelPendingViewport() => _viewportShrinkTimer?.cancel();
 
+  /// Retires the native `Surface`, its Flutter texture entry and the JNI object
+  /// reference that the patched plugin parks during `Player.dispose()`. Call it
+  /// only once libmpv no longer reports a video output for [handle]; otherwise
+  /// leave them to the plugin's fallback delay, which outlives the core's own
+  /// destroy timer.
+  Future<void> releaseAndroidSurface(int handle) async {
+    try {
+      await _pluginChannel
+          .invokeMethod<void>('VideoOutputManager.ReleaseSurface', {
+            'handle': handle.toString(),
+          })
+          .timeout(const Duration(seconds: 2));
+    } on Object catch (error) {
+      // The parked fallback still frees the objects, so a lost call must not
+      // fail the release sequence that has already retired the player.
+      debugPrint('Android surface release failed: ${error.runtimeType}');
+    }
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;
@@ -273,17 +325,23 @@ final class MediaKitVideoOutput
         ? const ColoredBox(color: Color(0xFF000000))
         // The backend is a visual layer. Its built-in InteractiveViewer must
         // not consume wheel signals or gestures owned by the host controls.
-        : IgnorePointer(
-            child: mkv.Video(
-              // VideoState subscribes to its initial player's dimensions. A
-              // same-frame clear/rebind must not retain the old subscriptions.
-              key: ObjectKey(controller),
-              controller: controller,
-              controls: mkv.NoVideoControls,
-              // PlaybackSession owns lifecycle and the user's pause intent.
-              // The old surface may still be mounted while switching to audio.
-              pauseUponEnteringBackgroundMode: false,
-              resumeUponEnteringForegroundMode: false,
+        : _SurfacePresence(
+            // Keyed by the controller so a same-frame rebind cannot reuse this
+            // element and leave the mount count permanently too high.
+            key: ObjectKey(controller),
+            output: this,
+            child: IgnorePointer(
+              child: mkv.Video(
+                // VideoState subscribes to its initial player's dimensions. A
+                // same-frame clear/rebind must not retain the old subscriptions.
+                key: ObjectKey(controller),
+                controller: controller,
+                controls: mkv.NoVideoControls,
+                // PlaybackSession owns lifecycle and the user's pause intent.
+                // The old surface may still be mounted while switching to audio.
+                pauseUponEnteringBackgroundMode: false,
+                resumeUponEnteringForegroundMode: false,
+              ),
             ),
           ),
   );
@@ -410,7 +468,7 @@ final class MediaKitVideoOutput
           !identical(_controller.value, controller)) {
         return;
       }
-      await _viewportChannel
+      await _pluginChannel
           .invokeMethod<void>('VideoOutputManager.SetViewportSize', {
             'handle': handle.toString(),
             'width': cap.width?.toString() ?? 'null',
@@ -427,4 +485,36 @@ final class MediaKitVideoOutput
       }
     }
   }
+}
+
+/// Reports whether the video subtree is present in the element tree.
+final class _SurfacePresence extends StatefulWidget {
+  const _SurfacePresence({
+    super.key,
+    required this.output,
+    required this.child,
+  });
+
+  final MediaKitVideoOutput output;
+  final Widget child;
+
+  @override
+  State<_SurfacePresence> createState() => _SurfacePresenceState();
+}
+
+final class _SurfacePresenceState extends State<_SurfacePresence> {
+  @override
+  void initState() {
+    super.initState();
+    widget.output._surfaceMounted();
+  }
+
+  @override
+  void dispose() {
+    widget.output._surfaceUnmounted();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

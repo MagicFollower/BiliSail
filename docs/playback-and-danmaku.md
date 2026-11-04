@@ -91,6 +91,8 @@
 
 2026-10-14 按用户要求撤回弹幕 17ms 帧驱动，点播／直播重新使用随屏幕刷新率运行的单一 Ticker，并恢复原控制器和空闲唤醒逻辑。该撤回不改变视频解码供帧队列；历史候选测量见 [弹幕高刷合成实验（已撤回）](validation/danmaku-frame-cadence-2026-10-13.md)。
 
+2026-11-04 Android 退出播放页偶发卡死后闪退，按同一类释放顺序问题分两层修正：当前锁定的 `media_kit@73771ec3` 只给核心 2 秒收尾，`media_kit_video@fd8421d2`（1.2.5）在 `Player.dispose()` 内立即释放 `android.view.Surface` 与纹理条目，而 `mpv_terminate_destroy` 仍由不可等待的 5 秒裸 Timer 在 UI 线程执行。Dart 层：`MediaKitEngine._releasePlayer()` 在 Android 上先等 `mkv.Video` 真的离开元素树、再等核心的 `current-vo` 不再是活动 GPU 输出，之后才销毁 player，全部等待有界；确认过才另发 `VideoOutputManager.ReleaseSurface`。原生层：新增 `android/patches/media_kit_video` 构建副本补丁（校验上游 SHA-256 后用改写副本覆盖，不动 Pub 缓存，沿用同目录 `audio_service` 的 Gradle 机制），让 `VideoOutput` 把纹理条目／`Surface`／JNI 引用三项一起排队退休——确认后立即、确认不了则等一个**超过核心 5 秒销毁定时器**的 6 秒兜底。**仍未根除**：`mpv_terminate_destroy` 本身还是那个不可取消、不可等待的裸 Timer，本轮只改它的前置条件与表面退休时机。本节上面 Windows 那条的"Dispose 回复晚于渲染上下文释放"在 Windows 侧仍由 `windows/patches` 保证；上文 2026-10-07 段落写的 `media_kit_video 2.0.1` 是依赖切换前的旧口径，现锁文件为 1.2.5（`bggRGjQaUbCoE`）。真机验收项与未取证部分见 [Android 退出播放页后的卡死与闪退](validation/android-playback-release-ordering.md)。
+
 ## 2. 通用播放契约
 
 以下为完整目标契约示意；实际公共接口见 `packages/bili_player/lib/bili_player.dart`，现有 DASH/progressive 和 manifest 源；Windows 已验证点播分轨、直播 HLS/FLV。字幕由应用解析并叠加，尚未开放 native 字幕选择和离线源。本轮三类页面及未测项见 [影视与直播内置播放](validation/content-playback.md)：

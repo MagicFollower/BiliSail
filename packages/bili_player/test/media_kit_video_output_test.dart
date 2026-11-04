@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:bili_player/src/media_kit_video_output.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
@@ -91,6 +94,50 @@ final class _Harness {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const videoChannel = MethodChannel('com.alexmercerind/media_kit_video');
+
+  /// Installs a handler for the shared plugin channel and returns the calls.
+  List<MethodCall> mockVideoChannel(Object? Function(MethodCall) handler) {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(videoChannel, (call) async {
+          calls.add(call);
+          return handler(call);
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(videoChannel, null),
+    );
+    return calls;
+  }
+
+  test(
+    'the confirmed release retires the parked surface by player handle',
+    () async {
+      final calls = mockVideoChannel((_) => null);
+      final output = MediaKitVideoOutput();
+      addTearDown(output.dispose);
+      await output.releaseAndroidSurface(4096);
+      expect(calls.map((call) => call.method), [
+        'VideoOutputManager.ReleaseSurface',
+      ]);
+      expect(calls.single.arguments, {'handle': '4096'});
+    },
+  );
+
+  test(
+    'a lost release call leaves the parked surface to the plugin fallback',
+    () async {
+      mockVideoChannel(
+        (_) => throw MissingPluginException('no handler in this test'),
+      );
+      final output = MediaKitVideoOutput();
+      addTearDown(output.dispose);
+      await output.releaseAndroidSurface(4096);
+    },
+  );
+
   testWidgets('video output leaves wheel input and scaling to its host', (
     tester,
   ) async {
@@ -351,5 +398,101 @@ void main() {
     await tester.pumpWidget(harness.build());
     expect(identical(tester.state(find.byType(mkv.Video)), state), isTrue);
     expect(tester.widget<Texture>(find.byType(Texture)).textureId, 33);
+  });
+
+  testWidgets('detaching is resolved by the surface leaving the tree', (
+    tester,
+  ) async {
+    final player = _Player()..publishDimensions(1920, 1080);
+    final controller = _Controller(player, 55);
+    final harness = _Harness();
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
+      harness.output.dispose();
+      controller.dispose();
+      await player.dispose();
+    });
+    harness.controllers.value = controller;
+    await tester.pumpWidget(harness.build());
+    expect(find.byType(mkv.Video), findsOneWidget);
+
+    // The widget tree still holds the texture until a frame rebuilds it, so a
+    // caller that disposes the player must not be told the surface is gone yet.
+    var detached = false;
+    harness.output.clearPlayer();
+    unawaited(
+      harness.output
+          .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
+          .then((_) => detached = true),
+    );
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    expect(find.byType(mkv.Video), findsOneWidget);
+    expect(detached, isFalse);
+
+    await tester.pump();
+    expect(find.byType(mkv.Video), findsNothing);
+    expect(detached, isTrue);
+  });
+
+  testWidgets('a replacement surface keeps the detach promise pending', (
+    tester,
+  ) async {
+    final first = _Player()..publishDimensions(1920, 1080);
+    final second = _Player()..publishDimensions(1920, 1080);
+    final outgoing = _Controller(first, 61);
+    final incoming = _Controller(second, 62);
+    final harness = _Harness();
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
+      harness.output.dispose();
+      outgoing.dispose();
+      incoming.dispose();
+      await first.dispose();
+      await second.dispose();
+    });
+    harness.controllers.value = outgoing;
+    await tester.pumpWidget(harness.build());
+
+    var detached = false;
+    unawaited(
+      harness.output
+          .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
+          .then((_) => detached = true),
+    );
+    // Swapping within one stretch replaces the keyed surface: a video texture
+    // is still on screen, so the outstanding detach must not be reported done.
+    harness.output.clearPlayer();
+    harness.controllers.value = incoming;
+    await tester.pump();
+    expect(detached, isFalse);
+    expect(find.byType(mkv.Video), findsOneWidget);
+    expect(tester.widget<Texture>(find.byType(Texture)).textureId, 62);
+
+    var swapped = false;
+    unawaited(
+      harness.output
+          .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
+          .then((_) => swapped = true),
+    );
+    harness.output.clearPlayer();
+    await tester.pump();
+    expect(find.byType(mkv.Video), findsNothing);
+    expect(swapped, isTrue);
+  });
+
+  test('an output that never mounted a surface needs no frame', () async {
+    final output = MediaKitVideoOutput();
+    addTearDown(output.dispose);
+    for (final cleared in [false, true]) {
+      if (cleared) output.clearPlayer();
+      var detached = false;
+      unawaited(
+        output
+            .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
+            .then((_) => detached = true),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(detached, isTrue, reason: 'cleared=$cleared');
+    }
   });
 }

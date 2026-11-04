@@ -94,7 +94,10 @@ final class PlaybackManager extends ChangeNotifier {
     _sessions.remove(tabId);
     if (_selectedTabId == tabId) _selectedTabId = null;
     notifyListeners();
-    final closing = session.close();
+    // A closing session rethrows its first cleanup failure. Nothing awaits this
+    // call on mobile, and a rejected future kept in _releases would also make
+    // drainReleases() throw for the unrelated sessions still closing.
+    final closing = session.close().catchError((Object _) {});
     _releases.add(closing);
     unawaited(closing.whenComplete(() => _releases.remove(closing)));
   }

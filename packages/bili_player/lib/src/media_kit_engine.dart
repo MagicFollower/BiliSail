@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart' as mk;
 
 import 'player_contract.dart';
 import 'android_media_leases.dart';
+import 'android_output_release.dart';
 import 'player_diagnostics.dart';
 import 'native_readiness.dart';
 import 'native_media_options.dart';
@@ -1293,7 +1294,23 @@ final class MediaKitEngine
     final old = _player;
     _player = null;
     try {
-      if (old != null) await old.dispose();
+      if (old != null) {
+        if (Platform.isAndroid) {
+          final handle = old.handle;
+          final outputReleased = await releaseAndroidOutput(
+            detachSurface: _videoOutput.awaitSurfaceDetached,
+            stop: old.stop,
+            readCurrentOutput: () => old.getPropertyAsync('current-vo'),
+            wait: (delay) => Future<void>.delayed(delay),
+          );
+          await old.dispose();
+          // The patched plugin parks the native surface instead of releasing it
+          // here, so an unconfirmed output is retired by its fallback delay.
+          if (outputReleased) await _videoOutput.releaseAndroidSurface(handle);
+        } else {
+          await old.dispose();
+        }
+      }
     } finally {
       await _mediaLeases.close();
     }

@@ -1,0 +1,66 @@
+import java.security.MessageDigest
+
+// media_kit_video 1.2.5, bggRGjQaUbCoE/media-kit@fd8421d2 (MIT). Patch a
+// build-local copy, never the Pub cache. The upstream Android VideoOutput
+// releases android.view.Surface and its texture entry inside Player.dispose,
+// while libmpv destroys its own video output on the core thread and
+// mpv_terminate_destroy runs on a five-second timer the Dart side cannot await.
+// The patched copy parks those native objects until the owner confirms the
+// output is gone, with a fallback delay that outlives that timer.
+def patchDirectory = file('patches/media_kit_video/java/com/alexmercerind/media_kit_video')
+def releaseTest = file('patches/media_kit_video/SurfaceReleaseOrderingTest.java')
+def upstreamFiles = [
+    'VideoOutput.java'       : 'c2cd529fdec78274ad1aa3890bb7dac050aed6d718c851bb1334f36eabce5f3d',
+    'VideoOutputManager.java': '411c5c5912a8bcbd95e90db0b974c5fd28181b595a6fd756b1bfec3077d41813',
+    'MediaKitVideoPlugin.java': '2db42dc040455b7a6fc7f506a8b47b131c89124db1c47c5c7c909a2dd2f4039d',
+]
+project(':media_kit_video') {
+    plugins.withId('com.android.library') {
+        def sources = android.sourceSets.getByName('main').java
+        def upstreamDirectories = sources.srcDirs.toList()
+        def patchedDirectory = layout.buildDirectory.dir('bilisail-patched-java')
+        def prepareSources = tasks.register('prepareBilisailMediaKitVideo', Sync) {
+            inputs.dir(patchDirectory)
+            from(upstreamDirectories)
+            into(patchedDirectory)
+            doLast {
+                upstreamFiles.each { name, expected ->
+                    def target = patchedDirectory.get().file(
+                        "com/alexmercerind/media_kit_video/$name").asFile
+                    // The cache may carry CRLF; hash and compare the LF text so a
+                    // checkout convention cannot mask an upstream content change.
+                    def original = target.getText('UTF-8').replace('\r\n', '\n')
+                    def hash = MessageDigest.getInstance('SHA-256')
+                        .digest(original.getBytes('UTF-8')).encodeHex().toString()
+                    if (hash != expected) {
+                        throw new GradleException(
+                            "media_kit_video $name changed; review the surface release ordering patch " +
+                            "(got $hash, expected $expected).")
+                    }
+                    def patched = new File(patchDirectory, name)
+                    if (!patched.exists()) {
+                        throw new GradleException("Missing patched media_kit_video source: $name")
+                    }
+                    target.setText(patched.getText('UTF-8').replace('\r\n', '\n'), 'UTF-8')
+                }
+            }
+        }
+        sources.setSrcDirs([prepareSources.map { it.destinationDir }])
+        tasks.matching { it.name.startsWith('compile') || it.name.startsWith('lint') }.configureEach {
+            dependsOn(prepareSources)
+        }
+        def releaseRegression = tasks.register('testBilisailMediaKitVideoRelease', Exec) {
+            dependsOn(prepareSources)
+            def javaName = System.getProperty('os.name').startsWith('Windows') ? 'java.exe' : 'java'
+            commandLine(new File(System.getProperty('java.home'), "bin/$javaName"),
+                releaseTest,
+                patchedDirectory.get().file('com/alexmercerind/media_kit_video/VideoOutput.java').asFile,
+                patchedDirectory.get().file('com/alexmercerind/media_kit_video/VideoOutputManager.java').asFile,
+                patchedDirectory.get().file('com/alexmercerind/media_kit_video/MediaKitVideoPlugin.java').asFile,
+                layout.buildDirectory.dir('bilisail-release-test').get().asFile)
+        }
+        tasks.matching { it.name == 'check' }.configureEach {
+            dependsOn(releaseRegression)
+        }
+    }
+}

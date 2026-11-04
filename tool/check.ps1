@@ -40,6 +40,7 @@ try {
     & (Join-Path $PSScriptRoot 'test-android-signing.ps1')
     & (Join-Path $PSScriptRoot 'test-android-development.ps1')
     & (Join-Path $PSScriptRoot 'test-android-media-notification.ps1')
+    & (Join-Path $PSScriptRoot 'test-android-media-kit-patch.ps1')
   }
   # The first pub run can print bootstrap lines before the machine JSON.
   Invoke-Check flutter @('--version')

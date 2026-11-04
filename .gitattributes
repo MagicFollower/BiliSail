@@ -1,2 +1,5 @@
 packages/bili_mux/tool/*.sh text eol=lf
 tool/*.sh text eol=lf
+# Patch anchors and source pins are compared against LF-normalized text, so a
+# CRLF smudge on checkout must not rewrite these build inputs.
+android/patches/** text eol=lf
