@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:liquid_dock_navi/liquid_dock_navi.dart';
 import 'package:path/path.dart' as path;
 
 import '../shared/ui/app_dialog.dart';
@@ -352,6 +353,15 @@ class _BiliAppState extends ConsumerState<BiliApp> {
       },
     );
     unawaited(widget.dependencies.session.restore());
+    // The liquid dock's refraction shader compiles its backend pipeline on
+    // first paint; without this warm-up that lands on the frame the dock
+    // first appears (switching the setting on, or a cold start), which can
+    // stall the raster thread for seconds on drivers with slow pipeline
+    // creation. Runs once, after the first frame, and no-ops where the
+    // shader is unavailable.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(LiquidDockLensShader.warmUp());
+    });
   }
 
   void _downloadVideo(

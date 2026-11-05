@@ -954,3 +954,47 @@ C 的落地要点：
 **已核（含一次反向验证）：** 首轮 `pwsh tool/check.ps1 -Stage All -SkipPub` 在 RootTests **红 8 项**，正是上表这些钉行距的用例（失败信息 `Expected: a numeric value within <0.01> of <16> / Actual: <12.0>`），说明这组数值不是无人看管的装饰。`sliver_grid_scroll_to_top_test` 那条复制式基线另外单独验过判别力：把它改回 `16.0 : 24.0` 后 **9+ 项转红**，再恢复 `12.0 : 20.0`——先确认它不是摆设，才敢说这次同步是必要而非放宽。同步后全量三段全绿：Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25；五工程 `dart format` 706/105/45/20/5 文件 0 改动；`flutter analyze` No issues found）、RootTests **4239 通过、13 跳过**、PackageTests bili_api 586／bili_player 157／bili_danmaku 161／bili_mux 5 通过 10 跳过（未设 `BILI_MUX_LIBRARY`，不算原生通过）。定向另跑两批：`video_grid` + `home_responsive_cards` + `search_screen` 共 32 项通过，`sliver_grid_scroll_to_top` + `sliver_grid_lifecycle` + `card_scroll_repaint` 共 26 项通过。余下 grep 到的 `16` 是 16:9 封面比例与图片尺寸，与本条无关，未动。
 
 **未验证：** 没出包、没上设备，也没把桌面版跑起来目视——"稍微"合不合适只有用户能判；本轮只保证几何断言与新数值自洽。窄屏双列与桌面多列下卡片阴影和 12px 间隙叠起来的实际呼吸感未观测，滚动帧率影响也未量（行距变小意味着同屏卡片数变多，理论上重绘面积增加，方向与代价都没测）。
+
+## F90：液态玻璃开关卡顿根因定位与滤镜缓存/启动预热修复
+
+**需求/现象**
+
+设置页两个玻璃效果开关（`液态玻璃底栏` / `视频条目液态卡片`）被怀疑会让页面卡死 3~5 秒。需要分别判定每个开关是否存在卡死路径，并对确有的路径做最小修复。
+
+**定位结论（代码级）**
+
+| 开关 | 阻塞 UI 线程 | 卡死量级路径 | 结论 |
+| --- | --- | --- | --- |
+| `liquidVideoCards`（视频条目液态卡片） | 无 | 无 | 无卡死路径：令牌仅参与绘制（`VideoCardSurface`），App 内 `BackdropFilter` 控件用法 0 处（5 处出现均为说明刻意不用的注释），主题切换重建被 `==`+分步 lerp 拦住 |
+| `liquidGlassDock`（液态玻璃底栏） | 无（异步加载+有界动画） | ①底栏整条一次 backdrop 过滤 ②边缘折射透镜再一层全尺寸 backdrop 过滤 ③首次运行透镜片元着色器时的驱动侧 PSO 编译 ④每帧新建 `ImageFilter.shader` | 存在 3~5 秒量级的栅格线程停顿风险，且与开关打开/冷启动首帧重合 |
+
+能解释「3~5 秒卡死」量级的只有 ③：`ui.FragmentProgram` 由 impellerc 在构建期编译成目标后端字节码，但首次真正用该着色器出图时驱动才建 pipeline（PSO），弱 GPU 驱动栈上可达数秒，且发生在栅格线程。该编译原落在「开关打开后底栏第一次画出折射带」的那一帧（或冷启动首帧），读起来就是页面卡死。F83 记录的播放退出卡死是原生释放路径的另一机制，与本条无关。
+
+**决定**
+
+保留两个开关的既有语义，不改视觉：只把驱动侧编译从交互首帧挪走，并去掉每帧重复分配滤镜的开销。
+
+| 备选方案 | 做法 | 取舍 |
+| --- | --- | --- |
+| 去掉边缘折射/常驻模糊 | 直接删特效层 | 不选：用户明确要保留液态玻璃效果 |
+| 开关切换时同步阻塞加载 | 等加载完再出底栏 | 不选：把停顿移到切换时刻，仍卡界面且更明显 |
+| 降 DPR/降采样 | 缩小 backdrop 尺寸 | 不选：降画质，且编译停顿与分辨率无关 |
+| **滤镜复用 + 启动预热** | uniform 不变则复用 `ImageFilter.shader`；首帧后用 1×1 离屏渲染预热 PSO | 采用：不动视觉语义，改动集中在透镜组件，预热失败仍是每帧兜底滤镜 |
+
+**改动**
+
+| 文件 | 改动 |
+| --- | --- |
+| `liquid_dock_navi/lib/src/liquid_lens.dart` | `_buildFilter()` 增加 uniform 记录缓存：uniform 全部未变则复用同一个 `ui.ImageFilter.shader`，不再每帧新建；`program` setter 同步清缓存；新增 `LiquidDockLensShader.warmUp()`，用 1×1 离屏渲染驱动一次着色器管线编译（后台执行、失败仅 `debugPrint`、着色器不可用时 no-op） |
+| `lib/app/bili_app.dart` | `initState` 注册 `addPostFrameCallback`，启动后调用一次 `LiquidDockLensShader.warmUp()`，与交互路径分离 |
+
+**已核**
+
+- `liquid_dock_navi`：`dart format` 干净；`flutter analyze` 干净；`flutter test` 20/20 通过。
+- 根应用：`flutter analyze` 无问题；`liquid_glass_dock_setting_test`、`dock_selection_test`、`dock_entries_test`、`shell_layout_test` 四件合并复跑 **74/74** 通过（其中 `shell_layout_test` 67 项）。
+- 代码级定位：两个开关的读写路径、`BackdropFilter` 使用面（App 内控件用法 0 处，注释 5 处）、主题切换重建路径均逐一核对。
+
+**未验证**
+
+- 无 Android 实机：预热是否真的命中同一 PSO、3~5 秒卡死是否消失，均未测量；需在有问题的设备上对照开/关开关与冷启动复测。
+- 视觉回归：滤镜复用不改变 uniform 语义，但边缘折射的实际观感未在设备上复核。
