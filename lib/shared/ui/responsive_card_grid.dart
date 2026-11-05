@@ -32,7 +32,9 @@ const _desktopSpacing = 20.0;
     columns: columns,
     width: (extent - (columns - 1) * spacing) / columns,
     spacing: spacing,
-    runSpacing: compact ? 16.0 : 24.0,
+    // Row gap. Cards float on a painted board whose shadow eats part of the
+    // visible gap, so the number stays below the old flat-list 16/24.
+    runSpacing: compact ? 12.0 : 20.0,
   );
 }
 

@@ -932,3 +932,25 @@ C 的落地要点：
 **已核：** `dart format` 五工程 706/105/45/20/5 文件 **0 改动**；`flutter analyze` No issues found；`pwsh tool/check.ps1 -Stage All -SkipPub` 三段全绿——Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25）、RootTests **4239 通过、13 跳过**（与 F87 撤回后的基线同一计数：本轮只改了断言的数字，没增删用例）、PackageTests bili_api 586／bili_player 157／bili_danmaku 161／bili_mux 5 通过 10 跳过（未设 `BILI_MUX_LIBRARY`，不算原生通过）。`grep` 两项核对：全仓 `dockGlassRefraction` 只剩仓储注释里那句"该键已移除"；删档前没有任何用例断言过 `LiquidDockQuality.medium`，所以这次删档不点亮既有测试。
 
 **未验证：** 没出包、没上设备，也没跑起来目视——设置页少一行后的排版（相邻项间距与文案换行）未核对；卓易通容器内折射恒开的实际观感未取样，上面说的"风险"是按 F69 记录推断的方向，本轮没做对照实验。
+
+## F89：共享网格行间距各减 4（窄屏 16→12、桌面 24→20）
+
+**需求：** 用户要求"稍微减小主页卡片上下间距"。
+
+**决定（用户选定"全站一处改"）：** 改在共享那一层，不给首页开分支。`runSpacing` 只有一个定义处——`responsive_card_grid.dart` 的私有 `_layout`，`ResponsiveCardGrid`（Wrap 路径）与 `SliverResponsiveCardGrid`（行 sliver 路径）都从它取值，首页（`home_content.dart:382`、`feed_video_grid.dart:31`）／动态／我的／搜索／文件夹网格共用。"只改首页"要把可选参数穿过 4 个消费者，卡片间距从此有两种口径，那个手抄数值的对照基线还得按页面分支。幅度按用户选的"各减 4"。
+
+**为什么这个数还带一层视觉账：** 卡片现在画在玻璃板上（F79），板的阴影向外延展会吃掉一部分可见间隙；16／24 是扁平条目时代定的（`shared-video-cards.md` 记着 2026-10-25 那次由 24 收到 16），板面化之后同一数字看起来就偏松。
+
+**改动：** 生产侧只有那一行数值加一句成因注释；跟着同步的是**四处手抄了同一个数**的测试断言——
+
+| 位置 | 断言的是什么 |
+| `test/shared/ui/video_grid_test.dart:47` | `third.top - first.bottom`。手机宽度两列时第三张正是下一行第一张，差值恰为一个行距，所以它测的就是 runSpacing 本身 |
+| `test/features/feed/home_responsive_cards_test.dart:68` | `next.top == first.bottom + (compactGrid ? 16 : 24)`，四路频道共用 |
+| `test/features/search/search_screen_test.dart:366` | 同一形状的差值断言（320／390／1895 三挡宽度） |
+| `test/shared/ui/sliver_grid_scroll_to_top_test.dart:113` | 对照基线自己复制了一份 `16/24`；已加注释写明它必须镜像 `_layout`，否则比较两边不同尺 |
+
+文档侧 `docs/validation/shared-video-cards.md:11` 是**现状**段而不是历史快照，行间距写成窄屏 12／宽屏 20 并指回本条；同文件 70 行那条 2026-10-25 的"24 改 16"是当日记录，不改。
+
+**已核（含一次反向验证）：** 首轮 `pwsh tool/check.ps1 -Stage All -SkipPub` 在 RootTests **红 8 项**，正是上表这些钉行距的用例（失败信息 `Expected: a numeric value within <0.01> of <16> / Actual: <12.0>`），说明这组数值不是无人看管的装饰。`sliver_grid_scroll_to_top_test` 那条复制式基线另外单独验过判别力：把它改回 `16.0 : 24.0` 后 **9+ 项转红**，再恢复 `12.0 : 20.0`——先确认它不是摆设，才敢说这次同步是必要而非放宽。同步后全量三段全绿：Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25；五工程 `dart format` 706/105/45/20/5 文件 0 改动；`flutter analyze` No issues found）、RootTests **4239 通过、13 跳过**、PackageTests bili_api 586／bili_player 157／bili_danmaku 161／bili_mux 5 通过 10 跳过（未设 `BILI_MUX_LIBRARY`，不算原生通过）。定向另跑两批：`video_grid` + `home_responsive_cards` + `search_screen` 共 32 项通过，`sliver_grid_scroll_to_top` + `sliver_grid_lifecycle` + `card_scroll_repaint` 共 26 项通过。余下 grep 到的 `16` 是 16:9 封面比例与图片尺寸，与本条无关，未动。
+
+**未验证：** 没出包、没上设备，也没把桌面版跑起来目视——"稍微"合不合适只有用户能判；本轮只保证几何断言与新数值自洽。窄屏双列与桌面多列下卡片阴影和 12px 间隙叠起来的实际呼吸感未观测，滚动帧率影响也未量（行距变小意味着同屏卡片数变多，理论上重绘面积增加，方向与代价都没测）。

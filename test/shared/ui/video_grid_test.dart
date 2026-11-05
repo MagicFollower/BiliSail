@@ -44,7 +44,9 @@ void main() {
       expect(second.left - first.right, closeTo(6, .01));
       expect(first.width, closeTo((extent - 6) / 2, .01));
       expect(second.right, closeTo(extent, .01));
-      expect(third.top - first.bottom, closeTo(16, .01));
+      // One row gap at phone width: two columns put the third card first in
+      // the next row, so this difference is exactly the grid's runSpacing.
+      expect(third.top - first.bottom, closeTo(12, .01));
       expect(tester.takeException(), isNull, reason: 'phone width=$width');
     }
   });

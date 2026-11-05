@@ -363,7 +363,7 @@ void main() {
       expect(first.left, inset);
       expect(last.right, closeTo(width - inset, .01));
       expect(last.top, first.top);
-      expect(next.top - first.bottom, closeTo(compact ? 16 : 24, .01));
+      expect(next.top - first.bottom, closeTo(compact ? 12 : 20, .01));
       expect(find.byType(BiliUpBadge), findsNWidgets(cards.evaluate().length));
       await _snapshot(tester, '${width.toInt()}-video-grid');
       expect(tester.takeException(), isNull);

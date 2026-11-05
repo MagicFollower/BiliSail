@@ -65,7 +65,7 @@ void main() {
         );
         expect(last.top, first.top);
         expect(last.right, closeTo(width - inset, .01));
-        expect(next.top, closeTo(first.bottom + (compactGrid ? 16 : 24), .01));
+        expect(next.top, closeTo(first.bottom + (compactGrid ? 12 : 20), .01));
         final cover = tester.getSize(
           find.descendant(of: slots.first, matching: find.byType(AspectRatio)),
         );

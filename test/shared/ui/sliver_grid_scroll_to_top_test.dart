@@ -110,7 +110,10 @@ Future<_Result> _run(
   Widget grid(double extent) {
     final columns = extent == 430 ? 2 : 6;
     final spacing = extent < 600 ? 6.0 : 20.0;
-    final runSpacing = extent < 600 ? 16.0 : 24.0;
+    // Mirrors the private `_layout` in responsive_card_grid.dart: the baseline
+    // it is compared against has to use the same row gap, so a grid metric
+    // change lands here too rather than quietly skewing the comparison.
+    final runSpacing = extent < 600 ? 12.0 : 20.0;
     final cardWidth = (extent - spacing * (columns - 1)) / columns;
     return optimized
         ? SliverResponsiveCardGrid(
