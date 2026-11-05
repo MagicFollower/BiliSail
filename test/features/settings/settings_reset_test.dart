@@ -44,6 +44,7 @@ void main() {
       await repository.save(
         defaults.copyWith(
           theme: AppThemePreference.dark,
+          defaultDynamicTab: DynamicPageTab.videoDynamic,
           navigationMode: WorkspaceNavigationMode.multipleTabs,
           allowConcurrentPlayback: true,
           font: AppFontPreference.installed,
@@ -57,6 +58,7 @@ void main() {
           continuousRelatedPlayback: true,
           preferredQuality: 120,
           defaultPlaybackRate: 2,
+          rememberPlaybackRate: false,
           defaultVolume: 20,
           rememberVolumeGlobally: true,
           danmakuEnabled: false,
@@ -104,6 +106,8 @@ void main() {
           defaults.shortcuts.keysFor(ShortcutAction.nextTab),
         );
         expect(settings.theme, AppThemePreference.system);
+        expect(settings.rememberPlaybackRate, isTrue);
+        expect(settings.defaultDynamicTab, DynamicPageTab.dynamic);
         expect(settings.checkPrereleaseUpdates, isFalse);
         expect(settings.navigationMode, defaults.navigationMode);
         expect(settings.danmakuArea, defaults.danmakuArea);

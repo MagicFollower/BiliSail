@@ -1,4 +1,5 @@
 import '../features/downloads/data/android_public_download_storage.dart';
+import 'video_card_watch_later.dart';
 
 import 'dart:async';
 import 'dart:io';
@@ -120,6 +121,7 @@ class AppDependencies {
     this.session,
     this.library,
     this.playback,
+    this.playbackRateMemory,
     this.playbackVolumeMemory,
     this.window,
     this.sponsorTransport,
@@ -148,6 +150,7 @@ class AppDependencies {
   );
   final SqliteLibraryRepository library;
   final PlaybackManager playback;
+  final PlaybackRateMemory playbackRateMemory;
   final PlaybackVolumeMemory playbackVolumeMemory;
   final WindowService window;
   final playbackWindow = DesktopPlaybackWindowController();
@@ -338,6 +341,7 @@ class AppDependencies {
       session,
       library,
       playback,
+      playbackRateMemory,
       playbackVolumeMemory,
       window,
       sponsorTransport,
@@ -507,6 +511,17 @@ class AppDependencies {
           ApiVideoRepository(api, requests),
         ),
         videoCardPreviewPlaybackProvider.overrideWithValue(cardPreviews),
+        videoCardWatchLaterRepositoryProvider.overrideWith(
+          (ref) => AppVideoCardWatchLaterRepository(
+            ref.watch(homeRepositoryProvider),
+            (entry, cancellation) => ref
+                .read(watchLaterRemovalProvider(session.accountScope).notifier)
+                .remove(entry, cancellation: cancellation),
+            removedIds: () => ref
+                .read(watchLaterRemovalProvider(session.accountScope))
+                .removed,
+          ),
+        ),
         videoCardWatchLaterAddedProvider.overrideWith(
           (ref) =>
               (id) => ref

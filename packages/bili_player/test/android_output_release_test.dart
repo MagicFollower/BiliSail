@@ -89,8 +89,8 @@ void main() {
       expect(reads, 3);
       expect(waits, 3);
       expect(stalls, ['output']);
-      // Unconfirmed: the caller must leave the parked surface to the plugin's
-      // fallback instead of retiring it while libmpv may still own it.
+      // Unconfirmed: libmpv still reported a GPU output when the budget ran
+      // out, so the hand-over cannot be called verified.
       expect(released, isFalse);
     },
   );

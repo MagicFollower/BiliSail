@@ -820,3 +820,41 @@ C 的落地要点：
 **未验证（重要边界）：** `mpv_terminate_destroy` 仍由 media_kit 内部那个不可取消、不可等待的 5 秒裸 Timer 在 UI 线程执行——本轮改的是它的前置条件（从"赌核心已收尾"变成"确认核心已放下输出"）与原生表面的退休时机（确认后立即、确认不了则晚于核心），**没有让核心销毁本身变成可等待的**，所以不能按"已根除"理解。APK 只构建未安装：真机反复"播放→退出→回主页"、尤其在网络卡住/缓冲转圈时退出、停止预览后超过 6 秒的窗口、`ReleaseSurface` 通路在运行时是否真被调用（本轮只证明它进了产物和单测桩）、全屏切换／多标签并发／页面回收／超时换备用地址、卓易通容器内的同一行为，全部未测；Android tombstone/ANR 未取，致毁路径仍是推断。释放失败本轮改为不可见（没有新增上报通道），只换来不再误导。详见 [Android 退出播放页后的卡死与闪退](validation/android-playback-release-ordering.md)。
 
 **未验证：** 本轮未出包，真机与卓易通零取样。滚动那条只量了 `ScrollPosition.pixels`，设置页的分区卡片、`PageStorage` 与 `WorkspaceActivity` 副作用没进用例；ink 那条只断言了 `InkWell` 的入参，ripple 实际画出的像素形状没有截图核对，长按菜单的锚点位置是否跟着板角也没验。四个包的测试与原生回归本轮未重跑（改动只在根应用）。
+
+## F84：并入上游 10 个提交（102a2cc..3565a20），Android 插件补丁改由上游首帧机制承接
+
+**范围：** 上游 `CKopoer/BiliSail` 自共同祖先 `102a2cc` 起 10 条，本分支独有 50 条；`git merge upstream/master` 产生 12 个冲突文件（含 2 处 modify/delete）。逐条判定：
+
+| 上游提交 | 内容 | 判定 | 依据 |
+| --- | --- | --- | --- |
+| `7b4ff03` playurl 瞬断重试 | **取** | 与本地零交叠，`bili_api` 自带 460 行新用例 |
+| `55601c3` 合拍动态按 bvid 去重 | **取** | 只动 `home_controller` 的合并键 |
+| `3565a20` 字体用例先滚动再点 | **取上游** | 与本地同一处只多一条 `hitTestable()` 断言，变量名 `bundled`→`bundledFont` 一并跟 |
+| `1ccafef` README 下载表抬到 `v1.2.6+5` | **取上游** | 表指向真实存在的上游 release，本分支不另起发布通道 |
+| `25dedf3` 版本 `1.2.6+6` | **取，按 F80 写 `6.2.6+6`** | major 取上游+5、其余逐字跟上；versionCode 随之 62604→62606 |
+| `95db6fc` 动态页默认标签设置 | **取，字段并集** | 与本地 `dockGlassRefraction`／`liquidGlassDock`／`liquidVideoCards` 撞在同一批构造点，两侧都是纯新增 |
+| `c5b1086` 倍速记忆开关 | **取，字段并集** | `rememberPlaybackRate` 落在 `defaultPlaybackRate` 之后，自动合并即可 |
+| `4cb07d5` 共享卡片取消稍后再看 | **取，`video_card.dart` 手工并** | 本地把卡片重排成液态板（F79/F82），上游在旧排版上加菜单语义，见下 |
+| `f464c55` Android 首帧 + macOS 关标签 | **Android 取（换机制）／macOS 弃** | macOS 那半是 modify/delete：本分支 `f8e5506` 平台收敛删了非 Android 工程链，沿用 `7d9a654` 的同一口径 |
+| `2e9947e` macOS 全屏保留 | **弃** | 同上，`macos/Runner/**` 在本树不存在 |
+
+**决定（插件补丁不能并存）：** 上游 `android/patches/media_kit/first-frame.gradle` 与本地 `de49b39` 的 `android/patches/media_kit_video/apply.gradle` 改的是同一批 `media_kit_video` Java 源，且两条脚本都把副本同步进**同一个** `build/bilisail-patched-java` 目录、各自 `sources.setSrcDirs(...)` 指回它、各自按未改写的上游原件哈希（`VideoOutput.java` 同为 `c2cd529f…`）做引脚校验。并存时后注册的那条会拿着"已被前一条改写过的副本"去比对原件哈希。按用户决定「上游机制直接顶掉」，插件层只留 `first-frame.gradle`，`patches/media_kit_video/`（三个改写副本 + `apply.gradle` + `SurfaceReleaseOrderingTest.java`）与 `tool/test-android-media-kit-patch.ps1` 及其 `tool/check.ps1` Lint 段接线全部删除。
+
+| 备选 | 判定 | 依据 |
+| --- | --- | --- |
+| 把停放释放改写并进上游锚点脚本，单管线保两条修复 | **弃（用户否决）** | 要手工合 ~150 行 Java，且此后每轮上游锚点都得在本地派生版上重放 |
+| 两段管线串起来（本地覆盖→目录 A，上游锚点以 A 的哈希为新引脚→目录 B） | **弃** | 两处哈希、两个 Sync 互相耦合，上游下次动锚点就要多核对一层 |
+| 整条弃 `f464c55` 的 Android 部分 | **弃** | Dart 侧 `_VideoFrameMask` 与 `BiliSail.WaitForVideoFrame` 会没有原生应答方，比现状更糟 |
+
+**代价（写清，别当"等价替换"）：** F83 的原生停放释放（`pendingReleases`／`releaseNative`／6 秒兜底）随补丁一起撤除，`VideoOutputManager.ReleaseSurface` 通道不再存在，因此 `MediaKitVideoOutput.releaseAndroidSurface()` 与引擎里"确认过才另发一次退休"的分支删除（留着只会每次释放都走 `MissingPluginException` 兼容分支）。保留的是 Dart 侧：`_SurfacePresence` 挂载计数、`awaitSurfaceDetached()`、`releaseAndroidOutput()` 的 `detachSurface → stop(3s) → 轮询 current-vo(600ms/20ms)`，仍在 `old.dispose()` 之前执行，只是返回值不再驱动任何通道调用；`playback_manager.dart:92` 的收口修正不变。F83 已核段落里的 gradle `22 assertions passed`、`javap` 读到 `pendingReleases`、APK `classes.dex` 命中 `ReleaseSurface` 三条证据对本树**不再成立**，`docs/playback-and-danmaku.md` 与 `docs/validation/android-playback-release-ordering.md` 已按此显式更正。
+
+**改动：** 冲突处理为 `pubspec.yaml`／两处 `schemaVersion` 快照号（本地 39 × 上游 37 → **40**，该字段只写不读，`app_database.dart:23` 的 SQLite `schemaVersion` 是另一套 6）、设置三件套字段并集、`font_selection_test` 取上游、`video_card.dart` 保本地排版并接上游语义、`media_kit_video_output.dart` 把 `_SurfacePresence`（外）与 `_VideoFrameMask`（内）叠成一条链、macOS 两文件保持删除。上游新文件照收：`lib/shared/ui/video_card_menu_sheet.dart`、`lib/app/video_card_watch_later.dart`、`integration_test/android_video_startup_test.dart`、`tool/test-android-video-startup.ps1`（后者不在 `check.ps1` 内，需真机）。
+
+**两处自动合并照不住的坑：**
+
+1. `media_kit_video_output.dart` 里本地把通道字段改名 `_pluginChannel`（F83 的顺带改名），上游新增的两处调用仍写 `_viewportChannel`；git 按行合并后同时留下两个名字，`_viewportChannel` 成为未定义标识符——**没有冲突标记**，只有 `flutter analyze` 会报。已统一为 `_pluginChannel`。
+2. `video_card.dart` 上游的 `_menu`（从 `VideoCardWatchLaterToggle` 合成"稍后再看／取消稍后再看"）只喂给了它自己的标题行；本地排版把标题行搬进了 `_titleBlock`，那里仍读 `widget.menu`，结果是**共享卡片在液态卡片上根本没有菜单入口**（这类卡片 `widget.menu` 恒为 null）。改法是把 `menu` 作为参数传进 `_titleBlock`（`_buildCard` 里上游那句 `final menu = _menu;` 因此从"未使用变量"变成唯一来源，`flutter analyze` 的 `unused_local_variable` 正好把这条漏接照了出来）。
+
+**已核：** `pwsh tool/check.ps1 -Stage Lint` 全绿——CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25；五个工程 `dart format` 共 706/105/45/20/5 文件 **0 改动**；`flutter analyze` No issues found。**上游补丁引脚与锚点做过本机预检**：一支临时脚本从 `first-frame.gradle` 自身解析出 3 份引脚哈希与 7 处 `replace()` 锚点（锚点不手抄），在 `pubspec.lock` 指向的 `fd8421d2` Pub 缓存副本里逐条计数，结果 `anchor checks run: 7, failures: 0`；反向对照把首条锚点末尾多写一个空格，命中数变 0 即报缺。注意 `73771ec3` 那份缓存的三份 Java 与 `fd8421d2` 逐字节相同，所以"换份缓存也通过"不能当判据有效的证据。首轮 `tool/check.ps1` 在 root analyze 停一次（上述坑 2 的 `unused_local_variable`），RootTests 停 4 项：`workspace_router_test` 三条（上游新用例自带 `prefix` 点位，不知道本分支窄布局是玻璃 Dock，改成本文件已有的 `primaryNavigationTarget(section, width)`）与 `default_dynamic_tab_test` 一条（上游把它自己树的快照号 37、SQLite schema 3 写死，本分支为 40 与 6）。定向复跑两个文件 **92 项通过**。随后 `pwsh tool/check.ps1 -Stage All -SkipPub` 三段全绿——Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25；五工程 `dart format` 共 706/105/45/20/5＝**881 文件 0 改动**；`flutter analyze` No issues found）、RootTests **4239 通过、13 跳过**、PackageTests bili_api **586**／bili_player **157**／bili_danmaku **161**／bili_mux **5 通过 10 跳过**（未设 `BILI_MUX_LIBRARY`，按既有口径不算原生通过）。对照 F83 那轮的 4174／bili_api 547／bili_player 153：增量来自上游用例，`check.ps1` 的 Lint 段少了一项（补丁脚本 5 条判据随删除消失）。
+
+**未验证：** Android 构建与真机完全没跑——`:media_kit_video:compileReleaseJavaWithJavac`、`:media_kit_video:check`（上游没给这条打点的回归任务）、`tool/test-android-video-startup.ps1` 与 `integration_test/android_video_startup_test.dart` 都要设备和 SDK；首帧遮罩的实际观感、退出播放页的卡死／闪退在撤掉原生停放后是否复现，均未观测量。macOS/Windows/Linux/iOS 因平台收敛不在本树，上游 `2e9947e` 与 `f464c55` 的 macOS 半条按口径未采。真实账号流程（稍后再看增删、playurl 重试）没有在线验证，写操作只由明确用户动作触发的规则未变。上游带来的 `tool/test-android-video-startup.ps1` 未接进 `check.ps1`，是否要接属于下一轮决定。

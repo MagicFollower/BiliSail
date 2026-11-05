@@ -91,6 +91,11 @@ class SqliteSettingsRepository implements SettingsRepository {
       dockGlassRefraction: boolean('dockGlassRefraction', true),
       liquidGlassDock: boolean('liquidGlassDock', true),
       liquidVideoCards: boolean('liquidVideoCards', true),
+      defaultDynamicTab:
+          DynamicPageTab.values
+              .where((item) => item.name == decoded['defaultDynamicTab'])
+              .firstOrNull ??
+          DynamicPageTab.dynamic,
       allowConcurrentPlayback: boolean('allowConcurrentPlayback', false),
       cacheImages: boolean('cacheImages', true),
       recordSearchHistory: boolean('recordSearchHistory', true),
@@ -186,6 +191,7 @@ class SqliteSettingsRepository implements SettingsRepository {
               .firstOrNull ??
           VideoDecodingPreference.automatic,
       defaultPlaybackRate: number('defaultPlaybackRate', 1.0),
+      rememberPlaybackRate: boolean('rememberPlaybackRate', true),
       fullscreenSwipeControls: boolean('fullscreenSwipeControls', true),
       defaultVolume: number('defaultVolume', 100.0),
       rememberVolumeGlobally: boolean('rememberVolumeGlobally', false),
@@ -251,10 +257,10 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 38 was this branch's liquid-card setting; upstream numbered its
-        // danmaku VIP/colour keys 36 for the same snapshot. The merged keys are
-        // new to both lines, so the snapshot takes one step past either.
-        'schemaVersion': 39,
+        // 39 was this branch's liquid-card snapshot; upstream moved to 37 for
+        // its default-dynamic-tab and rate-memory keys. The merged snapshot
+        // carries both sets, so the number takes one step past either.
+        'schemaVersion': 40,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
@@ -263,6 +269,7 @@ class SqliteSettingsRepository implements SettingsRepository {
         'dockGlassRefraction': value.dockGlassRefraction,
         'liquidGlassDock': value.liquidGlassDock,
         'liquidVideoCards': value.liquidVideoCards,
+        'defaultDynamicTab': value.defaultDynamicTab.name,
         'fullscreenSwipeControls': value.fullscreenSwipeControls,
         'navigationMode': value.navigationMode.name,
         'allowConcurrentPlayback': value.allowConcurrentPlayback,
@@ -300,6 +307,7 @@ class SqliteSettingsRepository implements SettingsRepository {
         'mediaCdn': value.mediaCdn.name,
         'videoDecoding': value.videoDecoding.name,
         'defaultPlaybackRate': value.defaultPlaybackRate,
+        'rememberPlaybackRate': value.rememberPlaybackRate,
         'defaultVolume': value.defaultVolume,
         'rememberVolumeGlobally': value.rememberVolumeGlobally,
         'audioNormalization': value.audioNormalization.name,

@@ -21,6 +21,8 @@ Release 里未捕获的 Dart 异常不结束进程（`lib/main.dart` 只在 macO
 
 ## 插件层补丁：让表面退休等确认，而不是等时间
 
+> **本节已被文末「2026-11-05 更正：插件层补丁由上游首帧机制承接（F84）」作废**：`android/patches/media_kit_video` 已随上游 `f464c55` 的补丁机制并入而被撤除，下面的表与判据只保留作历史记录。
+
 `android/patches/media_kit_video`（Gradle 入口 `android/build.gradle.kts:20`），结构沿用同目录 `audio_service` 补丁的做法：把插件的 Java 源同步到该插件构建目录下的副本、重定向 `sourceSets.main.java.srcDirs`，**不改 Pub 缓存**。与 `audio_service` 用锚点文本替换不同，这里改为校验上游 SHA-256 后用 `java/com/alexmercerind/media_kit_video/` 里的完整改写副本覆盖——三个文件、多处改动，锚点太脆。
 
 | 文件 | 改了什么 | 为什么 |
@@ -70,3 +72,23 @@ Dart 侧：
 仍需用户在真机验证，且下列项**本轮完全没测**：装上这个 APK 后反复"播放→退出→回主页"，尤其在网络已卡住／缓冲中转圈时退出；停止预览后超过 6 秒的窗口内是否仍有卡死、进程消失、释放停滞或资源增长；`ReleaseSurface` 通路在真机上是否被真正调用（本轮只证明了它存在于产物与单测桩里，没证明运行时调用）；全屏／非全屏切换、多标签并发、页面回收与超时换备用地址路径；卓易通容器内的同一行为；`mpv_terminate_destroy` 落在已停止核心上的实际耗时没有测量。单测与静态分析证明的是 Dart 侧顺序与有界性，dex 与 `javap` 证明的是补丁进入了产物，**都不等于原生竞态在设备上已被观测消除**。
 
 残余风险（明确保留）：`mpv_terminate_destroy` 仍由 media_kit 内部那个不可取消、不可等待的 5 秒裸 `Timer` 在 UI 线程执行。本轮把它的前置条件从"赌核心已收尾"改成"确认核心已放下输出"，并把原生表面的退休时机改成"确认后立刻、确认不了就晚于核心"，但没有、也无法让核心销毁本身变成可等待的。若要在设备上再压一层，只能改 `media_kit` 核心侧的销毁路径（本树不做）。
+
+## 2026-11-05 更正：插件层补丁由上游首帧机制承接（F84）
+
+**变化：** 并入上游 `f464c55`（Android 灰黑／单色首帧）时，两条插件补丁撞在同一批文件上：本节的 `android/patches/media_kit_video/apply.gradle` 与上游的 `android/patches/media_kit/first-frame.gradle` 都把 `media_kit_video` 的 Java 源同步进**同一个**构建副本目录 `build/bilisail-patched-java`，各自 `sources.setSrcDirs(...)` 指回它，并且各自仍按未改写的上游原件哈希（`VideoOutput.java` 同为 `c2cd529f…`）做引脚校验。按用户决定「上游机制直接顶掉」，本节的 `android/patches/media_kit_video/`（三个改写副本 + `apply.gradle` + `SurfaceReleaseOrderingTest.java`）与 `tool/test-android-media-kit-patch.ps1`（含 `tool/check.ps1` Lint 段接线）已删除，插件层只留 `patches/media_kit/first-frame.gradle` 一条管线。
+
+**撞车的形态（按两份脚本的源码读出来，未实跑复现）**：两条都接线时，后注册的那条把前一条的改写副本当作同步源（`srcDirs` 已被前一条改指到副本目录），于是要么 `Sync` 的 from 与 into 同为该目录，要么引脚校验对着一份已被改写过的文件失败——表现为 Android 构建直接报错，而不是无声丢补丁。上一轮口头描述里的"静默丢掉一份补丁"说重了，在此更正。
+
+**因此不再成立的：**
+
+| 项 | 现状 |
+| --- | --- |
+| `VideoOutput.dispose()` 的停放（纹理条目 + `Surface` + JNI 引用三项一起排队、6 秒兜底） | 已无，插件回到 `Player.dispose()` 内立即释放 |
+| `VideoOutputManager.releaseNative(handle)` 与通道分支 `VideoOutputManager.ReleaseSurface` | 已无 |
+| `MediaKitVideoOutput.releaseAndroidSurface()` 及引擎里"确认过才另发一次退休"的分支 | 已删除——通道无人处理，留着只会每次都走 `MissingPluginException` 兼容分支 |
+| 上面"本轮检查"里的 gradle `22 assertions passed`、`javap` 读到 `pendingReleases`、APK `classes.dex` 命中 `ReleaseSurface` 三条证据 | 对本树不再成立 |
+| "核心卡住时表面退休晚于核心"这半边保障 | 没有了，只剩"确认核心已放下输出后才发起销毁" |
+
+**仍然保留的 Dart 侧（不受本次替换影响）：** `_SurfacePresence` 挂载计数与 `awaitSurfaceDetached()`；`releaseAndroidOutput()` 的 `detachSurface → stop(3s) → 轮询 current-vo(600ms/20ms)`，仍在 `old.dispose()` 之前执行，只是其返回值不再驱动任何通道调用；`playback_manager.dart:92` 的收口修正。
+
+**锚点预检（本机实测）：** 用一支临时脚本从 `first-frame.gradle` 自身解析出 7 处 `replace()` 锚点与三份引脚哈希（锚点不手抄），逐条在 `pubspec.lock` 指向的 `fd8421d2` Pub 缓存副本里计数，结果 `anchor checks run: 7, failures: 0`。反向对照：把首条锚点末尾多写一个空格，命中数变 0，判据即报缺。注意 `73771ec3` 那份缓存的三份 Java 与 `fd8421d2` 逐字节相同，因此"换一份缓存也能过"不能当作判据有效的证据。真正的 `:media_kit_video` 编译与真机首帧回归仍未跑。

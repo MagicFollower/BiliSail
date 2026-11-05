@@ -26,6 +26,8 @@ enum NavigationBarMode { automatic, bottom, sidebar }
 
 enum SidebarStyle { automatic, expanded, compact }
 
+enum DynamicPageTab { dynamic, videoDynamic }
+
 enum PlayerControlsMode { click, dynamic }
 
 enum AppFontPreference { harmonyOsSans, system, installed }
@@ -67,6 +69,7 @@ final class AppSettings {
     this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
     this.liquidVideoCards = true,
+    this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.allowConcurrentPlayback = false,
     this.font = AppFontPreference.harmonyOsSans,
     this.systemFontFamily = '',
@@ -98,6 +101,7 @@ final class AppSettings {
     this.mediaCdn = MediaCdnPreference.automatic,
     this.videoDecoding = VideoDecodingPreference.automatic,
     this.defaultPlaybackRate = 1.0,
+    this.rememberPlaybackRate = true,
     this.defaultVolume = 100.0,
     this.rememberVolumeGlobally = false,
     this.audioNormalization = AudioNormalizationMode.off,
@@ -139,6 +143,7 @@ final class AppSettings {
     this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
     this.liquidVideoCards = true,
+    this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.allowConcurrentPlayback = false,
     this.videoCardHoverPlayback = true,
     this.highEnergyProgressEnabled = false,
@@ -173,6 +178,7 @@ final class AppSettings {
        mediaCdn = MediaCdnPreference.automatic,
        videoDecoding = VideoDecodingPreference.automatic,
        defaultPlaybackRate = 1.0,
+       rememberPlaybackRate = true,
        defaultVolume = 100.0,
        rememberVolumeGlobally = false,
        audioNormalization = AudioNormalizationMode.off,
@@ -227,6 +233,8 @@ final class AppSettings {
   /// exactly as it was, which is what a runtime that cannot composite glass
   /// over scrolling content needs, the same reason as [liquidGlassDock].
   final bool liquidVideoCards;
+
+  final DynamicPageTab defaultDynamicTab;
   final bool allowConcurrentPlayback;
   bool get concurrentPlaybackEnabled =>
       navigationMode == WorkspaceNavigationMode.multipleTabs &&
@@ -267,6 +275,7 @@ final class AppSettings {
   final MediaCdnPreference mediaCdn;
   final VideoDecodingPreference videoDecoding;
   final double defaultPlaybackRate;
+  final bool rememberPlaybackRate;
   final double defaultVolume;
   final bool rememberVolumeGlobally;
   final AudioNormalizationMode audioNormalization;
@@ -321,6 +330,7 @@ final class AppSettings {
     bool? dockGlassRefraction,
     bool? liquidGlassDock,
     bool? liquidVideoCards,
+    DynamicPageTab? defaultDynamicTab,
     bool? allowConcurrentPlayback,
     AppFontPreference? font,
     String? systemFontFamily,
@@ -352,6 +362,7 @@ final class AppSettings {
     MediaCdnPreference? mediaCdn,
     VideoDecodingPreference? videoDecoding,
     double? defaultPlaybackRate,
+    bool? rememberPlaybackRate,
     double? defaultVolume,
     bool? rememberVolumeGlobally,
     AudioNormalizationMode? audioNormalization,
@@ -391,6 +402,7 @@ final class AppSettings {
     dockGlassRefraction: dockGlassRefraction ?? this.dockGlassRefraction,
     liquidGlassDock: liquidGlassDock ?? this.liquidGlassDock,
     liquidVideoCards: liquidVideoCards ?? this.liquidVideoCards,
+    defaultDynamicTab: defaultDynamicTab ?? this.defaultDynamicTab,
     allowConcurrentPlayback:
         allowConcurrentPlayback ?? this.allowConcurrentPlayback,
     font: font ?? this.font,
@@ -428,6 +440,7 @@ final class AppSettings {
     mediaCdn: mediaCdn ?? this.mediaCdn,
     videoDecoding: videoDecoding ?? this.videoDecoding,
     defaultPlaybackRate: defaultPlaybackRate ?? this.defaultPlaybackRate,
+    rememberPlaybackRate: rememberPlaybackRate ?? this.rememberPlaybackRate,
     defaultVolume: defaultVolume ?? this.defaultVolume,
     rememberVolumeGlobally:
         rememberVolumeGlobally ?? this.rememberVolumeGlobally,

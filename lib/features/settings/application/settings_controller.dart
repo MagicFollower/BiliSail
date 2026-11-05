@@ -99,6 +99,8 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(liquidGlassDock: value));
   Future<void> setLiquidVideoCards(bool value) =>
       update((current) => current.copyWith(liquidVideoCards: value));
+  Future<void> setDefaultDynamicTab(DynamicPageTab value) =>
+      update((current) => current.copyWith(defaultDynamicTab: value));
   Future<void> setAllowConcurrentPlayback(bool value) =>
       update((current) => current.copyWith(allowConcurrentPlayback: value));
   Future<void> setFont(AppFontPreference value) =>
@@ -169,6 +171,8 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(videoDecoding: value));
   Future<void> setDefaultPlaybackRate(double value) =>
       update((current) => current.copyWith(defaultPlaybackRate: value));
+  Future<void> setRememberPlaybackRate(bool value) =>
+      update((current) => current.copyWith(rememberPlaybackRate: value));
   Future<void> setDefaultVolume(double value) =>
       update((current) => current.copyWith(defaultVolume: value));
   Future<void> setRememberVolumeGlobally(bool value) =>

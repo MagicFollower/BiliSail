@@ -349,6 +349,14 @@ final class _SettingsCategoryPageState
                             '使用侧边栏时生效；随窗口宽度模式在 1600 起展开。可用左上角按钮完全收起或展开，保留当前页面和侧栏样式。',
                             style: TextStyle(fontSize: 12),
                           ),
+                          _choices('动态页默认标签', s.defaultDynamicTab, const {
+                            DynamicPageTab.dynamic: '动态',
+                            DynamicPageTab.videoDynamic: '视频动态',
+                          }, controller.setDefaultDynamicTab),
+                          const Text(
+                            '首次进入动态页时打开所选标签，本次运行内保留手动切换；修改此设置后，下次进入动态页生效。',
+                            style: TextStyle(fontSize: 12),
+                          ),
                           _choices('应用主题', s.theme, const {
                             AppThemePreference.system: '跟随系统',
                             AppThemePreference.light: '浅色',
@@ -535,8 +543,14 @@ final class _SettingsCategoryPageState
                               rate: '${rate}x',
                           }, controller.setDefaultPlaybackRate),
                           const Text(
-                            '启动时使用默认倍速；播放页修改后，本次运行中的后续视频继承修改后的倍速',
+                            '启动时使用默认倍速；关闭倍速记忆后，每个新视频、分 P 和剧集都使用此倍速',
                             style: TextStyle(fontSize: 12),
+                          ),
+                          _toggle(
+                            '记忆播放倍速',
+                            s.rememberPlaybackRate,
+                            controller.setRememberPlaybackRate,
+                            '开启后，本次运行中的后续视频继承最近手动选择的倍速；重启应用使用默认倍速',
                           ),
                           _toggle(
                             '全局音量记忆',

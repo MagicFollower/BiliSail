@@ -14,9 +14,9 @@ const androidActiveVideoOutputs = {'gpu', 'gpu-next'};
 /// output. Nothing here is fatal — every step is bounded and a miss only falls
 /// back to the previous behaviour, because the caller still disposes the player.
 ///
-/// Returns whether libmpv was observed to drop its output. The caller may then
-/// retire the parked native surface immediately; otherwise it must leave it to
-/// the plugin's fallback delay, which outlives the core's destroy timer.
+/// Returns whether libmpv was observed to drop its output, so the caller can
+/// tell a confirmed hand-over from a timed-out one. Nothing here is fatal and
+/// the caller always proceeds to dispose the player afterwards.
 Future<bool> releaseAndroidOutput({
   required Future<void> Function() detachSurface,
   required Future<void> Function() stop,

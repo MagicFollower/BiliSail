@@ -686,16 +686,18 @@ void main() {
   }
 
   for (final mode in WorkspaceNavigationMode.values) {
-    for (final (initial, entryWidth) in [
-      ('/', 390.0),
-      ('/', 1280.0),
-      ('/?channel=dynamic', 390.0),
-      ('/?channel=dynamic', 1280.0),
-      ('/?channel=videoDynamic', 390.0),
-      ('/?channel=videoDynamic', 1280.0),
+    for (final (initial, entryWidth, defaultTab) in [
+      for (final tab in DynamicPageTab.values) ...[
+        ('/', 390.0, tab),
+        ('/', 1280.0, tab),
+        ('/?channel=dynamic', 390.0, tab),
+        ('/?channel=dynamic', 1280.0, tab),
+        ('/?channel=videoDynamic', 390.0, tab),
+        ('/?channel=videoDynamic', 1280.0, tab),
+      ],
     ]) {
       _workspaceTestWidgets(
-        'dynamic entry preserves explicit and chosen channels from $initial at $entryWidth in $mode',
+        'dynamic entry preserves explicit and chosen channels from $initial at $entryWidth in $mode with default $defaultTab',
         (tester) async {
           tester.view.devicePixelRatio = 1;
           tester.view.physicalSize = Size(entryWidth, 844);
@@ -723,7 +725,7 @@ void main() {
                     .first
               : find.byKey(ValueKey('workspace-nav-$section'));
           final initialChannel =
-              Uri.parse(initial).queryParameters['channel'] ?? 'dynamic';
+              Uri.parse(initial).queryParameters['channel'] ?? defaultTab.name;
           final chosenChannel = initialChannel == 'dynamic'
               ? 'videoDynamic'
               : 'dynamic';
@@ -731,6 +733,7 @@ void main() {
             (_, tab) => _CounterPage(tab: tab, onDispose: disposed.add),
             navigationMode: mode,
             initialLocation: initial,
+            defaultDynamicTab: defaultTab,
             customCaption: true,
             accountBuilder: (_) => const Icon(Icons.account_circle),
           );
@@ -2065,6 +2068,7 @@ GoRouter _router(
   WorkspaceNavigationMode? navigationMode =
       WorkspaceNavigationMode.multipleTabs,
   String initialLocation = '/',
+  DynamicPageTab defaultDynamicTab = DynamicPageTab.dynamic,
 }) => GoRouter(
   observers: [],
   initialLocation: initialLocation,
@@ -2107,6 +2111,7 @@ GoRouter _router(
                   child: child,
                 )
               : null,
+          defaultDynamicTab: defaultDynamicTab,
           child: child,
         ),
       ),

@@ -120,10 +120,11 @@ void main() {
         await tester.pumpAndSettle();
       }
       expect(find.text('阿里巴巴普惠体 3.0'), findsNothing);
-      final bundled = find.text('HarmonyOS Sans').last;
-      await tester.ensureVisible(bundled);
+      final bundledFont = find.text('HarmonyOS Sans').last;
+      await tester.ensureVisible(bundledFont);
       await tester.pumpAndSettle();
-      await tester.tap(bundled);
+      expect(bundledFont.hitTestable(), findsOneWidget);
+      await tester.tap(bundledFont);
       await tester.pumpAndSettle();
       expect(
         entry == 'appearance'

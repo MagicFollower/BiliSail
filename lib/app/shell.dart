@@ -141,6 +141,7 @@ final class BiliAppShell extends StatefulWidget {
     this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
     this.sidebarCollapsed,
+    this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.onSidebarCollapsedChanged,
     this.accountIdentity,
     this.playbackWindowBuilder,
@@ -155,6 +156,7 @@ final class BiliAppShell extends StatefulWidget {
   final bool dockGlassRefraction;
   final bool liquidGlassDock;
   final bool? sidebarCollapsed;
+  final DynamicPageTab defaultDynamicTab;
   final ValueChanged<bool>? onSidebarCollapsedChanged;
   final Object? accountIdentity;
   final WorkspaceWindowBuilder? playbackWindowBuilder;
@@ -328,6 +330,9 @@ final class _BiliAppShellState extends State<BiliAppShell>
   @override
   void didUpdateWidget(covariant BiliAppShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.defaultDynamicTab != oldWidget.defaultDynamicTab) {
+      _lastChannels.remove(WorkspaceSection.dynamic);
+    }
     if (widget.accountIdentity != oldWidget.accountIdentity) {
       _tabKeys.clear();
       _viewStorage.clear();
@@ -1328,7 +1333,13 @@ final class _BiliAppShellState extends State<BiliAppShell>
               : channels.first,
         );
       case WorkspaceSection.dynamic:
-        _selectChannel(_lastChannels[section] ?? HomeChannel.dynamic);
+        _selectChannel(
+          _lastChannels[section] ??
+              switch (widget.defaultDynamicTab) {
+                DynamicPageTab.dynamic => HomeChannel.dynamic,
+                DynamicPageTab.videoDynamic => HomeChannel.videoDynamic,
+              },
+        );
       case WorkspaceSection.live:
         _selectChannel(HomeChannel.live);
       case WorkspaceSection.mine:
