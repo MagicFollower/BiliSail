@@ -17,7 +17,6 @@ import 'app_notice.dart';
 import 'emoticon_picker_dialog.dart';
 import 'network_avatar.dart';
 import 'scroll_collapsing_header.dart';
-import 'video_card_surface.dart';
 import 'bili_icons.dart';
 import 'comment_rich_content.dart';
 import 'comment_text_styles.dart';
@@ -1129,164 +1128,144 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
   // while pagination can reuse the rich text, images and author header.
   Widget _buildContent(BuildContext context) {
     final theme = Theme.of(context), c = widget.comment;
-    final surface = videoCardSurfaceOf(context);
     final onOpenUser = widget.onOpenUser;
     final onOpenLink = widget.onOpenLink;
     final onSeek = widget.onSeek;
     final styles = CommentTextStyles(theme);
     return Padding(
       padding: const EdgeInsets.only(top: 12),
-      // One board per comment. Flat keeps the row exactly as it was - no fill,
-      // no extra inset - and the node stays in the tree either way so a
-      // settings flip cannot rebuild the row and move the list (F82).
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        padding: EdgeInsets.all(surface.enabled ? surface.inset : 0),
-        decoration: liquidBoardDecoration(
-          surface: surface,
-          scheme: theme.colorScheme,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            InkWell(
-              onTap: c.authorId?.isValid == true && onOpenUser != null
-                  ? () => onOpenUser(c.authorId!)
-                  : null,
-              child: NetworkAvatar(
-                url: c.avatarUrl,
-                name: c.author,
-                radius: 15,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CommentAuthorHeader(comment: c, onOpenUser: onOpenUser),
-                  const SizedBox(height: 8),
-                  CommentRichContent(
-                    comment: c,
-                    onOpenUser: onOpenUser,
-                    onOpenLink: onOpenLink,
-                    onSeek: onSeek,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: c.authorId?.isValid == true && onOpenUser != null
+                ? () => onOpenUser(c.authorId!)
+                : null,
+            child: NetworkAvatar(url: c.avatarUrl, name: c.author, radius: 15),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CommentAuthorHeader(comment: c, onOpenUser: onOpenUser),
+                const SizedBox(height: 8),
+                CommentRichContent(
+                  comment: c,
+                  onOpenUser: onOpenUser,
+                  onOpenLink: onOpenLink,
+                  onSeek: onSeek,
+                ),
+                if (c.visibility == CommentVisibility.restricted)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('暂未公开', style: styles.metadata),
                   ),
-                  if (c.visibility == CommentVisibility.restricted)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text('暂未公开', style: styles.metadata),
-                    ),
-                  Consumer(
-                    builder: (context, ref, _) {
-                      final busy = _busy(ref);
-                      return Row(
-                        children: [
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            onPressed: busy ? null : _like,
-                            iconSize: 16,
-                            color: c.liked
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.outline,
-                            icon: Icon(
-                              BiliIcons.like,
-                              semanticLabel: c.liked ? '取消点赞评论' : '点赞评论',
-                            ),
+                Consumer(
+                  builder: (context, ref, _) {
+                    final busy = _busy(ref);
+                    return Row(
+                      children: [
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          onPressed: busy ? null : _like,
+                          iconSize: 16,
+                          color: c.liked
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.outline,
+                          icon: Icon(
+                            BiliIcons.like,
+                            semanticLabel: c.liked ? '取消点赞评论' : '点赞评论',
                           ),
-                          Text('${c.likeCount}', style: styles.action),
-                          const SizedBox(width: 12),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            onPressed: busy ? null : _reply,
-                            iconSize: 17,
-                            color: theme.colorScheme.outline,
-                            icon: const Icon(
-                              BiliIcons.reply,
-                              semanticLabel: '回复评论',
+                        ),
+                        Text('${c.likeCount}', style: styles.action),
+                        const SizedBox(width: 12),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          onPressed: busy ? null : _reply,
+                          iconSize: 17,
+                          color: theme.colorScheme.outline,
+                          icon: const Icon(
+                            BiliIcons.reply,
+                            semanticLabel: '回复评论',
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                if (widget.preview &&
+                    (c.replyCount > 0 || c.replies.isNotEmpty))
+                  Consumer(
+                    builder: (context, ref, child) => InkWell(
+                      onTap: _busy(ref) ? null : _open,
+                      borderRadius: BorderRadius.circular(5),
+                      child: child,
+                    ),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest
+                            .withValues(alpha: .55),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ...c.replies
+                              .take(2)
+                              .map(
+                                (r) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      InkWell(
+                                        onTap:
+                                            r.authorId?.isValid == true &&
+                                                onOpenUser != null
+                                            ? () => onOpenUser(r.authorId!)
+                                            : null,
+                                        child: Text(
+                                          '${r.author}：',
+                                          style: styles.previewAuthor,
+                                        ),
+                                      ),
+                                      CommentRichContent(
+                                        comment: r,
+                                        onOpenUser: onOpenUser,
+                                        compact: true,
+                                        onOpenLink: onOpenLink,
+                                        onSeek: onSeek,
+                                      ),
+                                      if (r.visibility ==
+                                          CommentVisibility.restricted)
+                                        Text('暂未公开', style: styles.metadata),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          Text(
+                            '共 ${c.replyCount} 条回复 ›',
+                            style: styles.metadata.copyWith(
+                              color: theme.colorScheme.primary,
                             ),
                           ),
                         ],
-                      );
-                    },
+                      ),
+                    ),
                   ),
-                  if (widget.preview &&
-                      (c.replyCount > 0 || c.replies.isNotEmpty))
-                    Consumer(
-                      builder: (context, ref, child) => InkWell(
-                        onTap: _busy(ref) ? null : _open,
-                        borderRadius: BorderRadius.circular(5),
-                        child: child,
-                      ),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerHighest
-                              .withValues(alpha: .55),
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ...c.replies
-                                .take(2)
-                                .map(
-                                  (r) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 4),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        InkWell(
-                                          onTap:
-                                              r.authorId?.isValid == true &&
-                                                  onOpenUser != null
-                                              ? () => onOpenUser(r.authorId!)
-                                              : null,
-                                          child: Text(
-                                            '${r.author}：',
-                                            style: styles.previewAuthor,
-                                          ),
-                                        ),
-                                        CommentRichContent(
-                                          comment: r,
-                                          onOpenUser: onOpenUser,
-                                          compact: true,
-                                          onOpenLink: onOpenLink,
-                                          onSeek: onSeek,
-                                        ),
-                                        if (r.visibility ==
-                                            CommentVisibility.restricted)
-                                          Text('暂未公开', style: styles.metadata),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                            Text(
-                              '共 ${c.replyCount} 条回复 ›',
-                              style: styles.metadata.copyWith(
-                                color: theme.colorScheme.primary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  // The board's own edge and the gap between boards do the
-                  // separating; a hairline inside a card reads as a defect.
-                  if (!surface.enabled) ...[
-                    const SizedBox(height: 14),
-                    Divider(
-                      height: 1,
-                      color: theme.dividerColor.withValues(alpha: .35),
-                    ),
-                  ],
-                ],
-              ),
+                const SizedBox(height: 14),
+                Divider(
+                  height: 1,
+                  color: theme.dividerColor.withValues(alpha: .35),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
