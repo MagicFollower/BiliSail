@@ -857,4 +857,28 @@ C 的落地要点：
 
 **已核：** `pwsh tool/check.ps1 -Stage Lint` 全绿——CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25；五个工程 `dart format` 共 706/105/45/20/5 文件 **0 改动**；`flutter analyze` No issues found。**上游补丁引脚与锚点做过本机预检**：一支临时脚本从 `first-frame.gradle` 自身解析出 3 份引脚哈希与 7 处 `replace()` 锚点（锚点不手抄），在 `pubspec.lock` 指向的 `fd8421d2` Pub 缓存副本里逐条计数，结果 `anchor checks run: 7, failures: 0`；反向对照把首条锚点末尾多写一个空格，命中数变 0 即报缺。注意 `73771ec3` 那份缓存的三份 Java 与 `fd8421d2` 逐字节相同，所以"换份缓存也通过"不能当判据有效的证据。首轮 `tool/check.ps1` 在 root analyze 停一次（上述坑 2 的 `unused_local_variable`），RootTests 停 4 项：`workspace_router_test` 三条（上游新用例自带 `prefix` 点位，不知道本分支窄布局是玻璃 Dock，改成本文件已有的 `primaryNavigationTarget(section, width)`）与 `default_dynamic_tab_test` 一条（上游把它自己树的快照号 37、SQLite schema 3 写死，本分支为 40 与 6）。定向复跑两个文件 **92 项通过**。随后 `pwsh tool/check.ps1 -Stage All -SkipPub` 三段全绿——Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25；五工程 `dart format` 共 706/105/45/20/5＝**881 文件 0 改动**；`flutter analyze` No issues found）、RootTests **4239 通过、13 跳过**、PackageTests bili_api **586**／bili_player **157**／bili_danmaku **161**／bili_mux **5 通过 10 跳过**（未设 `BILI_MUX_LIBRARY`，按既有口径不算原生通过）。对照 F83 那轮的 4174／bili_api 547／bili_player 153：增量来自上游用例，`check.ps1` 的 Lint 段少了一项（补丁脚本 5 条判据随删除消失）。
 
-**未验证：** Android 构建与真机完全没跑——`:media_kit_video:compileReleaseJavaWithJavac`、`:media_kit_video:check`（上游没给这条打点的回归任务）、`tool/test-android-video-startup.ps1` 与 `integration_test/android_video_startup_test.dart` 都要设备和 SDK；首帧遮罩的实际观感、退出播放页的卡死／闪退在撤掉原生停放后是否复现，均未观测量。macOS/Windows/Linux/iOS 因平台收敛不在本树，上游 `2e9947e` 与 `f464c55` 的 macOS 半条按口径未采。真实账号流程（稍后再看增删、playurl 重试）没有在线验证，写操作只由明确用户动作触发的规则未变。上游带来的 `tool/test-android-video-startup.ps1` 未接进 `check.ps1`，是否要接属于下一轮决定。
+**未验证（F85 之后更正）：** 构建侧本轮已跑通一次真实 Release 出包（`android/bin/build-apk.cmd` → `EXIT=0`），产物级证据顺带把首帧补丁坐实了：`build/media_kit_video/bilisail-patched-java/` 里 `VideoOutput.java` 含 `waitForVideoFrame` 1 处／`notifyVideoFrame` 4 处，`VideoOutputManager.java` 含 `waitForVideoFrame` 2 处，`MediaKitVideoPlugin.java` 含 `waitForVideoFrame` 1 处，而三份里 `ReleaseSurface` 均为 0 次——上游首帧改写确实进了 `compileReleaseJavaWithJavac` 的输入，本地停放通路确已从产物消失。仍没跑的是 `:media_kit_video:check`（上游没给这条打点的回归任务）、`tool/test-android-video-startup.ps1` 与 `integration_test/android_video_startup_test.dart`（都要设备）；首帧遮罩的实际观感、退出播放页的卡死／闪退在撤掉原生停放后是否复现，均未观测量。macOS/Windows/Linux/iOS 因平台收敛不在本树，上游 `2e9947e` 与 `f464c55` 的 macOS 半条按口径未采。真实账号流程（稍后再看增删、playurl 重试）没有在线验证，写操作只由明确用户动作触发的规则未变。上游带来的 `tool/test-android-video-startup.ps1` 未接进 `check.ps1`，是否要接属于下一轮决定。
+
+## F85：Android 一键打包卡在 mux 的宿主编译器上，开关是 PATH 顺序
+
+**现象：** 用户报告 `android\bin\build-apk.cmd` 失败，`tool\build-download-mux.ps1:49` 抛 `Download mux component build failed`；能看到的只有 FFmpeg configure 的两行——`gcc -std=c11 -c -o /tmp/ffconf.xxx/test.o /tmp/ffconf.xxx/test.c` 紧跟 `Host compiler lacks C11 support`，gcc 自己一句错误都没吐。
+
+**定位（三层，逐层实测）：**
+
+1. `packages/bili_mux/tool/build.sh:4` 的平台闸门按 `${OSTYPE}` 匹配 `msys*|mingw*`。本机 `C:\msys64\usr\bin\bash.exe` 实测 `OSTYPE=cygwin`，而同一个 shell 里 `uname -s=MINGW64_NT-10.0-26300`、`uname -o=Msys` → 闸门不进，`/ucrt64/bin` 不再由脚本注入。这一层**不是本次的触发点**：`build-apk.cmd` 自己 `export PATH=...:/ucrt64/bin:$PATH` 并写了个 `exec /ucrt64/bin/gcc.exe "$@"` 的 shim，所以 gcc 找得到；但直接跑 `tool/build-download-mux.ps1` 就必挂。
+2. 真正的开关在 android-arm64 分支的 `export PATH="$toolchain:$PATH"`——NDK 的 `bin` 排到 `/ucrt64/bin` **前面**后，宿主 `gcc -c` 以 rc=1 且**零 stderr** 失败。同一条命令三挡对照：NDK 在前 `rc=1`；`/ucrt64/bin` 在前 `rc=0`；PATH 里没有 NDK `rc=0`。机制：`ldd` 显示 `cc1.exe` 按 simple name 依赖 `libwinpthread-1.dll`，NDK 的 `bin` 里有一份同名不同构建的它，而 `cc1.exe` 不在 `/ucrt64/bin`（其 app dir 是 `lib/gcc/x86_64-w64-mingw32/16.2.0/`），于是解析落到 PATH 顺序，先命中的是 NDK 那份。`build-apk.cmd` 的 shim 只治"找得到 gcc"，治不了子进程的 DLL 解析。
+3. mux 修好后暴露下一件事：`sqlite3` 3.7.0 的 Dart build hook 直连 GitHub 取 `libsqlite3.arm64.android.so` 超时。实测直连 `HTTP=000`，`gh-proxy.com` 与 `ghfast.top` 都 `200`／1,831,784 字节／以 `0x7f ELF` 开头，取回文件的 sha256 与包内 pin `0c2d3bfc8c87abce…` 逐字相同。
+
+**决定：**
+
+| 项 | 判定 | 依据 |
+| 闸门改用 `uname -s` 的 `MINGW*`／`MSYS*` | **采用** | 与同文件下面 NDK host 探测同一个模式，本机实测命中；不再依赖 bash 构建期写死的 `OSTYPE` |
+| NDK `bin` **追加**在 PATH 末尾 | **采用** | configure 的 `--cc/--cxx/--ar/--ranlib` 与 `llvm-strip` 全是绝对路径，没有任何东西需要这个目录前置；追加后宿主 `cc1.exe` 的 DLL 解析回到 ucrt64 |
+| 再给 gcc 套一层 shim | **弃** | `build-apk.cmd` 里已经有，且不解决定位 2 |
+| 把 sqlite3 的取回固化成仓库脚本或改 pubspec 镜像 | **本轮未做** | 只把镜像取回、哈希与 pin 相符的副本放进 hook 的共享缓存 `.dart_tool/hooks_runner/shared/sqlite3/build/download-0c2d3bfc/libsqlite3.so`（目录名＝pin 前 8 位，hook 的规则是"缓存命中且哈希相符即不联网"）。这是构建缓存，不入库、不动配置；**新克隆或别的机器仍会撞直连超时**，要不要做成与 `tool/android-libmpv-assets.ps1` 同型的常驻预置留给用户定 |
+
+**改动：** `packages/bili_mux/tool/build.sh` 两处（闸门判据、PATH 追加顺序，各带一句成因注释）；`packages/bili_mux/README.md` 的 Android 段补一条"NDK 目录只能追加"的顺序说明。
+
+**已核：** 三条对照实验与 `ldd` 撞名检查都是实跑。`pwsh tool/build-download-mux.ps1 -Target android-arm64` → `Built android-arm64: libbili_mux.so`、`EXIT=0`，`configure.log` 里 host C compiler 为 `gcc`、目标 C compiler 为 NDK clang。为确认修的是用户那条路，删掉生成资产（`native/prebuilt/` 在 `.gitignore` 内）与 `build/download_mux/android-arm64/` 后重跑 `cmd //c android\bin\build-apk.cmd < /dev/null`：日志出现 `[4/6] Building the bili_mux Android arm64 component...` → `Built android-arm64: libbili_mux.so`（1,396,248 字节）→ `√ Built ... app-arm64-v8a-release.apk (60.8MB)` → `EXIT=0`；交付 `build/development/android-arm64/BiliSail-test-arm64-release.apk`，身份 `dev.bilisail.bilisail.test`／「BiliSail 测试版」／`6.2.6+6`（versionCode 62606，即 F84 抬上来的号）、`local-development-debug-key` 证书 `6d860dee…`、APK SHA-256 `403eec01…`。源码缓存 `build/download_mux/source` 未删，没有为验证去重新下载 17 MB 源码。
+
+**未验证：** 新 APK 未安装，真机零取样——F83／F84 列的"退出播放页卡死／闪退"与首帧遮罩观感仍没有设备侧观测；APK 的 `classes.dex` 没做 grep 复核；"删掉 `.dart_tool` 后重跑"未测，所以 sqlite3 那条只证明当前缓存能被 hook 复用，没证明冷目录下也能；Gradle 报的 `flutter_volume_controller` 等插件 Built-in Kotlin（KGP）弃用警告本轮未处理，两次构建均未受影响。

@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 make_tool=make
-if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* ]]; then
+# Bash on MSYS2 reports OSTYPE=cygwin in some builds, so the platform gate uses
+# the same uname pattern as the NDK host probe below.
+case "$(uname -s)" in
+  MINGW* | MSYS*) windows_host=true ;;
+  *) windows_host=false ;;
+esac
+if [[ "$windows_host" == true ]]; then
   export PATH="/ucrt64/bin:/usr/bin:$PATH"
   # FFmpeg Makefiles contain MSYS paths; native Windows make cannot read them.
   make_tool=/usr/bin/make
@@ -59,7 +65,13 @@ case "$target" in
       *) echo 'Unsupported NDK host' >&2; exit 1 ;;
     esac
     toolchain="$ndk/toolchains/llvm/prebuilt/$host/bin"
-    export PATH="$toolchain:$PATH"
+    # Append, never prepend: the configure probe below still needs a *host*
+    # compiler, and the NDK bin carries its own libwinpthread-1.dll. Windows
+    # resolves that simple name for cc1.exe from PATH, so an earlier NDK entry
+    # silently kills the host compile (rc=1, no stderr) and FFmpeg reports
+    # "Host compiler lacks C11 support". Every NDK tool here is passed by
+    # absolute path, so nothing needs the directory to lead PATH.
+    export PATH="$PATH:$toolchain"
     cc="$toolchain/clang"
     cxx="$toolchain/clang++"
     strip_tool="$toolchain/llvm-strip"

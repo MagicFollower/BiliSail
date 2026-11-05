@@ -21,6 +21,9 @@
 
 # Android：固定 NDK 28.2.13676358，API 24，16 KiB ELF 页对齐。
 # 可从 ANDROID_NDK_HOME、ANDROID_HOME 或 android/local.properties 找到 SDK。
+# configure 仍需一个宿主编译器：NDK 的 bin 与 UCRT64 各带一份不同构建的
+# libwinpthread-1.dll，cc1.exe 按 simple name 从 PATH 解析，所以 NDK 目录只能追加在
+# PATH 末尾；排在前面时宿主探测静默退出（rc=1、无输出），报成 Host compiler lacks C11 support。
 ./tool/build-download-mux.ps1 -Target android-arm64
 
 # macOS：在 Apple Silicon / Xcode 主机执行，最低 macOS 12。
