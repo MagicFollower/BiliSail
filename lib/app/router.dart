@@ -125,7 +125,6 @@ GoRouter createBiliRouter({
             defaultDynamicTab: settings.defaultDynamicTab,
             appIcon: settings.appIcon,
             navigationBarMode: settings.navigationBarMode,
-            dockGlassRefraction: settings.dockGlassRefraction,
             liquidGlassDock: settings.liquidGlassDock,
             sidebarStyle: settings.sidebarStyle,
             sidebarCollapsed: settings.sidebarCollapsed,

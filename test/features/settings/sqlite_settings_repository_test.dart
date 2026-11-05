@@ -42,10 +42,10 @@ void main() {
     expect(
       (jsonDecode((await database.readSetting('preferences.v1'))!)
           as Map)['schemaVersion'],
-      // Upstream wrote 37 for its tab/rate keys; the merged snapshot carries
-      // them plus this branch's own three settings, so the number moved to 40
-      // (F84).
-      40,
+      // Upstream wrote 37 for its tab/rate keys; the merged snapshot carried
+      // them plus this branch's own keys at 40 (F84), and 41 is recorded after
+      // `dockGlassRefraction` was dropped.
+      41,
     );
     await repository.save(const AppSettings.defaults());
     settings = await repository.load();
@@ -203,7 +203,7 @@ void main() {
         final snapshot = jsonDecode(
           (await database.readSetting('preferences.v1'))!,
         );
-        expect(snapshot['schemaVersion'], 40);
+        expect(snapshot['schemaVersion'], 41);
         expect(snapshot['liveStreamPreference'], preference.toJson());
       }
       await repository.save(const AppSettings.defaults());
@@ -320,7 +320,7 @@ void main() {
       for (final snapshot in <Map<String, Object?>>[
         // v36 is the snapshot the dock toggle was added after: it has no key at
         // all, and an upgrade must not silently turn the glass bar off.
-        {'schemaVersion': 36, 'dockGlassRefraction': false},
+        {'schemaVersion': 36, 'liquidVideoCards': false},
         for (final invalid in <Object?>[null, 'true', 1, <Object>[]])
           {'schemaVersion': 36, 'liquidGlassDock': invalid},
       ]) {

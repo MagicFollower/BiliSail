@@ -93,8 +93,6 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(sidebarStyle: value));
   Future<void> setSidebarCollapsed(bool value) =>
       update((current) => current.copyWith(sidebarCollapsed: value));
-  Future<void> setDockGlassRefraction(bool value) =>
-      update((current) => current.copyWith(dockGlassRefraction: value));
   Future<void> setLiquidGlassDock(bool value) =>
       update((current) => current.copyWith(liquidGlassDock: value));
   Future<void> setLiquidVideoCards(bool value) =>

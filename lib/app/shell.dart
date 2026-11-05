@@ -138,7 +138,6 @@ final class BiliAppShell extends StatefulWidget {
     this.navigationMode,
     this.sidebarStyle = SidebarStyle.automatic,
     this.navigationBarMode = NavigationBarMode.automatic,
-    this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
     this.sidebarCollapsed,
     this.defaultDynamicTab = DynamicPageTab.dynamic,
@@ -153,7 +152,6 @@ final class BiliAppShell extends StatefulWidget {
   final WorkspaceNavigationMode? navigationMode;
   final SidebarStyle sidebarStyle;
   final NavigationBarMode navigationBarMode;
-  final bool dockGlassRefraction;
   final bool liquidGlassDock;
   final bool? sidebarCollapsed;
   final DynamicPageTab defaultDynamicTab;
@@ -1841,12 +1839,10 @@ final class _BiliAppShellState extends State<BiliAppShell>
         // (watch-later and favourites sit under 我的), so the dock has to report
         // that tap for the guard below to be able to return to /me.
         notifyOnSelectedTap: true,
-        // medium drops the rim refraction and the liquid lens but keeps the
-        // frosted glass and the selection capsule, for runtimes whose GPU
-        // hands the shader a backdrop it cannot map.
-        quality: widget.dockGlassRefraction
-            ? LiquidDockQuality.high
-            : LiquidDockQuality.medium,
+        // Refraction is always on now: a runtime that cannot map the backdrop
+        // gets the whole glass dock switched off by `liquidGlassDock`, which
+        // falls back to the Material bar, rather than a half-quality dock.
+        quality: LiquidDockQuality.high,
         items: [
           for (final item in destinations)
             LiquidDockItem(

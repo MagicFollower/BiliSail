@@ -66,7 +66,6 @@ final class AppSettings {
     this.navigationBarMode = NavigationBarMode.automatic,
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
-    this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
     this.liquidVideoCards = true,
     this.defaultDynamicTab = DynamicPageTab.dynamic,
@@ -140,7 +139,6 @@ final class AppSettings {
     this.navigationBarMode = NavigationBarMode.automatic,
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
-    this.dockGlassRefraction = true,
     this.liquidGlassDock = true,
     this.liquidVideoCards = true,
     this.defaultDynamicTab = DynamicPageTab.dynamic,
@@ -214,12 +212,6 @@ final class AppSettings {
   final NavigationBarMode navigationBarMode;
   final SidebarStyle sidebarStyle;
   final bool sidebarCollapsed;
-
-  /// Glass refraction on the floating dock. A backdrop-bending shader needs a
-  /// driver that hands back the backdrop in the space Flutter computed; on
-  /// translated GPU stacks (HarmonyOS 卓易通 container) it does not, and the
-  /// lens repaints the labels underneath it. Off keeps frosted glass only.
-  final bool dockGlassRefraction;
 
   /// Whether the narrow layout's bottom bar is the liquid glass dock. Off falls
   /// back to the Material `NavigationBar` the dock replaced, which is what a
@@ -327,7 +319,6 @@ final class AppSettings {
     NavigationBarMode? navigationBarMode,
     SidebarStyle? sidebarStyle,
     bool? sidebarCollapsed,
-    bool? dockGlassRefraction,
     bool? liquidGlassDock,
     bool? liquidVideoCards,
     DynamicPageTab? defaultDynamicTab,
@@ -399,7 +390,6 @@ final class AppSettings {
     navigationBarMode: navigationBarMode ?? this.navigationBarMode,
     sidebarStyle: sidebarStyle ?? this.sidebarStyle,
     sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
-    dockGlassRefraction: dockGlassRefraction ?? this.dockGlassRefraction,
     liquidGlassDock: liquidGlassDock ?? this.liquidGlassDock,
     liquidVideoCards: liquidVideoCards ?? this.liquidVideoCards,
     defaultDynamicTab: defaultDynamicTab ?? this.defaultDynamicTab,

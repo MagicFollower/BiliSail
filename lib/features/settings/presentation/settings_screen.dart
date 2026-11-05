@@ -329,12 +329,6 @@ final class _SettingsCategoryPageState
                             '窄窗口下底部的悬浮液态玻璃导航栏，额外提供历史与下载入口。关闭后改用系统样式的底栏（历史与下载改从头像菜单进入），个别无法正确合成玻璃效果的运行环境可关掉本项。',
                           ),
                           _toggle(
-                            '底栏玻璃折射',
-                            s.dockGlassRefraction,
-                            controller.setDockGlassRefraction,
-                            '悬浮底栏沿边缘弯折背景，形成液态玻璃效果。个别安卓兼容运行环境（如鸿蒙卓易通）会把折射带画成错位的文字重影，可关闭本项，只保留磨砂玻璃与选中胶囊。',
-                          ),
-                          _toggle(
                             '视频条目液态卡片',
                             s.liquidVideoCards,
                             controller.setLiquidVideoCards,

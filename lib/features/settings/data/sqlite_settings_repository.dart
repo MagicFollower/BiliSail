@@ -88,7 +88,6 @@ class SqliteSettingsRepository implements SettingsRepository {
               .firstOrNull ??
           NavigationBarMode.automatic,
       sidebarCollapsed: boolean('sidebarCollapsed', false),
-      dockGlassRefraction: boolean('dockGlassRefraction', true),
       liquidGlassDock: boolean('liquidGlassDock', true),
       liquidVideoCards: boolean('liquidVideoCards', true),
       defaultDynamicTab:
@@ -257,16 +256,16 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 39 was this branch's liquid-card snapshot; upstream moved to 37 for
-        // its default-dynamic-tab and rate-memory keys. The merged snapshot
-        // carries both sets, so the number takes one step past either.
-        'schemaVersion': 40,
+        // 40 carried upstream's default-dynamic-tab and rate-memory keys next to
+        // this branch's dock/liquid-card keys. 41 records that the
+        // `dockGlassRefraction` key is gone; the reader never branches on this
+        // number, it only states what the payload holds (F73 口径).
+        'schemaVersion': 41,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
         'sidebarStyle': value.sidebarStyle.name,
         'sidebarCollapsed': value.sidebarCollapsed,
-        'dockGlassRefraction': value.dockGlassRefraction,
         'liquidGlassDock': value.liquidGlassDock,
         'liquidVideoCards': value.liquidVideoCards,
         'defaultDynamicTab': value.defaultDynamicTab.name,

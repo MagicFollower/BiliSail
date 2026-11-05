@@ -75,9 +75,9 @@ void main() {
         (await database.readSetting('preferences.v1'))!,
       ) as Map<String, Object?>;
       expect(snapshot['defaultDynamicTab'], tab.name);
-      // Upstream wrote 37 for this key; the merged snapshot also carries this
-      // branch's dock/liquid-card keys, so the number moved to 40 (F84).
-      expect(snapshot['schemaVersion'], 40);
+      // Upstream wrote 37 for this key; the merged snapshot carries it plus
+      // this branch's own keys, so the number is 41 (F84, then F88).
+      expect(snapshot['schemaVersion'], 41);
       expect(database.schemaVersion, 6);
       container.invalidate(settingsControllerProvider);
       expect(

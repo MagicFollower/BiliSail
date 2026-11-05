@@ -549,7 +549,7 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 **卓易通折射错位与失效域收敛（2026-11-02）**：按用户反馈，同一构建在 Android 实机正常，在鸿蒙卓易通里出现「按下选中项整块变白、松手闪动几下后原图标恢复」与「页面上下滑动时 Dock 边缘出现割裂的彩色文字重影」。定位到折射层：它是叠在磨砂玻璃 `BackdropFilter` 之上的第二个 `BackdropFilter(ImageFilter.shader)`，着色器末尾硬写 `frag_color.a = 1.0`，即胶囊区域内每个像素都由采样结果覆盖；它"看起来透明"完全依赖内部区域采到自己脚下那一像素，而该矩形由 Dart 侧按 `localToGlobal(Offset.zero) * devicePixelRatio` 算出。重影只在运动时出现、静止即消失，指向该环境交回的 backdrop 不是当前帧的合成结果（或其原点／缩放与 Flutter 算出的不一致），于是内部采到陈旧／错位内容，把选中的图标与文字整块盖掉；松手后 `strength` 归零、采样退回原地，才又看见图标。官方同类结构记录见 flutter/flutter#187820（玻璃 tab bar 上叠 shader backdrop，真机采到含自身输出的上一帧并逐帧累积成不透明白，Android 未复现、以 waiting for response 关闭未修）与 #192988（无 framebuffer fetch 的配置——iOS 模拟器、PowerVR、GLES 上的 Adreno——才走离屏 subpass 取 backdrop，该路径曾按 `trunc(w)/w` 错位导致逐帧重采样）。环境侧：卓易通按社区资料是 iSulad 容器 + 裁剪安卓 12／API 31 镜像 + 虚拟化图形通道，而官方文档写明不支持 Vulkan 时 Impeller 回落到 OpenGL 渲染器，与本仓实机记录的 Impeller Vulkan 不是同一条 backdrop 路径；本机构建未在该环境取证，后端归属仍待实测定。
 
-修法分两层。组件 `liquid_dock_navi`：折射带改为按 `band = rim × (1 − smoothstep(−1, 0, d))` 生效，并把混合基色换成只依赖 fragCoord 与纹理尺寸、不读 `u_rect` 的自身位置透射——后端映射正确时与旧结果逐像素等价（代价是最外一个物理像素不再折射），映射错误时透镜变成"不画"而不是"盖掉 UI"，同时打断自身输出回灌下一帧的累积。应用：新增 `AppSettings.dockGlassRefraction`（默认开，偏好 JSON 快照 `schemaVersion` 35 → 36，SQLite schema 不变），入口在设置 → 外观「底栏玻璃折射」，关闭即取组件既有的 `LiquidDockQuality.medium` 档（保留磨砂玻璃与选中胶囊，去掉折射带与透镜）。自动识别卓易通需要读 `Build.*` 的原生通道，本次未做，只提供手动开关。
+修法分两层。组件 `liquid_dock_navi`：折射带改为按 `band = rim × (1 − smoothstep(−1, 0, d))` 生效，并把混合基色换成只依赖 fragCoord 与纹理尺寸、不读 `u_rect` 的自身位置透射——后端映射正确时与旧结果逐像素等价（代价是最外一个物理像素不再折射），映射错误时透镜变成"不画"而不是"盖掉 UI"，同时打断自身输出回灌下一帧的累积。应用：新增 `AppSettings.dockGlassRefraction`（默认开，偏好 JSON 快照 `schemaVersion` 35 → 36，SQLite schema 不变），入口在设置 → 外观「底栏玻璃折射」，关闭即取组件既有的 `LiquidDockQuality.medium` 档（保留磨砂玻璃与选中胶囊，去掉折射带与透镜）。自动识别卓易通需要读 `Build.*` 的原生通道，本次未做，只提供手动开关。**2026-11-05 更正（F88）：** 这条手动开关与 `dockGlassRefraction` 键已删除，折射恒为 `LiquidDockQuality.high`；卓易通那类环境的退路只剩「液态玻璃底栏」总开关（关掉即回 Material 底栏）。
 
 已核：改动后的 `liquid_lens.frag` 用 SDK 的 `impellerc` 按 `--sksl --runtime-stage-gles --runtime-stage-gles3 --runtime-stage-vulkan` 编译通过，uniform 反射顺序与 `28e9b7a` 一致（Dart 侧 `setFloat(2..12)` 索引不变）；组件 18 项测试通过；根应用设置层与 Dock 相关 255 项测试通过、`flutter analyze` 无问题。未验证：着色器改动无法在 widget 测试覆盖（测试环境走 Skia 降级路径），Android 实机外观与卓易通上的实际表现均需重新构建后由用户复验。
 
@@ -608,7 +608,7 @@ Android 复用既有媒体服务，暂停／换源期间不撤下前台服务，
 
 **新组件 `lib/shared/ui/liquid_pull_refresh.dart`。** 监听 `OverscrollNotification`（要求 `dragDetails != null` 且在前缘）累加**未阻尼的手指位移**，`progress = 已拉 / triggerDistance`（默认 96 逻辑像素）；圆环扫过角度就是 progress，满一圈进入 armed，`ScrollEndNotification` 到达时 armed 才调 `onRefresh`，未闭合则回弹且不发请求。刷新中圆盘停在 `settleOffset` 显示四分之一圈行进弧，完成后收起。`_running` 保证一次刷新进行中任何新手势都不起第二次。
 
-**玻璃质感用分层填充，不用 `BackdropFilter`。** 指示器每跟手一帧都要重绘，模糊层正好落在这个手势最需要掉帧的窗口上（F69 在卓易通的 GLES 上已吃过 backdrop 的亏）。现在画的是：径向渐变的磨砂盘 + 1px 亮边 + 轨道环 + 进度弧（armed 换 tertiary 色）。真 blur 若要做，应当只在静止态（armed / refreshing）启用，并复用「底栏玻璃折射」那类质量闸门。
+**玻璃质感用分层填充，不用 `BackdropFilter`。** 指示器每跟手一帧都要重绘，模糊层正好落在这个手势最需要掉帧的窗口上（F69 在卓易通的 GLES 上已吃过 backdrop 的亏）。现在画的是：径向渐变的磨砂盘 + 1px 亮边 + 轨道环 + 进度弧（armed 换 tertiary 色）。真 blur 若要做，应当只在静止态（armed / refreshing）启用，并复用「底栏玻璃折射」那类质量闸门（**F88 已把该闸门删除**，折射常开，这类"降一档"的退路不再存在）。
 
 **保留的即时入口。** 键盘刷新快捷键与右下角浮动刷新按钮仍直接调 `controller.refresh()`，是"立刻刷新"；下拉手势是"闭合才刷新"。两者语义不同是有意的：前者是给知道自己在做什么的入口，后者要防的是误触。
 
@@ -716,7 +716,7 @@ C 的落地要点：
 
 **决定一：「液态」用绘制，不用 `BackdropFilter`。** 与 F74（下拉圆盘）、F77（顶部提示卡）同一条约束：卡片随列表逐帧重绘，模糊层等于每个可见卡片每帧重新采样一次背景；卓易通那类翻译 GPU 栈上 backdrop 已经证明过会画错（F69 追加）。实际画的是对角渐变的半透明填充 + 1px 亮边（hover 加亮、焦点换 primary）+ 一枚向下偏移的投影，页面另在 `Scaffold` 之外铺一条竖向渐变。三个备选——`ImageFilter.blur`、`backdrop` 包一层、每卡自带背景图——前两个是每帧采样/新增离屏纹理，第三个读不出"悬浮"。
 
-**决定二：范围是全站卡片 + 一条可回退的设置，而不是只改首页。** 令牌集中成 `ThemeExtension`（`shared/ui/video_card_surface.dart`），`BiliTheme` 按 `AppSettings.liquidVideoCards` 装入，卡片与页面读 `videoCardSurfaceOf(context)`，缺失回落 `flat`。持久化沿用 F75：`preferences.v1` 快照 `schemaVersion` 37→38，新增布尔键 `liquidVideoCards`，缺失或类型非法回退 `true`；数据库 schema 不动。入口在设置 → 外观「视频条目液态卡片」，紧跟「底栏玻璃折射」。关闭即回到改造前的扁平条目，几何值逐项复刻（圆角 8、封面 6、无内缩、间距 9/6/1、标题 15 / meta 12），并显式钉住：`video_card_variants`、`video_card_recommendation`、`video_card_measurement_cache` 三套既有用例改为在自己的 `_app` 里传 `liquidVideoCards: false`——它们断言的是封面角标与封面计数行的旧布局，不钉住就等于悄悄换了口径。
+**决定二：范围是全站卡片 + 一条可回退的设置，而不是只改首页。** 令牌集中成 `ThemeExtension`（`shared/ui/video_card_surface.dart`），`BiliTheme` 按 `AppSettings.liquidVideoCards` 装入，卡片与页面读 `videoCardSurfaceOf(context)`，缺失回落 `flat`。持久化沿用 F75：`preferences.v1` 快照 `schemaVersion` 37→38，新增布尔键 `liquidVideoCards`，缺失或类型非法回退 `true`；数据库 schema 不动。入口在设置 → 外观「视频条目液态卡片」，紧跟「底栏玻璃折射」（该相邻开关已于 F88 删除，本项现紧跟「液态玻璃底栏」）。关闭即回到改造前的扁平条目，几何值逐项复刻（圆角 8、封面 6、无内缩、间距 9/6/1、标题 15 / meta 12），并显式钉住：`video_card_variants`、`video_card_recommendation`、`video_card_measurement_cache` 三套既有用例改为在自己的 `_app` 里传 `liquidVideoCards: false`——它们断言的是封面角标与封面计数行的旧布局，不钉住就等于悄悄换了口径。
 
 **决定三：整卡是玻璃板，封面内缩再圆角，文本重排。**
 
@@ -909,3 +909,26 @@ C 的落地要点：
 **已核：** 回退后 `dart format` 对五个工程共 706/105/45/20/5 文件 **0 改动**（回到 F86 之前的文件集规模，少的那一个正是被删的用例）；`flutter analyze` No issues found；`pwsh tool/check.ps1 -Stage All -SkipPub` 三段全绿——Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25）、RootTests **4239 通过、13 跳过**（F86 轮为 4245，差的 6 项正是被删用例，计数对得上就说明没多删也没漏删）、PackageTests bili_api 586／bili_player 157／bili_danmaku 161／bili_mux 5 通过 10 跳过（未设 `BILI_MUX_LIBRARY`，不算原生通过）。代码面与 `8946abe` 的逐字一致性是独立于测试的第二道核对。
 
 **未验证：** 本轮没出包、没上设备，也没把桌面版跑起来目视——"撤回后观感是否就是用户想要的原样"没有观测，只有代码逐字一致这一条证据。
+
+## F88：删除设置「底栏玻璃折射」，折射恒开
+
+**需求：** 移除设置中的「底栏玻璃折射」开关与相关代码，取消切换，默认玻璃效果开启。
+
+**决定：** 整条设置项删净（键、读写、setter、UI 行、`BiliAppShell` 的字段与透传），不是藏起来也不是留着禁用。折射因此恒为 `LiquidDockQuality.high`；卓易通那类把 backdrop 映射错的运行环境，退路只剩「液态玻璃底栏」总开关——关掉它整条回 Material 底栏，不再提供"半档玻璃"。**这一条是本轮新增的风险**：F69 记录过折射带在卓易通上把标签画成错位重影，当时给的手动退路现在没了，代价从"可调一档"变成"只能整条关回扁平底栏"。
+
+**改动：**
+
+| 文件 | 动了什么 |
+| `lib/features/settings/domain/app_settings.dart` | 字段与其文档、两处构造参数、`copyWith` 的参数与体 |
+| `lib/features/settings/data/sqlite_settings_repository.dart` | 读侧 `boolean('dockGlassRefraction', true)`、写侧键；`preferences.v1` 快照号 40→41 |
+| `lib/features/settings/application/settings_controller.dart` | `setDockGlassRefraction` |
+| `lib/features/settings/presentation/settings_screen.dart` | 「底栏玻璃折射」整块 `_toggle`（「视频条目液态卡片」因此紧跟「液态玻璃底栏」） |
+| `lib/app/shell.dart` | 字段与构造默认值；`quality:` 三元式改为恒 `LiquidDockQuality.high` |
+| `lib/app/router.dart` | 不再透传 `settings.dockGlassRefraction` |
+| 两处测试 | `schemaVersion` 断言 40→41；`sqlite_settings_repository_test` 里那组"缺键必须回 `true`"的夹具，借用的杂键从 `dockGlassRefraction` 换成仍然存在的 `liquidVideoCards`——留着断掉的键名会让夹具看起来在测一件不存在的事 |
+
+**旧数据：** 已存快照里的 `dockGlassRefraction` 不再被读，加载即忽略；手动关过折射的设备升级后直接拿到折射开启的底栏，这正是"默认开启"的要求。SQLite schema 不动（仍 6）。`preferences.v1` 的号只是记录、读侧从不按它分支（F73 口径），所以"移除键"也照"新增键"的对称做法抬一号。
+
+**已核：** `dart format` 五工程 706/105/45/20/5 文件 **0 改动**；`flutter analyze` No issues found；`pwsh tool/check.ps1 -Stage All -SkipPub` 三段全绿——Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25）、RootTests **4239 通过、13 跳过**（与 F87 撤回后的基线同一计数：本轮只改了断言的数字，没增删用例）、PackageTests bili_api 586／bili_player 157／bili_danmaku 161／bili_mux 5 通过 10 跳过（未设 `BILI_MUX_LIBRARY`，不算原生通过）。`grep` 两项核对：全仓 `dockGlassRefraction` 只剩仓储注释里那句"该键已移除"；删档前没有任何用例断言过 `LiquidDockQuality.medium`，所以这次删档不点亮既有测试。
+
+**未验证：** 没出包、没上设备，也没跑起来目视——设置页少一行后的排版（相邻项间距与文案换行）未核对；卓易通容器内折射恒开的实际观感未取样，上面说的"风险"是按 F69 记录推断的方向，本轮没做对照实验。
