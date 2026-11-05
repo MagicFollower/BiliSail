@@ -7,6 +7,7 @@ import '../../../shared/ui/app_notice.dart';
 import '../../../shared/ui/state_view.dart';
 import '../../../shared/ui/scroll_boundary_handoff.dart';
 import '../../../shared/ui/video_card.dart';
+import '../../../shared/ui/video_card_surface.dart';
 import '../application/collection_subscription_controller.dart';
 import '../application/video_controller.dart';
 import '../domain/collection_subscription_repository.dart';
@@ -91,80 +92,101 @@ final class _VideoCollectionPanelState
         ) ??
         -1;
     final standaloneParts = widget.video.parts.length > 1 && index < 0;
-    return Material(
-      color: theme.colorScheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(6),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (standaloneParts) ...[
-            _heading(
-              '视频选集 · ${widget.video.parts.length} P',
-              _partsExpanded,
-              () => setState(() => _partsExpanded = !_partsExpanded),
-            ),
-            if (_partsExpanded)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 224),
-                child: ScrollBoundaryHandoff(
-                  child: ListView.builder(
-                    primary: false,
-                    shrinkWrap: true,
-                    padding: EdgeInsets.zero,
-                    itemCount: widget.video.parts.length,
-                    itemBuilder: (_, index) => _partRow(
-                      widget.video.summary.id,
-                      widget.video.parts[index],
-                    ),
-                  ),
-                ),
+    final surface = videoCardSurfaceOf(context);
+    // The board replaces this block's own fill; flat keeps what it had before,
+    // so turning the setting off is not a second style but the absence of one.
+    final blockRadius = BorderRadius.circular(
+      surface.enabled ? liquidInkRadius(surface) : 6,
+    );
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      decoration: liquidBoardDecoration(
+        surface: surface,
+        scheme: theme.colorScheme,
+        flat: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(6),
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: blockRadius,
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (standaloneParts) ...[
+              _heading(
+                '视频选集 · ${widget.video.parts.length} P',
+                _partsExpanded,
+                () => setState(() => _partsExpanded = !_partsExpanded),
               ),
-          ],
-          if (collection != null) ...[
-            _heading(
-              collection.title,
-              _expanded,
-              () => setState(() => _expanded = !_expanded),
-              count: index >= 0
-                  ? '${index + 1}/${collection.entries.length}'
-                  : '${collection.entries.length} 个视频',
-              playCount: collection.playCount,
-              trailing: subscriptionTarget == null || subscriptionState == null
-                  ? null
-                  : _subscriptionButton(subscriptionTarget, subscriptionState),
-            ),
-            if (subscriptionState?.message case final String message)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-                child: Text(
-                  message,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
-                ),
-              ),
-            if (_expanded)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 224),
-                child: ScrollBoundaryHandoff(
-                  child: Scrollbar(
-                    controller: _scroll,
+              if (_partsExpanded)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 224),
+                  child: ScrollBoundaryHandoff(
                     child: ListView.builder(
-                      controller: _scroll,
                       primary: false,
                       shrinkWrap: true,
-                      padding: const EdgeInsets.only(bottom: 4),
-                      itemCount: collection.entries.length,
-                      itemBuilder: (_, index) =>
-                          _entry(collection.entries[index]),
+                      padding: EdgeInsets.zero,
+                      itemCount: widget.video.parts.length,
+                      itemBuilder: (_, index) => _partRow(
+                        widget.video.summary.id,
+                        widget.video.parts[index],
+                      ),
                     ),
                   ),
                 ),
+            ],
+            if (collection != null) ...[
+              _heading(
+                collection.title,
+                _expanded,
+                () => setState(() => _expanded = !_expanded),
+                count: index >= 0
+                    ? '${index + 1}/${collection.entries.length}'
+                    : '${collection.entries.length} 个视频',
+                playCount: collection.playCount,
+                trailing:
+                    subscriptionTarget == null || subscriptionState == null
+                    ? null
+                    : _subscriptionButton(
+                        subscriptionTarget,
+                        subscriptionState,
+                      ),
               ),
+              if (subscriptionState?.message case final String message)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+                  child: Text(
+                    message,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                ),
+              if (_expanded)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 224),
+                  child: ScrollBoundaryHandoff(
+                    child: Scrollbar(
+                      controller: _scroll,
+                      child: ListView.builder(
+                        controller: _scroll,
+                        primary: false,
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.only(bottom: 4),
+                        itemCount: collection.entries.length,
+                        itemBuilder: (_, index) =>
+                            _entry(collection.entries[index]),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

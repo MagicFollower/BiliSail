@@ -882,3 +882,25 @@ C 的落地要点：
 **已核：** 三条对照实验与 `ldd` 撞名检查都是实跑。`pwsh tool/build-download-mux.ps1 -Target android-arm64` → `Built android-arm64: libbili_mux.so`、`EXIT=0`，`configure.log` 里 host C compiler 为 `gcc`、目标 C compiler 为 NDK clang。为确认修的是用户那条路，删掉生成资产（`native/prebuilt/` 在 `.gitignore` 内）与 `build/download_mux/android-arm64/` 后重跑 `cmd //c android\bin\build-apk.cmd < /dev/null`：日志出现 `[4/6] Building the bili_mux Android arm64 component...` → `Built android-arm64: libbili_mux.so`（1,396,248 字节）→ `√ Built ... app-arm64-v8a-release.apk (60.8MB)` → `EXIT=0`；交付 `build/development/android-arm64/BiliSail-test-arm64-release.apk`，身份 `dev.bilisail.bilisail.test`／「BiliSail 测试版」／`6.2.6+6`（versionCode 62606，即 F84 抬上来的号）、`local-development-debug-key` 证书 `6d860dee…`、APK SHA-256 `403eec01…`。源码缓存 `build/download_mux/source` 未删，没有为验证去重新下载 17 MB 源码。
 
 **未验证：** 新 APK 未安装，真机零取样——F83／F84 列的"退出播放页卡死／闪退"与首帧遮罩观感仍没有设备侧观测；APK 的 `classes.dex` 没做 grep 复核；"删掉 `.dart_tool` 后重跑"未测，所以 sqlite3 那条只证明当前缓存能被 hook 复用，没证明冷目录下也能；Gradle 报的 `flutter_volume_controller` 等插件 Built-in Kotlin（KGP）弃用警告本轮未处理，两次构建均未受影响。
+
+## F86：设置「视频条目液态卡片」更名「液态卡片」，播放页三块区域与评论区同吃一块板
+
+**需求：** 用户要求把设置项从"视频条目液态卡片"更名为"液态卡片"，并把液态形式扩到四处——播放页视频下方的个人信息、下方合集目录、合集目录下方的视频目录（分P）、评论区。
+
+**决定（用户选定）：**
+
+| 项 | 判定 | 依据 |
+| 一个总开关，沿用设置键 `liquidVideoCards` | **采用** | 只改标题与说明文案，不动键、不动 `preferences.v1` 快照号，默认值／恢复默认／非法值回退逐字不变。弃"总开关 + 4 个分区子开关"（要新增 4 键、快照号再进一位、默认与回退各补一份）与"列表／播放页两个开关" |
+| 目录整块板 + 评论逐条板 | **采用** | 目录本来就是一块 `Material(surfaceContainerLow, radius 6)`，换成板几乎零额外绘制；评论按条浮起才像卡片流。弃"全部整块"（评论区看不出卡片）与"全部逐行"（分P／合集 200+ 行每行带阴影，成本未量） |
+
+**改动一：板面几何收成一个来源。** 卡片私有的 `_boardDecoration` 删除，`video_card_surface.dart` 新增 `liquidBoardDecoration`／`liquidBoardRadius`／`liquidInkRadius`，卡片与四处区域都读它——四处各抄一份半径与亮边，之后一定分叉。两条约束从 F82 带过来并写进注释：**扁平档也保留同一个节点**（换 widget 类型会重建子树、把页面弹回顶部），**ink 半径＝板角减一**（`InkResponse` 不回落父 `Material` 的圆角）。
+
+**改动二：`flat` 兜底位。** "关掉开关"对卡片等于"回到没有底的样子"，对目录不等于——它原来就有 `surfaceContainerLow` 底色。所以构造器收一个 `flat:` 参数：目录传自己原来的 `BoxDecoration`，个人信息与评论区原来无底，留空。没有这一位，改名后第一次关就把目录关成一块看不见的东西。
+
+**改动三：四处接板。** `video_author_header.dart` 的整个返回（含 staff 分支与拉取失败提示行）套板，`identity` 的 `InkWell` 补 `borderRadius`；`video_collection_panel.dart` 外层由 `Material` 换成 `AnimatedContainer(板) → Material(transparent, 板角-1, clip)`，heading 与两种列表行不动；`comments_panel.dart` 的 `_CommentTile._buildContent` 在既有 `Padding(top: 12)` 里加一层板（玻璃档内缩 `surface.inset`，扁平档内缩 0，布局逐字不变），并把行尾 `Divider` 只在玻璃档撤掉——板自己的边和板间距在做分隔，卡片里再画一条线是缺陷。
+
+**影响面：** `VideoAuthorHeader`／`VideoCollectionPanel` 只被 `video_screen.dart` 用（286／402 行），正是点播页；`CommentsPanel` 与动态评论共用（`dynamic_post_interactions.dart`、`bili_app.dart` 的评论详情通路），所以动态的评论区一并获得板面，符合"不复制页面专属实现"的既有口径。PGC／直播的选集与评论通路本轮没接。
+
+**已核：** 新增 `test/shared/ui/liquid_board_regions_test.dart` **6 项通过**，令牌从 `BiliTheme` 现取而不在测试里重抄常量（重抄的判据会随主题腐烂）。六条各自可失败：板角／渐变／亮边／阴影取自 surface；focus 与 hover 只换边色不换形状；带 `flat:` 的区域关档后返回**同一个**对象（`same`）；原来无底的区域关档后 `gradient`／`color`／`boxShadow` 全 null；`liquidInkRadius` 两档都恰为板角 −1。`pwsh tool/check.ps1 -Stage All -SkipPub` 三段全绿——Lint（CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25；五工程 `dart format` 共 707/105/45/20/5 文件 0 改动；`flutter analyze` No issues found）、RootTests **4245 通过、13 跳过**（上轮 4239，+6 即本轮用例）、PackageTests bili_api 586／bili_player 157／bili_danmaku 161／bili_mux 5 通过 10 跳过（未设 `BILI_MUX_LIBRARY`，不算原生通过）。定向另跑 `video_screen_test` + `playback_comments_scroll_test` + 本用例共 **87 项通过**——前两套默认就在玻璃档（`BiliTheme.light()` 的 `liquidVideoCards` 默认 true），所以接板后的真实子树被走过。过程中修掉一次自己写的括号配平错误（`video_collection_panel.dart` 多一层闭合），由 `flutter analyze` 的 `missing_identifier` 抓到。
+
+**未验证：** 本轮没出包、没上设备，也没把桌面版跑起来目视核对——四处板面的实际观感（内缩 8 后评论正文与头像的留白、目录标题与板边的关系、深浅色下的亮度层次）全部未观测；逐条评论带阴影在长列表滚动时的帧率成本没有量过，"目录整块／评论逐条"是用户按需选定的粒度，不是测出来的最优档；卓易通那类翻译 GPU 栈下这几块板会不会重演 `dockGlassRefraction` 的错位，未测（`liquidVideoCards` 本就是这类环境的退路开关）；动态评论区与 PGC／直播通路未做视觉确认，后者根本没接。

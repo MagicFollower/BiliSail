@@ -300,14 +300,17 @@ final class _VideoCardState extends State<VideoCard> {
     // needs it explicitly: `InkResponse` reads its *own* `borderRadius` when it
     // clips a splash or ripple and never falls back to the parent `Material`'s,
     // so without this the press highlight is a rectangle inside a rounded board.
-    final boardRadius = BorderRadius.circular(
-      glass ? surface.cardRadius - 1 : 7,
-    );
+    final boardRadius = BorderRadius.circular(liquidInkRadius(surface));
     return ScrollAwareHoverRegion(
       onHover: (hovered) => _update(() => _hovered = hovered),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
-        decoration: _boardDecoration(surface, scheme, glass),
+        decoration: liquidBoardDecoration(
+          surface: surface,
+          scheme: scheme,
+          focused: _focused,
+          hovered: _hovered,
+        ),
         child: Material(
           color: Colors.transparent,
           borderRadius: boardRadius,
@@ -469,47 +472,6 @@ final class _VideoCardState extends State<VideoCard> {
           ),
         ),
       ),
-    );
-  }
-
-  /// The board under the card. Painted from a translucent body gradient, one
-  /// lit hairline and a shadow — no `BackdropFilter`, because a grid would
-  /// sample the backdrop for every visible card on every scrolled frame. The
-  /// flat card keeps its focus-only hairline.
-  BoxDecoration _boardDecoration(
-    VideoCardSurface surface,
-    ColorScheme scheme,
-    bool glass,
-  ) {
-    if (!glass) {
-      return BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: _focused ? scheme.primary : Colors.transparent,
-        ),
-      );
-    }
-    return BoxDecoration(
-      borderRadius: BorderRadius.circular(surface.cardRadius),
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [surface.bodyTop, surface.bodyBottom],
-      ),
-      border: Border.all(
-        color: _focused
-            ? scheme.primary
-            : _hovered
-            ? surface.rimHover
-            : surface.rim,
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: surface.shadowColor,
-          blurRadius: surface.shadowBlur,
-          offset: surface.shadowOffset,
-        ),
-      ],
     );
   }
 
