@@ -8,7 +8,9 @@ REM  Double-click to run.
 REM
 REM  Location : <repo root>\android\bin\build-apk.cmd
 REM  Output   : <repo root>\build\development\android-arm64\
-REM             BiliSail-test-arm64-release.apk
+REM             BiliSail-test-arm64-release-<version>-<yyyyMMdd-HHmmss>.apk
+REM             e.g. BiliSail-test-arm64-release-6.2.6+6-20261106-093512.apk
+REM             (.sha256 / .json metadata share the same base name)
 REM  Package  : dev.bilisail.bilisail.test (the "BiliSail" test app,
 REM             local development signing; coexists with the release
 REM             package dev.bilisail.bilisail)
@@ -249,16 +251,27 @@ if not "%BUILD_RC%"=="0" (
     echo [ERROR] APK build failed, exit code %BUILD_RC%. See the log above.
     echo   A GitHub download timeout for the libmpv jars is handled before Gradle
     echo   runs: tool\android-libmpv-assets.ps1 stages the three jars under the
-    echo   plugin build\20260906 directory after checking the SHA-256 pins that the
-    echo   plugin itself declares, and it forwards the Windows system proxy to
-    echo   Gradle only when a direct route fails on this machine.
+    echo   plugin build directory build\media_kit_libs_android_video\20260906 after
+    echo   checking the SHA-256 pins that the plugin itself declares, and it forwards
+    echo   the Windows system proxy to Gradle only when a direct route fails on this
+    echo   machine.
     echo   If no route works, copy those three jars into that directory by hand and
     echo   run this script again; the checksums are verified either way.
     goto :fail
 )
 
 REM ---------- 6. report the result ----------
-set "APK_OUT=%REPO_ROOT%\build\development\android-arm64\BiliSail-test-arm64-release.apk"
+REM Every build writes a new version+timestamp artifact instead of overwriting
+REM one name, so the deliverable is the newest Release artifact in the folder.
+set "APK_DIR=%REPO_ROOT%\build\development\android-arm64"
+set "APK_OUT="
+for /f "delims=" %%A in ('dir /b /a-d /o:-D "%APK_DIR%\BiliSail-test-arm64-release-*.apk" 2^>nul ^| findstr /r /c:"\.apk$"') do if not defined APK_OUT set "APK_OUT=%APK_DIR%\%%A"
+if not defined APK_OUT (
+    echo [ERROR] The build finished but no versioned Release APK was found:
+    echo         Expected BiliSail-test-arm64-release-version-timestamp.apk in
+    echo         %APK_DIR%
+    goto :fail
+)
 if not exist "%APK_OUT%" (
     echo [ERROR] The build finished but the APK is missing: %APK_OUT%
     goto :fail

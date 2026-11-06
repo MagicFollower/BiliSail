@@ -198,7 +198,7 @@ PR 不接收长期签名 Secrets，仅通过 `-AndroidPreviewSigning` 显式启�
 
 提交前补充实测：不传开发别名参数，使用 CI 的 PR 预览签名模式构建 arm64 Release，实际包名为 `dev.bilisail.bilisail`、名称为 `BiliSail`、versionCode 为 `12104`，签名校验通过且不可调试。关闭预览签名后，缺少正式密钥的 Release 仍在 `preReleaseBuild` 按原规则失败。CI/Release 工作流与正式打包脚本未修改；本次没有触发远端 CI，也没有将该正式身份验证包安装到设备。日志为 `build/validation/ci-identity-default-build.log` 和 `ci-identity-signing-guard.log`。
 
-输出固定为 `build/development/android-arm64/BiliSail-test-arm64-release.apk`，附带 SHA-256 和 JSON 元信息。打包使用 arm64 split，并检查实际包名、名称、版本、签名、ABI 和 AOT 内容；Release 不可调试。只用 `adb install -r` 安装，失败即停止，不自动卸载、清数据或强制降级。构建保留 Flutter 的默认 pub 阶段，以重新生成匹配模式的插件注册文件；不能使用 `--no-pub` 留下 dev-only 注册。
+输出为 `build/development/android-arm64/BiliSail-test-arm64-release-<pubspec 版本>-<yyyyMMdd-HHmmss>.apk`（时间为构建时刻本地时间），同基名附带 SHA-256 与 JSON 元信息，JSON 另记 `BuiltAt`；每次构建产出新文件，不覆盖同名件。需要「当前普通入口包」的脚本改用 `tool/android-development.ps1` 的 `Resolve-AndroidDevelopmentApk` 取该模式下最新件，不再写死文件名。双击发包入口 `android/bin/build-apk.cmd` 只探测工具链后调用本脚本，产物名同样由本脚本定义。打包使用 arm64 split，并检查实际包名、名称、版本、签名、ABI 和 AOT 内容；Release 不可调试。只用 `adb install -r` 安装，失败即停止，不自动卸载、清数据或强制降级。构建保留 Flutter 的默认 pub 阶段，以重新生成匹配模式的插件注册文件；不能使用 `--no-pub` 留下 dev-only 注册。
 
 [底栏性能基准](../../tool/test-android-primary-switch.ps1) 同样使用此身份。脚本先保留普通入口的开发 Release，再安装 Profile fixture；`flutter drive --keep-app-running` 防止驱动默认卸载应用，并在 `finally` 中覆盖恢复普通 Release 入口。临时 USB 常亮设置也在结束后还原。[身份检查](../../tool/test-android-development.ps1) 覆盖错误包名、名称、可调试 Release 等拒绝行为，并纳入根检查。
 

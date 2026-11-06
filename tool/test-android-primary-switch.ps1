@@ -33,7 +33,7 @@ try {
   # Always preserve a fresh normal entry point before replacing the APK with a
   # deterministic fixture. All variants share the installed test app's data.
   & (Join-Path $PSScriptRoot 'build-android-development.ps1') -Mode Release -SkipMuxBuild
-  $restorePackage = Join-Path $repoRoot 'build/development/android-arm64/BiliSail-test-arm64-release.apk'
+  $restorePackage = Resolve-AndroidDevelopmentApk $repoRoot
   $target = if ($Scenario -eq 'retained-cards') {
     'integration_test/android_retained_cards_test.dart'
   } elseif ($Scenario -eq 'recommendation-updates') {

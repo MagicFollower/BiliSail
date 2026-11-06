@@ -10,7 +10,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'dolby-vision-fixtures.ps1')
 $output = Join-Path $repoRoot 'build/validation/android-dolby-vision'
 $fixtures = Join-Path $repoRoot 'build/validation/dolby-vision'
-$normalApk = Join-Path $repoRoot 'build/development/android-arm64/BiliSail-test-arm64-release.apk'
+$normalApk = Resolve-AndroidDevelopmentApk $repoRoot
 $previousSdk = $env:ANDROID_HOME
 $power = $null
 $server = $null

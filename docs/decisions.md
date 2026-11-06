@@ -1042,3 +1042,45 @@ Android（鸿蒙卓易通）上视频播放到结尾时显示「正在恢复播�
 - 卓易通实机未测：结尾不再出现 spinner、卡死消失均需设备复测；Dart 判据通过不等于设备行为确认。
 - 插件 5 秒 `mpv_terminate_destroy` Timer 的阻塞**未消除**：合法恢复路径（片中真实停滞等）恢复总时长超 5s 时卡死仍可能出现（F83 残余风险不变）。
 - 结尾前 2s 内的真实音轨死亡/缓冲区饥饿不再触发恢复（有意的盲区）；`releaseAndroidOutput` 轮询墙钟无界问题本轮未改。
+
+## F92：测试 APK 改名带上版本与构建时刻，安卓发包统一走 `android/bin/build-apk.cmd`
+
+**需求/现象**
+
+用户要求交付件按 `BiliSail-test-arm64-release-软件版本-构建准确日期时间.apk` 命名，并规定此后安卓 APK 发包统一使用 `android/bin/build-apk.cmd`。旧约定是固定名覆盖写（AGENTS.md 与 `ci-cd.md` 都写着「Release 固定文件名」），拿到一个 APK 无法只从文件名判断它是哪个版本、哪次构建的产物。
+
+**决定**
+
+命名定在**名字的唯一来源处**——`tool/build-android-development.ps1` 产出 `BiliSail-test-arm64-<mode>-<pubspec 版本>-<yyyyMMdd-HHmmss>.apk`（本地构建时刻，秒级），`.sha256`/`.json` 沿用同一基名，JSON 新增 `BuiltAt`。双击入口 `android/bin/build-apk.cmd` 仍只做工具链探测与最新件展示，不重复定义命名、签名或校验规则。按用户选定「单一版本化名」：旧固定名不再产出，因此依赖它的三个设备回归脚本（`test-android-video-startup.ps1`、`test-android-primary-switch.ps1`、`test-android-dolby-vision.ps1`）改为经共享助手 `Resolve-AndroidDevelopmentApk` 取该模式下最新件。
+
+| 备选方案 | 做法 | 取舍 |
+| --- | --- | --- |
+| 版本化名 + 旧固定名 NTFS 硬链接 | 两份名字指向同一批字节 | 不选：同一份字节两个名字，旧别名会被当成可单独升级的独立包，文档里也留着两套口径 |
+| 只在 `build-apk.cmd` 里复制一份改名 | ps1 不动，cmd 复制成版本化名 | 不选：每次多占一个 60MB 拷贝，同目录两套命名并存，ps1 的 sidecar 与新基名还对不上 |
+| **单一版本化名 + 最新件探测** | 命名在 ps1 定义，消费者探测最新 | 采用：一目录一种命名、产物自描述；消费者不再钉住一个每次构建都会变的名字 |
+
+**改动**
+
+| 文件 | 改动 |
+| --- | --- |
+| `tool/android-development.ps1` | 新增 `Get-AndroidDevelopmentApkName`（版本 + `yyyyMMdd-HHmmss`，版本为空即抛）与 `Resolve-AndroidDevelopmentApk`（按模式取最新件，找不到时给出「先用哪条命令构建」的可执行提示） |
+| `tool/build-android-development.ps1` | 产物名改由命名函数生成；构建时刻一次捕获并写进 JSON 的 `BuiltAt` |
+| `android/bin/build-apk.cmd` | 头注释与第 6 步不再拼固定名，改为 `dir /b /a-d /o:-D` 加 `findstr /r "\.apk$"` 取最新版本化 Release；无匹配时报期望命名并失败 |
+| `tool/test-android-video-startup.ps1` / `test-android-primary-switch.ps1` / `test-android-dolby-vision.ps1` | 普通入口包路径由写死改为 `Resolve-AndroidDevelopmentApk`（三者都已 dot-source 共享助手） |
+| `AGENTS.md` / `docs/validation/ci-cd.md` | 「固定文件名」的现状描述改为新命名与统一发包入口；历史验证记录里的旧路径按快照保留不改写 |
+
+**已核**
+
+- 五个改动脚本 PowerShell 解析器零错误；命名函数在固定输入下产出 `BiliSail-test-arm64-release-6.2.6+6-20261106-093512.apk`。
+- 探测器在临时目录的六个夹具上验证：同模式最新件胜出、Profile 与 Release 互不串、`.apk.sha256`/`.apk.json` 不被当成产物、旧固定名不再被选中、空目录按预期抛错。
+- 批处理侧把**真实脚本里那一行原样抽出**（不是手抄副本）跑同一组夹具：解析结果为最新版本化 Release，sidecar 与旧固定名均被 `findstr /r "\.apk$"` 排除。
+- 真实全链路已按新命名跑通：双击入口 `android/bin/build-apk.cmd` 自行探测到 `D:\JDK\…dragonwell-21…`（Java 21，本机 `JAVA_HOME` 其实指向 JDK 8，这正是入口存在的意义），产出 `BiliSail-test-arm64-release-6.2.6+6-20261106-100544.apk`（63,743,588 字节），`.sha256`/`.json` 同基名，JSON 的 `BuiltAt` 为 `2026-11-06T10:05:44+08:00`，包身份仍为 `dev.bilisail.bilisail.test`／「BiliSail 测试版」／62606。该件 SHA-256 与改名前一次构建逐字相同（`a4b8cbf7…`），说明改名只动了产物名，没动内容。`Resolve-AndroidDevelopmentApk` 在真实目录返回这个最新件；旧固定名的三件遗留副本因与新件哈希相同已删除。
+- 全仓（历史验证记录除外）已无旧固定文件名引用；`.github/workflows` 不使用该开发产物名。`tool/check.ps1 -Stage Lint -SkipPub` 全绿：CI 计划 27、Android 版本 41、签名 21、开发包身份 7、媒体通知资源 25，五工程 `dart format` 706/105/45/20/5 文件 0 改动，`flutter analyze` No issues found。两个改动脚本 EOL 均为 CRLF、cmd 保持纯 ASCII。
+
+**未验证**
+
+- 全链路这轮是把 stdin 重定向到 NUL 跑的：`choice` 走 15 秒默认 N、`pause` 立即返回，且当时无设备连接。真人双击时「是否立即安装」这条交互与安装分支本身没有验过。
+- 三个设备回归脚本需要连上设备才能验证解析到的最新件被正确安装与恢复。
+- Profile/Debug 模式的产物名同步变了，但本轮没有构建过这两个模式。
+- JSON 新字段 `BuiltAt` 目前没有下游消费者，没有任何工具读它；`signing-certificate.sha256` 仍按目录内单例共享，与新的每构建文件名互不影响。
+- 历史验证记录里的旧文件名链接指向的产物已不存在（旧固定名的遗留副本本轮已删除），那类记录按快照保留不改写。

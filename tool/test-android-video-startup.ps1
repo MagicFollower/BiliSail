@@ -12,7 +12,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 
 $output = Join-Path $repoRoot ('build/validation/' + $OutputName)
 
-$normalApk = Join-Path $repoRoot 'build/development/android-arm64/BiliSail-test-arm64-release.apk'
+$normalApk = Resolve-AndroidDevelopmentApk $repoRoot
 $previousSdk = $env:ANDROID_HOME
 $previousOutput = $env:STARTUP_OUTPUT
 $power = $null

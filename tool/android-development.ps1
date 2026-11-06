@@ -75,3 +75,26 @@ function Install-AndroidDevelopmentApk([string]$DeviceId, [string]$Package, [str
     throw 'Development APK install failed. Preserve installed data; do not uninstall or clear data automatically.'
   }
 }
+
+# Development artifacts are named per build instead of overwritten in place, so a
+# delivered APK states which version and which build moment it came from. The
+# suffix is what makes the file unambiguous once several builds coexist.
+function Get-AndroidDevelopmentApkName([string]$Mode, [string]$Version, [datetime]$BuiltAt) {
+  if ([string]::IsNullOrWhiteSpace($Version)) { throw 'A development APK name requires the pubspec version.' }
+  $stamp = $BuiltAt.ToString('yyyyMMdd-HHmmss')
+  return "BiliSail-test-arm64-$($Mode.ToLowerInvariant())-$Version-$stamp.apk"
+}
+
+# Callers that need "the current normal-entry APK" must not pin a name that
+# changes every build: resolve the newest one for that mode.
+function Resolve-AndroidDevelopmentApk([string]$RepoRoot, [string]$Mode = 'Release') {
+  $directory = Join-Path $RepoRoot 'build/development/android-arm64'
+  $pattern = "BiliSail-test-arm64-$($Mode.ToLowerInvariant())-*.apk"
+  $latest = @(Get-ChildItem -LiteralPath $directory -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like $pattern } |
+    Sort-Object LastWriteTime, Name -Descending) | Select-Object -First 1
+  if (!$latest) {
+    throw "No development $Mode APK matches $pattern under $directory. Build it first with tool\build-android-development.ps1 -Mode $Mode."
+  }
+  return $latest.FullName
+}

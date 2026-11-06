@@ -54,7 +54,8 @@ try {
 
   $output = Join-Path $repoRoot 'build/development/android-arm64'
   New-Item -ItemType Directory -Force -Path $output | Out-Null
-  $package = Join-Path $output "BiliSail-test-arm64-$buildMode.apk"
+  $builtAt = Get-Date
+  $package = Join-Path $output (Get-AndroidDevelopmentApkName $Mode $version $builtAt)
   Copy-Item -LiteralPath "build/app/outputs/flutter-apk/app-arm64-v8a-$buildMode.apk" -Destination $package
   $identity = Confirm-AndroidDevelopmentApk $package $Mode
   Confirm-AndroidMediaNotificationResources $package (Get-AndroidDevelopmentAapt)
@@ -82,6 +83,7 @@ try {
   [pscustomobject]@{
     PackageId = $identity.PackageId; DisplayName = $identity.DisplayName
     Version = $version; VersionCode = $identity.VersionCode; Mode = $Mode
+    BuiltAt = $builtAt.ToString('yyyy-MM-ddTHH:mm:sszzz')
     Signing = 'local-development-debug-key'; CertificateSha256 = $certificate; Sha256 = $sha256
   } | ConvertTo-Json | Set-Content -LiteralPath "$package.json" -Encoding utf8
   if ($Install) {
