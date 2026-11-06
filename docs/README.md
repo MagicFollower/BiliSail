@@ -169,6 +169,7 @@
 | [全局桌面滚轮平滑过渡](validation/smooth-scrolling.md) | 官方模拟器、阻尼比设置、连续/反向输入、嵌套仲裁及验证边界 |
 | [连续滚轮时序优化](validation/wheel-scroll-timing-2026-10-31.md) | 真实输入时间与帧对齐、有界输入缓冲、两列／六列滚轮信号 Profile 对照 |
 | [液态玻璃开关卡死分析与修复](validation/glass-effects-freeze-analysis-2026-11-05.md) | 两个玻璃开关逐个体检、底栏四条栅格路径、着色器 PSO 编译卡死根因、滤镜复用与启动预热及验证边界 |
+| [视频结尾「正在恢复播放」卡死分析与末尾护栏修复](validation/playback-end-recovery-freeze-2026-11-06.md) | 健康检查把正常结尾误报为音轨死亡、恢复路径上插件 5 秒 `mpv_terminate_destroy` Timer 阻塞 UI、末尾护栏 500ms→2s 及验证边界 |
 | [macOS 触控板滑动返回](validation/macos-trackpad-back.md) | 松手返回、阈值取消、左侧箭头、横向列表与播放器进度条隔离 |
 | [API 端点验证](validation/api-endpoints.md) | 首版端点、协议与在线只读烟测 |
 | [搜索分类与排序](validation/search-categories.md) | 七类搜索、综合页 UP 主、分类排序、筛选与旧响应隔离 |

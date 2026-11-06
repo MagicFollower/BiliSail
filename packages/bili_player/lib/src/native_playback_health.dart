@@ -8,6 +8,12 @@ final class NativePlaybackHealth {
   static const stallTimeout = Duration(seconds: 8);
   static const bufferingTimeout = Duration(seconds: 30);
 
+  /// A stream that is ending legitimately EOFs its tracks and stops refilling
+  /// its cache. The sampler polls every 250 ms with a 1 s read budget, so a
+  /// stale audio clock can appear up to ~2 s before the real end; recovering
+  /// those final seconds costs a full re-resolve and a player replacement.
+  static const endOfStreamGuard = Duration(seconds: 2);
+
   PlaybackSnapshot? _last;
   Duration? _progressAt;
   Duration? _audioPosition;
@@ -39,8 +45,7 @@ final class NativePlaybackHealth {
     if (paired &&
         snapshot.buffered > Duration.zero &&
         (snapshot.duration <= Duration.zero ||
-            snapshot.duration - snapshot.buffered >
-                const Duration(milliseconds: 500)) &&
+            snapshot.duration - snapshot.buffered > endOfStreamGuard) &&
         snapshot.position - snapshot.buffered >
             const Duration(milliseconds: 250)) {
       return (
@@ -58,8 +63,7 @@ final class NativePlaybackHealth {
       if (audio != null &&
           snapshot.position - audio > const Duration(milliseconds: 750) &&
           (snapshot.duration <= Duration.zero ||
-              snapshot.duration - snapshot.position >
-                  const Duration(milliseconds: 500))) {
+              snapshot.duration - snapshot.position > endOfStreamGuard)) {
         return (kind: PlayerFailureKind.nativePlayback, position: audio);
       }
     }

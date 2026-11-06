@@ -998,3 +998,47 @@ C 的落地要点：
 
 - 无 Android 实机：预热是否真的命中同一 PSO、3~5 秒卡死是否消失，均未测量；需在有问题的设备上对照开/关开关与冷启动复测。
 - 视觉回归：滤镜复用不改变 uniform 语义，但边缘折射的实际观感未在设备上复核。
+
+## F91：视频结尾的「正在恢复播放」是健康检查误报，末尾护栏 500ms 放宽到 2s
+
+**需求/现象**
+
+Android（鸿蒙卓易通）上视频播放到结尾时显示「正在恢复播放…」，该阶段偶发界面卡死 3~5 秒。需要定位触发与卡死两条链并做最小修复。完整分析见 [播放结尾恢复卡死](validation/playback-end-recovery-freeze-2026-11-06.md)。
+
+**定位结论（代码级）**
+
+| 链 | 机制 | 证据 |
+| --- | --- | --- |
+| 触发 | 临近结尾（phase 仍 playing）外部音轨 EOF 或 `audio-pts` 读取变慢/失败，旧音频时钟被保留、视频位置继续前进，`position - audio > 750ms` 且仅 `duration - position > 500ms` 的护栏挡不住 → `nativePlayback` 误报 → `_interruptPlayback` → `_fail` → 会话 `_scheduleRecovery` → spinner「正在恢复播放…」 → `retry()` 重解析+重开 | `native_playback_health.dart:51`（音频规则）、`:39`（videoInterrupted 规则同一护栏）、`media_kit_engine.dart:311`、`playback_session.dart:108/174/496`、`playback_panel.dart:1726` |
+| 卡死 | `retry()` → `open()` → `_releasePlayer()` → `old.dispose()` 后，固定插件投出**不可取消的 5 秒 Timer** 在 Dart UI isolate 执行 `mpv_terminate_destroy`，阻塞到旧核心退出；卓易通上恢复总时长 routinely 超过 5s，Timer 落在 spinner 窗口内，旧核心未收尾完即阻塞 UI 数秒 | `media_kit_engine.dart:601/1313/1345`；Pub 缓存 `real.dart:87-95`；与 F83 同一机制，F83 已明确保留该残余风险 |
+
+`audio-pts` 采样每 250ms、单次读取超时 1s 且为同步 FFI（`getPropertyAsync` 只是语法糖），因此真实 EOF 前最多约 2s 即可凑够误报条件——卓易通转译栈上读取更慢，窗口更宽。
+
+**决定**
+
+只放宽健康检查的末尾护栏：两条规则的 `500ms` 换成共享常量 `endOfStreamGuard = 2s`，让「正常结尾的音轨 EOF/缓冲区掉队」不再进入恢复。视频正在结束时的重解析本来没有意义，却要付出整条 `retry()` 代价（含卡死窗口）；护栏取 2s 是因为旧时钟在真实 EOF 前的最大陈旧量约 2s（约两次失败读取），再宽只会放大片尾真实故障的漏检盲区。
+
+| 备选方案 | 做法 | 取舍 |
+| --- | --- | --- |
+| 会话层加「距结尾不恢复」 | `_scheduleRecovery` 里按 position/duration 拦截 | 不选：失败仍落到 error 文案（比 spinner 更糟），且把播放健康判断拆成两处 |
+| 改固定插件的 5 秒 Timer | 取消/搬走 `mpv_terminate_destroy` | 不选：F84 后插件层补丁已撤，应用侧无通路；F83 结论为核心侧本树不做 |
+| **放宽末尾护栏到 2s** | 两条规则共享 `endOfStreamGuard` | 采用：误报窗口（EOF 前 ~2s）被完整覆盖，片中判据与未知时长旁路不变 |
+
+**改动**
+
+| 文件 | 改动 |
+| --- | --- |
+| `packages/bili_player/lib/src/native_playback_health.dart` | 新增 `endOfStreamGuard = 2s`；videoInterrupted 与音频两条规则的末尾护栏由 500ms 改用它 |
+| `packages/bili_player/test/native_playback_health_test.dart` | 新增 3 条用例：护栏内陈旧音频时钟不失败、护栏内缓冲区掉队不失败、护栏外音频 EOF 仍失败 |
+
+**已核**
+
+- `bili_player` 定向 `native_playback_health_test` **20/20 通过**；全量 `flutter test` **160/160 通过**；`flutter analyze` 无问题；`dart format` 干净。
+- 单点变异：常量改回 500ms → 恰好两条护栏用例转红，护栏外用例保持绿；恢复后复跑全绿。
+- 根应用定向（`playback_session_test`、`playback_panel_test`、`macos_fullscreen_close_test`、`workspace_router_test`）**781/781 通过**。
+
+**未验证**
+
+- 卓易通实机未测：结尾不再出现 spinner、卡死消失均需设备复测；Dart 判据通过不等于设备行为确认。
+- 插件 5 秒 `mpv_terminate_destroy` Timer 的阻塞**未消除**：合法恢复路径（片中真实停滞等）恢复总时长超 5s 时卡死仍可能出现（F83 残余风险不变）。
+- 结尾前 2s 内的真实音轨死亡/缓冲区饥饿不再触发恢复（有意的盲区）；`releaseAndroidOutput` 轮询墙钟无界问题本轮未改。

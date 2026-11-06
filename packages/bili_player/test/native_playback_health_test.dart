@@ -168,6 +168,64 @@ void main() {
     }
   });
 
+  test('a stale audio clock inside the end guard is the stream ending', () {
+    final ending = playing.copyWith(
+      position: const Duration(seconds: 58),
+      buffered: const Duration(seconds: 59),
+    );
+    health.update(
+      ending,
+      Duration.zero,
+      paired: true,
+      audioPosition: const Duration(seconds: 57),
+    );
+    expect(
+      health.update(
+        ending.copyWith(position: const Duration(milliseconds: 58500)),
+        const Duration(milliseconds: 250),
+        paired: true,
+        audioPosition: const Duration(seconds: 57),
+      ),
+      isNull,
+    );
+  });
+
+  test('a starved buffer inside the end guard is the stream ending', () {
+    final ending = playing.copyWith(
+      position: const Duration(milliseconds: 58500),
+      buffered: const Duration(seconds: 58),
+    );
+    health.update(ending, Duration.zero, paired: true);
+    expect(
+      health.update(ending, const Duration(milliseconds: 250), paired: true),
+      isNull,
+    );
+  });
+
+  test('audio EOF beyond the end guard still fails', () {
+    final failing = playing.copyWith(
+      position: const Duration(seconds: 56),
+      buffered: const Duration(seconds: 59),
+    );
+    health.update(
+      failing,
+      Duration.zero,
+      paired: true,
+      audioPosition: const Duration(seconds: 55),
+    );
+    expect(
+      health
+          .update(
+            failing.copyWith(position: const Duration(milliseconds: 56500)),
+            const Duration(milliseconds: 250),
+            paired: true,
+            audioPosition: const Duration(seconds: 55),
+          )
+          ?.kind,
+      PlayerFailureKind.nativePlayback,
+    );
+  });
+
   test('an unknown duration cannot hide a single surviving track', () {
     final snapshot = playing.copyWith(duration: Duration.zero);
     health.update(snapshot, Duration.zero, paired: true);
