@@ -8,6 +8,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [Windows ARM64 悬停预览闪退](validation/windows-arm64-preview-crash-2026-11-09.md) | #100 的 OpenGL 能力错配、SDK 替换、原生降级与初始化错误传播、离线验证及实机边界 |
 | [官方客户端文字排版对齐](validation/official-client-typography-2026-11-09.md) | HarmonyOS 字体核对、文字层级与频道字号、评论各部分样式及昵称色、楼中楼详情返回 |
 | [动态页 UP 主筛选](validation/dynamic-author-filter-2026-11-08.md) | 动态／视频动态共享作者目录、宽窄布局、请求与滚动生命周期、离线回归和实机边界 |
 | [Android fvp 音频定位阻塞](validation/android-fvp-seek-audio-2026-11-08.md) | 点击进度条久等、音频目标静音确认、SDK 固定参数与 APK 产物校验、手机双后端回归 |
@@ -33,7 +34,7 @@
 | [解码与输出设置](validation/gpu-device-settings-2026-11-07.md) | Android 直出入口常驻、后端切换、GPU 选择移除、旧设置兼容与验证边界 |
 | [fvp 直出启动黑屏修复](validation/android-fvp-direct-black-2026-11-07.md) | 空纹理消费误报、原生暂停屏障、连续打开及截图像素回归 |
 | [Android 解码直出与 SurfaceView](validation/android-surface-output-2026-11-07.md) | 两后端纹理直出实验设置、4K60 H.264 约 25 Mbps／3× 实机对照、HC／HCPP 原型与限制 |
-| [迷你小窗与置顶](validation/mini-player-2026-11-07.md) | 桌面置顶、尺寸与位置恢复，Android 画中画、移动应用内浮窗和平台验证边界 |
+| [迷你小窗与置顶](validation/mini-player-2026-11-07.md) | 桌面置顶、尺寸与位置恢复，Android 画中画、移动应用内浮窗，以及 #102 关闭黑屏与 macOS 关闭竞态修复 |
 | [可选 fvp 播放后端](validation/fvp-backend-2026-11-07.md) | 默认 media_kit、设置切换、固定 MDK 资产、分轨与生命周期、实机对照边界 |
 | [Android fvp 原生进程隔离](validation/android-fvp-process-isolation-2026-11-07.md) | 子进程崩溃保留主界面、脱敏诊断、显式重新打开及受控故障验证 |
 | [两后端统一缓冲窗口](validation/unified-buffer-window-2026-11-07.md) | 普通播放最多 2 分钟、预览 5 秒、相同素材的原生对照验证 |

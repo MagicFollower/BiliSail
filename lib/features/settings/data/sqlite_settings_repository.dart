@@ -142,6 +142,7 @@ class SqliteSettingsRepository implements SettingsRepository {
           ? danmakuFontScale
           : defaultDanmakuFontScale,
       autoPlay: boolean('autoPlay', true),
+      backgroundPlayback: boolean('backgroundPlayback', true),
       defaultShowComments: boolean('defaultShowComments', false),
       videoCardHoverPlayback: boolean(
         'videoCardHoverPlayback',
@@ -281,10 +282,10 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 44 carries upstream's newest keys next to this branch's dock/liquid-card
-        // keys; the reader never branches on this number, it only states what the
-        // payload holds (F73 口径).
-        'schemaVersion': 44,
+        // 45 carries upstream's mobile background-playback key next to this
+        // branch's dock/liquid-card keys; the reader never branches on this
+        // number, it only states what the payload holds (F73 口径).
+        'schemaVersion': 45,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
@@ -317,6 +318,7 @@ class SqliteSettingsRepository implements SettingsRepository {
         'danmakuShowVip': value.danmakuShowVip,
         'danmakuFontScale': value.danmakuFontScale,
         'autoPlay': value.autoPlay,
+        'backgroundPlayback': value.backgroundPlayback,
         'defaultShowComments': value.defaultShowComments,
         'videoCardHoverPlayback': value.videoCardHoverPlayback,
         'continuousPlayback': value.continuousPlayback,

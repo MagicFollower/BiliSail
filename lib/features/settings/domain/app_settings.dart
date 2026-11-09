@@ -89,6 +89,7 @@ final class AppSettings {
     this.danmakuFontScale = 1.0,
     this.danmakuSendStyle = (mode: 1, color: 0xffffff, colorful: false),
     this.autoPlay = true,
+    this.backgroundPlayback = true,
     this.defaultShowComments = false,
     this.videoCardHoverPlayback = true,
     bool? continuousPlayback,
@@ -187,6 +188,7 @@ final class AppSettings {
        danmakuOpacity = 0.8,
        danmakuSendStyle = (mode: 1, color: 0xffffff, colorful: false),
        autoPlay = true,
+       backgroundPlayback = true,
        defaultShowComments = false,
        continuousPlayback = false,
        continuousRelatedPlayback = false,
@@ -278,6 +280,7 @@ final class AppSettings {
   final double danmakuFontScale;
   final ({int mode, int color, bool colorful}) danmakuSendStyle;
   final bool autoPlay;
+  final bool backgroundPlayback;
   final bool defaultShowComments;
   final bool videoCardHoverPlayback;
   final bool continuousPlayback;
@@ -372,6 +375,7 @@ final class AppSettings {
     double? danmakuFontScale,
     ({int mode, int color, bool colorful})? danmakuSendStyle,
     bool? autoPlay,
+    bool? backgroundPlayback,
     bool? defaultShowComments,
     bool? videoCardHoverPlayback,
     bool? continuousPlayback,
@@ -452,6 +456,7 @@ final class AppSettings {
     danmakuFontScale: danmakuFontScale ?? this.danmakuFontScale,
     danmakuSendStyle: danmakuSendStyle ?? this.danmakuSendStyle,
     autoPlay: autoPlay ?? this.autoPlay,
+    backgroundPlayback: backgroundPlayback ?? this.backgroundPlayback,
     defaultShowComments: defaultShowComments ?? this.defaultShowComments,
     videoCardHoverPlayback:
         videoCardHoverPlayback ?? this.videoCardHoverPlayback,
