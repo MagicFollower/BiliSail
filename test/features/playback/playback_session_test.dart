@@ -34,6 +34,284 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final action in [
+    ShortcutAction.seekBack,
+    ShortcutAction.seekForward,
+    ShortcutAction.seekLarge,
+  ]) {
+    test(
+      'rapid $action accumulates before the backend confirms position',
+      () async {
+        final engine = _FakeEngine(openDuration: const Duration(minutes: 10));
+        final session = PlaybackSession(
+          engine: engine,
+          repository: _FakeRepository(autoResolve: true),
+          progress: _FakeProgress(),
+          accountScope: () => 'guest',
+        );
+        addTearDown(session.close);
+        await session.open(_detail('one'), _part('one'));
+        engine.emit(
+          engine.currentSnapshot.copyWith(
+            position: const Duration(seconds: 60),
+          ),
+        );
+        final shortcuts = PlaybackShortcutController(
+          session: session,
+          settings: () => const ShortcutSettings.defaults(),
+          active: () => true,
+          fullscreen: () => false,
+          toggleFullscreen: () {},
+          toggleDanmaku: () {},
+          volumeFeedback: (_) {},
+        );
+        addTearDown(shortcuts.dispose);
+        final gates = <Completer<void>>[];
+        final commands = <Future<Object?>>[];
+        for (var index = 0; index < 3; index++) {
+          final gate = Completer<void>();
+          gates.add(gate);
+          engine.nextSeek = gate;
+          // Right-arrow short taps commit on release; left-arrow also repeats.
+          if (action == ShortcutAction.seekForward) {
+            await shortcuts.execute(
+              action,
+              InputStroke(
+                identity: 'seek',
+                device: InputDevice.keyboard,
+                phase: InputPhase.down,
+                sequence: index * 2,
+                chord: const ShortcutChord('ArrowRight'),
+              ),
+            );
+          }
+          commands.add(
+            shortcuts.execute(
+              action,
+              InputStroke(
+                identity: 'seek',
+                device: InputDevice.keyboard,
+                phase: action == ShortcutAction.seekForward
+                    ? InputPhase.up
+                    : index == 0
+                    ? InputPhase.down
+                    : InputPhase.repeat,
+                sequence: index * 2 + 1,
+              ),
+            ),
+          );
+        }
+        final step = switch (action) {
+          ShortcutAction.seekBack => -3,
+          ShortcutAction.seekLarge => 90,
+          _ => 3,
+        };
+        final expected = List.generate(
+          3,
+          (index) => Duration(seconds: 60 + step * (index + 1)),
+        );
+        expect(engine.seekTargets, expected);
+        expect(engine.currentSnapshot.position, const Duration(seconds: 60));
+        for (final gate in gates) {
+          gate.complete();
+        }
+        await Future.wait(commands);
+        expect(engine.currentSnapshot.position, expected.last);
+      },
+    );
+  }
+  for (final boundary in [
+    (start: 1, step: -3, target: 0),
+    (start: 119, step: 3, target: 120),
+  ]) {
+    test(
+      'relative seek does not restart preparation at ${boundary.target}s',
+      () async {
+        final engine = _FakeEngine();
+        final session = PlaybackSession(
+          engine: engine,
+          repository: _FakeRepository(autoResolve: true),
+          progress: _FakeProgress(),
+          accountScope: () => 'guest',
+        );
+        addTearDown(session.close);
+        await session.open(_detail('one'), _part('one'));
+        engine.emit(
+          engine.currentSnapshot.copyWith(
+            position: Duration(seconds: boundary.start),
+          ),
+        );
+        final gate = Completer<void>();
+        engine.nextSeek = gate;
+        final seeking = session.seekBy(Duration(seconds: boundary.step));
+        for (var index = 0; index < 20; index++) {
+          await session.seekBy(Duration(seconds: boundary.step));
+        }
+        expect(engine.seekTargets, [Duration(seconds: boundary.target)]);
+        gate.complete();
+        await seeking;
+        await session.seekBy(Duration(seconds: boundary.step));
+        expect(engine.seekTargets, hasLength(1));
+        await session.seekBy(Duration(seconds: -boundary.step));
+        expect(
+          engine.currentSnapshot.position,
+          Duration(seconds: boundary.target - boundary.step),
+        );
+      },
+    );
+  }
+  test('relative seek follows absolute targets, direction changes and confirmed playback', () async {
+    final engine = _FakeEngine();
+    final session = PlaybackSession(
+      engine: engine,
+      repository: _FakeRepository(autoResolve: true),
+      progress: _FakeProgress(),
+      accountScope: () => 'guest',
+    );
+    addTearDown(session.close);
+    await session.open(_detail('one'), _part('one'));
+    engine.emit(
+      engine.currentSnapshot.copyWith(position: const Duration(seconds: 60)),
+    );
+    final absoluteGate = Completer<void>();
+    engine.nextSeek = absoluteGate;
+    final absolute = session.seek(const Duration(seconds: 20));
+    final backwardGate = Completer<void>();
+    engine.nextSeek = backwardGate;
+    final backward = session.seekBy(const Duration(seconds: -3));
+    absoluteGate.complete();
+    await absolute;
+    final forwardGate = Completer<void>();
+    engine.nextSeek = forwardGate;
+    final forward = session.seekBy(const Duration(seconds: 3));
+    expect(engine.seekTargets, [
+      const Duration(seconds: 20),
+      const Duration(seconds: 17),
+      const Duration(seconds: 20),
+    ]);
+    backwardGate.complete();
+    await backward;
+    forwardGate.complete();
+    await forward;
+    engine.emit(
+      engine.currentSnapshot.copyWith(position: const Duration(seconds: 25)),
+    );
+    await session.seekBy(const Duration(seconds: -3));
+    expect(engine.seekTargets.last, const Duration(seconds: 22));
+  });
+  test(
+    'relative seek ignores old source targets and late completion',
+    () async {
+      final engine = _FakeEngine();
+      final session = PlaybackSession(
+        engine: engine,
+        repository: _FakeRepository(autoResolve: true),
+        progress: _FakeProgress(),
+        accountScope: () => 'guest',
+      );
+      addTearDown(session.close);
+      await session.open(_detail('one'), _part('one'));
+      engine.emit(
+        engine.currentSnapshot.copyWith(position: const Duration(seconds: 60)),
+      );
+      final oldGate = Completer<void>();
+      engine.nextSeek = oldGate;
+      final old = session.seekBy(const Duration(seconds: -3));
+      await session.open(
+        _detail('two'),
+        _part('two'),
+        position: const Duration(seconds: 30),
+      );
+      final currentGate = Completer<void>();
+      engine.nextSeek = currentGate;
+      final current = session.seekBy(const Duration(seconds: -3));
+      oldGate.complete();
+      await old;
+      final latestGate = Completer<void>();
+      engine.nextSeek = latestGate;
+      final latest = session.seekBy(const Duration(seconds: -3));
+      expect(engine.seekTargets, [
+        const Duration(seconds: 57),
+        const Duration(seconds: 27),
+        const Duration(seconds: 24),
+      ]);
+      currentGate.complete();
+      await current;
+      latestGate.complete();
+      await latest;
+      expect(engine.currentSnapshot.position, const Duration(seconds: 24));
+    },
+  );
+  for (final failure in [
+    const PlayerFailure(
+      PlayerFailureKind.nativePlayback,
+      'fixture seek failure',
+      0,
+    ),
+    StateError('fixture seek error'),
+  ]) {
+    test(
+      'relative seek discards target after ${failure.runtimeType}',
+      () async {
+        final engine = _FakeEngine();
+        final session = PlaybackSession(
+          engine: engine,
+          repository: _FakeRepository(autoResolve: true),
+          progress: _FakeProgress(),
+          accountScope: () => 'guest',
+        );
+        addTearDown(session.close);
+        await session.open(_detail('one'), _part('one'));
+        engine.emit(
+          engine.currentSnapshot.copyWith(
+            position: const Duration(seconds: 60),
+          ),
+        );
+        final gate = Completer<void>();
+        engine.nextSeek = gate;
+        final seeking = session.seekBy(const Duration(seconds: -3));
+        final result = failure is PlayerFailure
+            ? expectLater(seeking, completes)
+            : expectLater(seeking, throwsA(same(failure)));
+        gate.completeError(failure);
+        await result;
+        await session.seekBy(const Duration(seconds: -3));
+        expect(engine.seekTargets, [
+          const Duration(seconds: 57),
+          const Duration(seconds: 57),
+        ]);
+      },
+    );
+  }
+  test(
+    'superseded seek completion does not save an obsolete checkpoint',
+    () async {
+      final engine = _FakeEngine();
+      final progress = _FakeProgress();
+      final session = PlaybackSession(
+        engine: engine,
+        repository: _FakeRepository(autoResolve: true),
+        progress: progress,
+        accountScope: () => 'guest',
+      );
+      addTearDown(session.close);
+      await session.open(_detail('one'), _part('one'));
+      progress.writes.clear();
+      final firstGate = Completer<void>();
+      engine.nextSeek = firstGate;
+      final first = session.seek(const Duration(seconds: 20));
+      final latestGate = Completer<void>();
+      engine.nextSeek = latestGate;
+      final latest = session.seek(const Duration(seconds: 40));
+      firstGate.complete();
+      await first;
+      expect(progress.writes, isEmpty);
+      latestGate.complete();
+      await latest;
+      expect(progress.writes, hasLength(1));
+      expect(engine.currentSnapshot.position, const Duration(seconds: 40));
+    },
+  );
   test(
     'member echoes retain style and obey display and color filters',
     () async {
@@ -581,6 +859,17 @@ void main() {
       );
     }
 
+    test('a dead native process waits for explicit reopen instead of automatic retry', () async {
+      interrupt(kind: PlayerFailureKind.nativeProcessExited);
+      await _flush();
+      expect(engine.openOptions, hasLength(1));
+      expect(session.error, 'video interrupted');
+      expect(session.isRecovering, false);
+      await session.open(_detail('two'), _part('two'));
+      expect(engine.openOptions, hasLength(2));
+      expect(session.error, isNull);
+    });
+
     test('reloads at video boundary, retaining quality/rate/volume', () async {
       interrupt();
       await _flush();
@@ -613,6 +902,43 @@ void main() {
       );
       expect(session.error, isNull);
     });
+
+    test(
+      'recovery holds the timeline through resolution and native preparation',
+      () async {
+        repository.autoResolve = false;
+        final stops = engine.stopCount;
+        interrupt(kind: PlayerFailureKind.nativePlayback);
+        final held = session.snapshots.value;
+        final snapshots = <PlaybackSnapshot>[];
+        session.snapshots.addListener(
+          () => snapshots.add(session.snapshots.value),
+        );
+        await _flush();
+        expect(session.isRecovering, true);
+        expect(session.snapshots.value.position, held.position);
+        expect(session.snapshots.value.duration, held.duration);
+        expect(engine.stopCount, stops);
+        final preparing = Completer<void>();
+        engine.nextOpen = preparing;
+        repository.completeResolve('one');
+        await _flush();
+        expect(engine.openOptions.last.retainPresentation, true);
+        expect(session.snapshots.value.position, held.position);
+        expect(session.snapshots.value.duration, held.duration);
+        preparing.complete();
+        await _flush();
+        expect(session.isRecovering, false);
+        expect(snapshots, isNotEmpty);
+        expect(
+          snapshots.every(
+            (s) => s.position == held.position && s.duration == held.duration,
+          ),
+          true,
+        );
+        expect(snapshots.any((s) => s.phase == PlaybackPhase.idle), false);
+      },
+    );
 
     test(
       'interrupted media prefers refreshed backup URLs for both tracks',
@@ -650,6 +976,8 @@ void main() {
         interrupt();
         await _flush();
         expect(engine.openOptions, hasLength(2));
+        expect(engine.openOptions.last.retainPresentation, true);
+        expect(engine.stopCount, 1);
         await Future<void>.delayed(const Duration(milliseconds: 1100));
         expect(engine.openOptions, hasLength(3));
         interrupt();
@@ -921,6 +1249,49 @@ void main() {
           expect(session.error, '未取得点播音频轨道');
           expect(engine.sources, isEmpty);
         }
+      },
+    );
+  }
+
+  for (final playing in [false, true]) {
+    test(
+      'confirmed silent DASH preserves playback intent=$playing and seek',
+      () async {
+        final engine = _FakeEngine();
+        final repository = _FakeRepository(autoResolve: true)
+          ..resolvedMedia = PlaybackMedia(
+            video: PlaybackTrack(
+              urls: [Uri.https('cdn.example', '/silent.mp4')],
+              codec: 'avc1',
+              bandwidth: 1000,
+            ),
+            audio: null,
+            isIntentionallySilent: true,
+            quality: 80,
+            qualities: const [80],
+            duration: const Duration(minutes: 2),
+            headers: const {},
+          );
+        final session = PlaybackSession(
+          engine: engine,
+          repository: repository,
+          progress: _FakeProgress(),
+          accountScope: () => 'guest',
+        );
+        addTearDown(session.close);
+        await session.open(
+          _detail('one'),
+          _part('one'),
+          desiredPlaying: playing,
+        );
+        expect(session.error, isNull);
+        final source = engine.sources.single as DashPairSource;
+        expect(source.isIntentionallySilent, isTrue);
+        expect(source.audio, isNull);
+        expect(session.canListen, isFalse);
+        expect(engine.currentSnapshot.desiredPlaying, playing);
+        await session.seek(const Duration(seconds: 5));
+        expect(engine.currentSnapshot.position, const Duration(seconds: 5));
       },
     );
   }
@@ -1978,6 +2349,8 @@ void main() {
         expect(engine.currentSnapshot.volume, 42);
         expect(engine.currentSnapshot.phase, PlaybackPhase.playing);
         expect(engine.maxSimultaneousPlayers, 1);
+        expect(engine.openOptions.last.retainPresentation, true);
+        expect(engine.stopCount, 1);
         expect(session.error, isNull);
       },
     );
@@ -3874,7 +4247,14 @@ void main() {
     },
   );
 
-  for (final action in ['seek', 'stop', 'close', 'disable', 'account']) {
+  for (final action in [
+    'seek',
+    'replay',
+    'stop',
+    'close',
+    'disable',
+    'account',
+  ]) {
     test('late cloud progress is discarded after $action', () async {
       var scope = 'user:1';
       final engine = _FakeEngine();
@@ -3892,6 +4272,14 @@ void main() {
       switch (action) {
         case 'seek':
           await session.seek(const Duration(seconds: 10));
+        case 'replay':
+          engine.emit(
+            engine.currentSnapshot.copyWith(
+              phase: PlaybackPhase.ended,
+              position: engine.currentSnapshot.duration,
+            ),
+          );
+          await session.togglePlaying();
         case 'stop':
           await session.stop();
         case 'close':
@@ -3907,10 +4295,11 @@ void main() {
       }
       gate.complete(const Duration(seconds: 42));
       await _flush();
-      expect(
-        engine.seekTargets,
-        action == 'seek' ? [const Duration(seconds: 10)] : isEmpty,
-      );
+      expect(engine.seekTargets, switch (action) {
+        'seek' => [const Duration(seconds: 10)],
+        'replay' => [Duration.zero],
+        _ => isEmpty,
+      });
       expect(session.error, isNull);
       if (action == 'stop' || action == 'close' || action == 'account') {
         expect(history.reports, isEmpty);
@@ -4408,7 +4797,7 @@ void main() {
         expect(content.codecs, [VideoCodecPreference.av1]);
         expect(
           engine.openOptions.single.maxBufferAhead,
-          const Duration(minutes: 5),
+          const Duration(minutes: 2),
         );
         expect(
           engine.openOptions.single.videoDecoding,
@@ -5095,7 +5484,7 @@ void main() {
     expect(engine.openOptions.single.volume, 35);
     expect(
       engine.openOptions.single.maxBufferAhead,
-      const Duration(minutes: 5),
+      const Duration(minutes: 2),
     );
     expect(engine.currentSnapshot.phase, PlaybackPhase.paused);
     expect(sponsor.pending, isEmpty);
@@ -6189,7 +6578,8 @@ PlaybackManager _manager({
   final rates = rateMemory ?? PlaybackRateMemory();
   final volumes = volumeMemory ?? PlaybackVolumeMemory();
   return PlaybackManager(
-    createSession: () => PlaybackSession(
+    createSession: (sleepTimer) => PlaybackSession(
+      sleepTimer: sleepTimer,
       engine: _FakeEngine(),
       repository: repository ?? _FakeRepository(autoResolve: true),
       progress: _FakeProgress(),
@@ -6659,6 +7049,7 @@ final class _FakeEngine implements PlayerEngine, AudioGainControl {
   bool disposed = false;
   bool subscriptionsActiveAtDispose = false;
   int _players = 0;
+  int _playRevision = 0;
   final openedUris = <Uri>[];
   final openOptions = <OpenOptions>[];
   final sources = <ResolvedMediaSource>[];
@@ -6711,6 +7102,9 @@ final class _FakeEngine implements PlayerEngine, AudioGainControl {
 
   @override
   Future<void> open(ResolvedMediaSource source, OpenOptions options) async {
+    ++_playRevision;
+    // Same-source recovery delegates replacement/release to PlayerEngine.open.
+    if (options.retainPresentation) _players = 0;
     _players++;
     if (_players > maxSimultaneousPlayers) maxSimultaneousPlayers = _players;
     sources.add(source);
@@ -6756,11 +7150,16 @@ final class _FakeEngine implements PlayerEngine, AudioGainControl {
   @override
   Future<void> play() async {
     playCount++;
+    final revision = ++_playRevision;
     final generation = _current.generation;
     final pending = nextPlay;
     nextPlay = null;
     if (pending != null) await pending.future;
-    if (disposed || generation != _current.generation) return;
+    if (disposed ||
+        generation != _current.generation ||
+        revision != _playRevision) {
+      return;
+    }
     if (playFailuresRemaining > 0) {
       playFailuresRemaining--;
       emit(
@@ -6779,6 +7178,7 @@ final class _FakeEngine implements PlayerEngine, AudioGainControl {
 
   @override
   Future<void> pause() async {
+    ++_playRevision;
     pauseCount++;
     final pending = nextPause;
     nextPause = null;
@@ -6829,6 +7229,7 @@ final class _FakeEngine implements PlayerEngine, AudioGainControl {
 
   @override
   Future<void> stop() async {
+    ++_playRevision;
     stopCount++;
     if (failStop) throw StateError('stop failed');
     _players = 0;

@@ -1,5 +1,17 @@
 # API、鉴权与数据边界
 
+2026-11-08 我的关注增加 Web Cookie 全量搜索（WBI `/x/relation/followings/search`）、黑名单分页、关注排序及分组新建／重命名／删除／排序。写入沿用 Web Cookie／CSRF 单次提交，结果不明需刷新，管理端口只允许本人账号。端点、字段、取消与验证边界见[关注／粉丝卡片与管理](validation/profile-relations-2026-11-08.md)。
+
+2026-11-05 空间反馈修复复用 `api.bilibili.com` Web JSON 端点：基本资料 GET `/x/web-interface/card` 增加 `photo=true`，解析响应中的 `space.l_img/s_img` 作为头图；GET `/x/space/setting?mid=...` 读取 `privacy.fav_video/bangumi`，区分收藏夹及追番／追剧隐藏状态，本人查看不受访客隐私限制。两项读取 Cookie 可选，无签名、CSRF 或分页，沿用取消、25 秒总 deadline 与有界只读重试。黑名单状态使用当前 Web Cookie GET `/x/relation?fid=...`，无签名、CSRF 或分页；显式确认后 POST `/x/relation/modify`，字段 `fid/act=5或6/re_src=11`，使用当前 Web Cookie／CSRF，仅尝试一次。账号 scope/session epoch 及页面生命周期隔离迟到结果；细节、参考与线上未验收项见[空间修复](validation/profile-fixes-2026-11-05.md)。
+
+同日按用户要求将主页举报改为应用内表单，显式点击提交后单次 form-urlencoded POST `https://space.bilibili.com/ajax/report/add`，Web profile、目标域 Cookie/CSRF，参数 `mid/reason` 和可选 `reason_v2`；不需要签名、App token 或分页。响应严格检查旧式 JSON 布尔 `status`，保留认证/风控 `code` 错误；账号 epoch、取消、25 秒总 deadline 和写入不重试沿用共享通道。参考、编码、结果不明处理和真实账号未验收边界见[应用内举报](validation/profile-report-2026-11-05.md)。
+
+2026-11-05 主页补充五个 `api.bilibili.com` Web JSON 只读 GET：`/x/space/wbi/acc/info`（`mid/platform=web/web_location=1550101/token`，WBI，空间 Referer/Origin 和桌面浏览器 UA，无分页）、`/x/polymer/web-space/seasons_series_list`（`mid/page_num/page_size=10`，合集/系列目录）、`/x/polymer/web-space/seasons_archives_list`（`mid/season_id/page_num/page_size=30/sort_reverse=false`）、`/x/series/archives`（`mid/series_id/pn/ps=30/sort=asc`）和 `/x/space/bangumi/follow/list`（`vmid/type=1或2/pn/ps=30`，追番/追剧）。除资料端点外无签名；Cookie 可选，无 CSRF/App token，分页依据服务端 total，空页停止。均沿用 ApiRequests 的 25 秒总 deadline、账号 epoch、取消和有界读重试；风控不自动重放，资料失败不阻塞基本用户卡。公开合集与追番/追剧读取通过，扩展资料游客请求返回 `-352`；协议与未验收边界见[主页重构方案](ui-redesign/profile-redesign-2026-11-05.md)。
+
+2026-11-05 消息第二轮扩展 Web IM 表情面板、`biz=im` 图片上传、内容推送／消息设置、屏蔽词、黑名单和举报。通知回复严格使用 `business_id/subject_id/source_id/root_id`，复用现有评论写端点。批量已读为用户确认范围内逐会话 `update_ack`，`ack_sessions` 仅同步已读变更；全部写入保持单次执行、账号／取消／deadline 隔离。端点与未验收边界见[消息表情、发送与管理入口](validation/messages-rich-composition-2026-11-05.md)。
+
+2026-11-05 消息管理新增 Web Cookie JSON 响应的三个单次 form-urlencoded POST，host 为 `api.vc.bilibili.com`：`/session_svr/v1/session_svr/set_top`（`talker_id/session_type=1/op_type`，0 置顶、1 取消）、`/link_setting/v1/link_setting/set_msg_dnd`（`uid/dnd_uid/setting`，1 开启、0 关闭）和 `/session_svr/v1/session_svr/remove_session`（`talker_id/session_type=1`）。均复用固定目标域 Cookie/CSRF、25 秒总 deadline、取消/epoch 与写请求不重试，不需要 App token，无分页。官方公开脚本核对到路径和参数，不等于真实账号写操作已验收；消息富内容、来源与测试见[消息中心重构](validation/messages-redesign-2026-11-05.md)。
+
 2026-11-03 会员弹幕复用现有 Web Cookie／CSRF 单次写端点 `POST https://api.bilibili.com/x/v2/dm/post`，请求为 form-urlencoded；会员样式增加 `colorful=60001` 并使用白色底色，普通样式省略该字段。读取仍走现有 HTTP Protobuf 分段，解析字段 24；权益提示来自会话验证的 `/x/web-interface/nav`。不新增重试或分页规则，写结果不明时不自动重放；字段、来源和真实账号未验收边界见 [专项记录](validation/vip-danmaku-2026-11-03.md)。
 
 2026-11-01 UGC 主播放参考 PiliPlus 补齐 WBI 签名前的 `fnver=0` 和 Web 播放上下文，仓储先请求 `qn=129` 再按实际 DASH 应用画质／编码偏好，必要时有界补取缺失的较低档位。保留语音参数、账号／取消隔离和完整音视频分轨要求；协议对照、在线证据及大会员 1080P60 未验收边界见[专项记录](validation/playurl-quality-2026-11-01.md)。
@@ -126,6 +138,7 @@ ApiPage<T> { items, nextCursor, hasMore }
 | 评论 M3 | CommentClient 中的读取及写入方法 | K `Services/Services.Comment/Core/CommentClient.cs` | CommentRepository；root/rpid、游标，先读后写 |
 | 评论发送扩展 | Web `mention/search`、`upload_bfs`、`reply/add` | PiliPlus 指定提交的发布页与 HTTP 字段 | 共享 CommentsController；@映射、图片 multipart 单次上传、显式同步动态，见 [协议与验证](validation/comment-composer-2026-10-31.md) |
 | 动态/用户 M3 | MomentClient、MyClient、RelationshipService | K Services.Moment、Services.User | 各模块单独登记可用协议，MVP 不承诺完整 gRPC 迁移 |
+| 动态 UP 主筛选 | Web `portal`、`uplist`、`feed/all` 的 `host_mid` | PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` HTTP 动态接口及官网脚本 | Cookie JSON 只读，目录／内容游标独立、账号与工作区隔离，见 [协议与验证](validation/dynamic-author-filter-2026-11-08.md) |
 | 动态分享/评论/点赞（提前实现） | Web `/x/dynamic/feed/dyn/thumb`、`/x/dynamic/feed/create/dyn`，复用 `/x/v2/reply/*` | U DynamicAPI / 动态详情；K MomentAdapter / CommentTargetType；官网动态 Web 脚本 | 独立 DynamicRepository、共用 CommentsRepository；按 basic 评论身份隔离，JSON query CSRF 单次写，见 [动态交互登记](validation/dynamic-interactions.md) |
 | 账号摘要与消息（提前实现） | `/x/web-interface/nav/stat`、`/x/msgfeed/*`、VC 会话/私信、`/x/sys-msg/query_user_notify` | U HomePage、MessageApi；K MessageService、MyClient | AccountClient/MessageClient；Web Cookie、十进制游标、CSRF 单次写、账号隔离；见 [实测登记](validation/account-messages.md) |
 | PGC M4 | GetPgcPageDetailAsync / GetPgcPlayDetailAsync | K PlayerClient、PgcClient | PgcRepository；season/episode、权益和区域结果 |
@@ -241,3 +254,6 @@ Protobuf 只引入所需消息及传递依赖，记录源提交、生成器版�
 
 首轮至少取得 guest 与 signed-in 的详情、搜索、playurl、弹幕响应对照；建立“参考实现 → fixture → Dart 测试 → 真实烟测”的证据链后再宣称接入完成。[Dio 的能力和配置](https://pub.dev/packages/dio) 仅支撑传输选型，具体鉴权策略以本项目验证为准。
 
+## 直播进房与多类型历史（2026-11-07）
+
+直播进入已激活房间后使用 `api.live.bilibili.com` POST `/xlive/web-room/v1/index/roomEntryAction`，Web Cookie、查询参数 CSRF、JSON `room_id/platform`，单次上报不重放。关注直播使用同域 GET `/xlive/web-ucenter/user/following`，按 `totalPage` 显式分页、只展示在播主播。历史列表与搜索增加直播、专栏、文集和课程，保留真实业务身份与删除键；视频统计仅补齐点播条目。协议字段、PiliPlus 固定来源、账号与生命周期边界及未测项见[直播与多类型历史](validation/live-history-types-2026-11-07.md)。

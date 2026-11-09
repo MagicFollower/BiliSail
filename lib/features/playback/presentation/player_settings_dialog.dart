@@ -4,21 +4,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/ui/app_dialog.dart';
-import '../../../domain/playback_rates.dart';
+import '../../../shared/ui/playback_rate_options_setting.dart';
 import '../../../shared/ui/danmaku_settings_controls.dart';
 import '../../../shared/ui/player_controls_mode_setting.dart';
 import '../../settings/application/settings_controller.dart';
 import '../../settings/domain/app_settings.dart';
+import '../application/playback_session.dart';
+import 'player_information_tab.dart';
 
-Future<void> showPlayerSettings(BuildContext context, {int tab = 0}) =>
-    showAppDialog<void>(
-      context: context,
-      builder: (_) => _PlayerSettingsDialog(tab: tab),
-    );
+Future<void> showPlayerSettings(
+  BuildContext context, {
+  int tab = 0,
+  PlaybackSession? session,
+}) => showAppDialog<void>(
+  context: context,
+  builder: (_) => _PlayerSettingsDialog(tab: tab, session: session),
+);
 
 class _PlayerSettingsDialog extends ConsumerStatefulWidget {
-  const _PlayerSettingsDialog({required this.tab});
+  const _PlayerSettingsDialog({required this.tab, this.session});
   final int tab;
+  final PlaybackSession? session;
   @override
   ConsumerState<_PlayerSettingsDialog> createState() =>
       _PlayerSettingsDialogState();
@@ -86,7 +92,7 @@ class _PlayerSettingsDialogState extends ConsumerState<_PlayerSettingsDialog> {
     }
     final s = settings;
     return DefaultTabController(
-      length: 4,
+      length: 5,
       initialIndex: widget.tab,
       child: Dialog(
         child: SizedBox(
@@ -117,6 +123,7 @@ class _PlayerSettingsDialogState extends ConsumerState<_PlayerSettingsDialog> {
                   Tab(text: '弹幕'),
                   Tab(text: '字幕'),
                   Tab(text: '空降助手'),
+                  Tab(text: '实时播放信息'),
                 ],
               ),
               if (_error != null)
@@ -146,9 +153,48 @@ class _PlayerSettingsDialogState extends ConsumerState<_PlayerSettingsDialog> {
                           ),
                         ),
                         _switch(
-                          '自动播放新视频',
+                          '自动播放',
                           s.autoPlay,
                           (c, v) => c.copyWith(autoPlay: v),
+                        ),
+                        ListTile(
+                          title: const Text('播放模式'),
+                          subtitle: DropdownButton<PlaybackMode>(
+                            isExpanded: true,
+                            value: s.playbackMode,
+                            items: [
+                              for (final mode in PlaybackMode.values)
+                                DropdownMenuItem(
+                                  value: mode,
+                                  child: Text(mode.label),
+                                ),
+                            ],
+                            onChanged: (mode) {
+                              if (mode != null) {
+                                unawaited(
+                                  _update(
+                                    (c) => c.copyWith(playbackMode: mode),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                        _switch(
+                          '双指缩小视频（0.75–2 倍）',
+                          s.playerShrinkVideo,
+                          (c, v) => c.copyWith(playerShrinkVideo: v),
+                        ),
+                        _switch(
+                          '中部滑动切换全屏',
+                          s.playerFullscreenGesture,
+                          (c, v) => c.copyWith(playerFullscreenGesture: v),
+                        ),
+                        _switch(
+                          '全屏手势反向',
+                          s.playerFullscreenGestureReverse,
+                          (c, v) =>
+                              c.copyWith(playerFullscreenGestureReverse: v),
                         ),
                         _switch(
                           '滑动调节亮度和音量（左侧亮度，右侧音量）',
@@ -265,13 +311,22 @@ class _PlayerSettingsDialogState extends ConsumerState<_PlayerSettingsDialog> {
                             },
                           ),
                         ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: PlaybackRateOptionsSetting(
+                            rates: s.playbackRates,
+                            onChanged: ref
+                                .read(settingsControllerProvider.notifier)
+                                .setPlaybackRates,
+                          ),
+                        ),
                         ListTile(
                           title: const Text('默认倍速'),
                           subtitle: DropdownButton<double>(
                             isExpanded: true,
                             value: s.defaultPlaybackRate,
                             items: [
-                              for (final rate in PlaybackRates.values)
+                              for (final rate in s.playbackRates)
                                 DropdownMenuItem(
                                   value: rate,
                                   child: Text('${rate}x'),
@@ -443,6 +498,7 @@ class _PlayerSettingsDialogState extends ConsumerState<_PlayerSettingsDialog> {
                         ),
                       ],
                     ),
+                    PlayerInformationTab(session: widget.session),
                   ],
                 ),
               ),

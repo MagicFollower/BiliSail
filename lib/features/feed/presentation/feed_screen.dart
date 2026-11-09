@@ -1,7 +1,4 @@
 import 'package:flutter/material.dart';
-
-import '../../../shared/ui/liquid_pull_refresh.dart';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/app_failure.dart';
@@ -23,6 +20,7 @@ import 'home_content.dart';
 import 'home_channel_swipe.dart';
 import 'popular_feed.dart';
 import 'feed_video_grid.dart';
+import 'dynamic_author_filter.dart';
 
 typedef _FeedContent = ({
   HomeChannel channel,
@@ -161,7 +159,7 @@ final class _FeedScreenState extends ConsumerState<FeedScreen> {
   @override
   Widget build(BuildContext context) {
     final onChanged = widget.onChannelChanged;
-    return onChanged == null
+    final content = onChanged == null
         ? _page(context, widget.channel, true)
         : HomeChannelSwipe(
             channel: widget.channel,
@@ -170,6 +168,13 @@ final class _FeedScreenState extends ConsumerState<FeedScreen> {
             channelGroups: widget.channelGroups,
             pageBuilder: _page,
           );
+    return DynamicFeedLayout(
+      visible:
+          widget.channel == HomeChannel.dynamic ||
+          widget.channel == HomeChannel.videoDynamic,
+      isSignedIn: widget.isSignedIn,
+      child: content,
+    );
   }
 }
 
@@ -525,7 +530,7 @@ final class _HomeChannelPageState extends ConsumerState<_HomeChannelPage> {
                   },
                   onRefresh: _refreshFeed,
                   refreshTooltip: '刷新视频',
-                  builder: (scrollController) => LiquidPullRefresh(
+                  builder: (scrollController) => RefreshIndicator(
                     onRefresh: _refreshFeed,
                     child: CustomScrollView(
                       key: PageStorageKey('feed-${channel.name}'),

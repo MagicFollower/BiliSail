@@ -1,16 +1,14 @@
 # 应用图标切换
 
-日期：2026-10-30；2026-10-31 补充 Dock 尺寸、侧边栏与 Windows Shell 同步；2026-11-02 新增「禁闭」并收敛为 Android 单平台。
+日期：2026-10-30；2026-10-31 补充 Dock 尺寸、侧边栏与 Windows Shell 同步；2026-11-06 修复设置页选中图标的明暗覆盖。
 
 ## 行为与边界
 
-**更正：** 下面的 Windows/macOS/iOS/Linux 章节写于 `f8e5506` 平台收敛之前，那四个工程与它们的原生适配器、集成测试、生成段落都已从本树删除，今天只有 Android 一条路径生效（`AppIconSurface` 只剩 `unsupported` 与 `launcher`）。这些章节按原样保留作历史，不要再据其寻找实现。
-
-设置外观分类提供“哔帆”（默认）、“粉红小电视”与“禁闭”三项，不提供蓝色选项或蓝色素材。小电视使用独立 [SVG](../../assets/branding/bilibili_source.svg) 与 [1254px 渲染图](../../assets/branding/bilibili_pink.png)，禁闭使用用户提供的 [ICO](../../assets/branding/dsconfinement_source.ico) 光栅化出的 [256px 源图](../../assets/branding/dsconfinement_icon.png)；来源、摘要和权利边界见[品牌说明](../../assets/branding/README.md)。
+设置外观分类仅提供“哔帆”和“粉红小电视”，默认哔帆，不提供蓝色选项或蓝色素材。小电视使用独立 [SVG](../../assets/branding/bilibili_source.svg) 与 [1254px 渲染图](../../assets/branding/bilibili_pink.png)，来源、摘要和权利边界见[品牌说明](../../assets/branding/README.md#可选图标2026-10-30)。
 
 | 平台 | 生效范围 | 保留的安装资源 |
 | --- | --- | --- |
-| Android | 三个 activity-alias 的桌面启动图标；API 33 起原子切换，旧系统先启用目标再禁用旧别名，主 Activity 不禁用 | 包管理器中的应用图标、旧手动固定入口可能仍使用安装图标；桌面可能延迟刷新 |
+| Android | 两个 activity-alias 的桌面启动图标；API 33 起原子切换，旧系统先启用目标再禁用旧别名，主 Activity 不禁用 | 包管理器中的应用图标、旧手动固定入口可能仍使用安装图标；桌面可能延迟刷新 |
 | iOS/iPadOS | 通过 `setAlternateIconName` 切换主屏幕图标，Xcode 为 iPhone/iPad 打包备用图标 | 系统负责提示及刷新 |
 | Windows | 运行窗口及任务栏的 Shell 图标属性，新播放窗口沿用；EXE/MSI 同步当前用户的已有开始菜单入口 | EXE、安装包、MSIX 的开始菜单资源、已有固定任务栏入口及其他快捷方式；Shell 最终显示仍需逐安装类型验收 |
 | macOS | 运行中的 Dock 图标；哔帆恢复系统默认，粉红小电视按专用 ICNS 和留白应用 | 应用 bundle、访达、启动台 |
@@ -23,6 +21,18 @@
 图标变更串行完成系统应用与设置保存后才发布选中值；失败时尝试恢复原生图标，后续主题等设置写入只合并已提交的图标，避免重新写入失败选择。移动端启动读取操作系统实际保留的选择并同步快照，避免 iOS 重复改图标提示，也修复原生完成而 SQLite 提交中断的状态；桌面启动按保存值重新应用。图标恢复失败保留其他设置并在选项中提示重试。
 
 Android 正式包与 `.test` 开发包使用各自 packageName，别名类名固定在生产 namespace；不访问其他包。首次从旧版本升级时，桌面对旧 MainActivity 固定入口的处理及位置保留需实机验收。
+
+## 设置页图标明暗覆盖（2026-11-06）
+
+图标预览原先放在 `ChoiceChip.avatar`。当前固定 Flutter SDK 的 Material 3 默认开启勾号，`RawChip` 在选中头像上通过 `BlendMode.srcATop` 绘制深色遮罩，再绘制勾号；因此应用图标本身参与选中动画和额外混合，打开页面、图片就绪或合成重绘时会进入改变图标明暗的绘制路径。问题位于设置页预览的绘制，与系统图标切换和偏好保存无关。
+
+[图标设置组件](../../lib/features/settings/presentation/app_icon_settings.dart)改为把 28 × 28 图片与名称放在普通内容区，保留 `ChoiceChip` 的选中背景、独立勾号和可访问选中状态。勾号不再覆盖图标，其他设置选项和各平台原生图标切换流程不变。
+
+新增[像素回归测试](../../test/features/settings/app_icon_settings_test.dart)，使用不依赖品牌素材像素分布的纯色图片，检查浅色／深色主题、320 逻辑像素宽度、两种图标往返切换、表单重新打开及后续帧的预览颜色，同时验证点击后的保存值和平台调用。修复前同一测试失败，修复后通过；最终图标专项共 8 项测试通过，两个 Dart 文件的格式、静态分析和 `git diff --check` 通过。Windows 普通入口 Debug 构建、热重载及设置页显示已验证，运行时未发现错误，验证后正常关闭本轮调试实例。
+
+全仓检查在同期自定义倍速改动过程中执行：`tool/check.ps1 -SkipPub` 完成打包边界检查后，因 `playback_rates.dart`、`sqlite_settings_repository.dart`、`app_settings.dart` 的格式检查失败退出。另行执行根测试阶段，4507 项通过、13 项 Windows 符号链接权限跳过、1 项同期新增的 `custom rates are editable from settings entry player=true` 失败（`settings_screen_test.dart` 找不到控件）；根静态分析还有 `playback_rate_options_setting.dart` 的 1 项 `curly_braces_in_flow_control_structures`。保留同期工作，不为本轮图标修复修改这些文件。四包测试阶段通过：`bili_api` 677、`bili_player` 170、`bili_danmaku` 161、`bili_mux` 5；mux 另有 10 项因未配置 `BILI_MUX_LIBRARY` 跳过，不计原生通过。日志分别在 `build/app-icon-preview-{check,root-tests,package-tests,analysis,final-tests,run}.log`。
+
+其他平台未做本轮设备视觉验收；此处验证仅针对设置页共享 Flutter 绘制，不替代系统桌面／Dock／任务栏图标验收。
 
 ## Windows Shell 同步（2026-10-31）
 
@@ -71,18 +81,3 @@ Windows 普通入口 Debug 构建通过，随后用同一产物启动并热重�
 - 对最终开发 Release APK 另用 `aapt dump xmltree/resources` 检查两个别名、默认启用状态和目标 Activity；从 APK 解码两套共 10 张原生图标，48/72/96/144/192px 均保留，alpha 与浅/深背景上的可见像素均与各自源图缩放一致（打包工具会归零少数全透明像素的隐藏 RGB），确认资源压缩没有移除备选尺寸。
 
 未验证：Android 实机桌面切换、旧版覆盖升级后的固定图标和位置；iPhone/iPad、macOS、Linux 的原生构建与设备显示；Windows 固定任务栏/桌面快捷方式缓存和跨 DPI 显示。Windows 集成测试证明原生调用和选择状态闭环，不能代替各系统 Shell 视觉验收。没有修改播放输出或测量播放性能。
-
-## 2026-11-02：新增「禁闭」图标，生成链收敛为 Android
-
-用户提供 `app.ico`（原落在仓库根目录、无人引用），要求作为设置里的第三个图标选项，显示名「禁闭」，内部标识 `dsconfinement`（同时是 `preferences.v1` 里 `appIcon` 的取值、Android 别名类名 `LauncherDsconfinement` 与 mipmap 名 `ic_launcher_dsconfinement`，上线后不可改名——改名会让老用户的选择读不回来并静默回落成哔帆）。
-
-- **`.ico` 不能直接当图标用**：Flutter 的 `Image.asset` 与 Android mipmap 都不解码 ICO 容器。工程内此前没有任何 `.ico` 消费方（Windows 链已在 `f8e5506` 删除），因此把源文件登记为 `assets/branding/dsconfinement_source.ico`（SHA-256 `7afcdd8c…`），由生成脚本取其中最大帧（256×256 RGBA，共 11 帧）光栅化成 `assets/branding/dsconfinement_icon.png`（`2dd3978b…`）作运行时源图；`.ico` 不进包，`pubspec.yaml` 只列 PNG。
-- **分辨率上限 256px**：另两个图稿是 1254px。Android 五档密度最高 192px、侧边栏 brand logo 是 36 逻辑像素，都在这之内，因此全是下采样、无放大损失；要更高分辨率必须由用户提供位图源，ICO 反推不出来。
-- **`tool/generate_app_icons.py` 与 `tool/check_app_icons.py` 之前在本树是跑不通的**：它们仍往已删除的 `macos/`、`windows/`、`ios/`、`linux/` 写文件，第一步就会 `FileNotFoundError`，等于没有可用的图标生成入口。本轮把两个脚本收窄成 Android-only，并给生成脚本加上按图标名参数化（`python tool/generate_app_icons.py dsconfinement` 只重建这一个，避免动到另两个的产物）。
-- **`AppIconHandler.kt` 去掉二值化**：原先 `currentIcon()` 只查 `LauncherBilibili` 的启用状态、非此即彼，`setTaskDescription` 用 `if (icon == "bilibili") … else …` 选位图——加第三个别名后，新图标会被读回成 `bilisail`、最近任务卡也仍显示哔帆。现在别名与 mipmap 都是表，`currentIcon()` 遍历取实际 ENABLED 的那个（全部 DEFAULT 即从未切换过时回默认）。
-- **一致性判据**：新增用例 `every icon has a launcher alias, a native entry and five densities`（`test/features/settings/app_icon_test.dart`），交叉核对 Dart 枚举名集合 == Kotlin 别名表键集合 == 任务栏位图表键集合、别名类名都出现在 manifest、每个图标五档密度文件存在且 PNG IHDR 宽度等于 48/72/96/144/192。这三份清单分属 Dart/Kotlin/XML，编译器与 `check.ps1` 都管不到，缺一个别名只会让图标"可选但无效"。判据能自己红：临时移走 `mipmap-xhdpi/ic_launcher_dsconfinement.png` 后该用例失败（`Expected: true / Actual: false`），放回即恢复。
-- 设置页无需改动：`AppIconSettings` 按 `AppIconPreference.values` 遍历生成 `ChoiceChip`，新增枚举值自动多出「禁闭」；仓储按 `name` 匹配，旧快照与非法值仍回退哔帆。
-
-本轮验证：`uv run --with pillow==12.3.0 --with resvg-py==0.5.0 python tool/generate_app_icons.py dsconfinement` 产出 1 源图 + 5 密度；`tool/check_app_icons.py` 通过 15 项密度像素核对（另两个图标的产物与改脚本前逐字节相同，说明收窄没有改变既有输出）；`flutter analyze` 无问题；图标定向用例（含新一致性用例）通过。
-
-未验证：**Android 实机未跑**——三个别名的桌面切换、最近任务卡位图、旧版覆盖升级到三个别名后的固定入口与位置，都要等下一次装机的 APK 验收；`aapt dump xmltree` 对第三个别名与 10→15 张原生图标的包内核对本轮未做（首轮记录里的同类检查不能代替本次）。

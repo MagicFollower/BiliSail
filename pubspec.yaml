@@ -1,9 +1,7 @@
 name: bilisail
 description: BiliSail, a cross-platform third-party Bilibili client focused on the viewing experience, built with Flutter.
 publish_to: none
-# Fork line: major is upstream's major plus five, the rest tracks upstream verbatim.
-# Upstream 1.2.6+6 therefore reads 6.2.6+6 here; see docs/decisions.md D80.
-version: 6.2.6+6
+version: 1.2.9+0
 
 environment:
   sdk: '>=3.13.0 <4.0.0'
@@ -19,6 +17,7 @@ dependencies:
   go_router: 18.0.2
   drift: 2.35.2
   path: 1.9.1
+  archive: 4.5.2
   crypto: 3.0.7
   xml: 6.6.1
   path_provider: 2.1.6
@@ -30,6 +29,11 @@ dependencies:
   package_info_plus: 10.2.2
   audio_service: 0.18.19
   audio_service_mpris: 1.0.0-beta.3
+  # Direct plugin dependency is required by Flutter's plugin registration.
+  fvp:
+    git:
+      url: https://github.com/wang-bin/fvp.git
+      ref: e81637411c58a9ae28de246ee73ad06e3418f10e
   bili_api:
     path: packages/bili_api
   bili_player:
@@ -39,55 +43,58 @@ dependencies:
   bili_mux:
     path: packages/bili_mux
   flutter_inappwebview: 6.2.0-beta.3
-  # This branch takes the dock from the sibling working tree, so shader fixes
-  # reach the build without an upstream push. Cost: CI checks out only this
-  # repository, so pushing this pubspec makes every job fail at `pub get`, and
-  # the lockfile no longer records a reproducible dock commit. Restore the
-  # pinned git ref before this branch is built on a runner or released.
+  # Local sibling repo providing the liquid glass dock; kept from this branch.
   liquid_dock_navi:
     path: ../liquid_dock_navi
 
-# Match PiliPlus resolved media-kit sources, including native library plugins.
+# Keep core, video output and native library manifests on one reviewed fork commit.
 dependency_overrides:
   # Retain the existing wakelock API and package_info_plus compatibility.
   wakelock_plus: 1.8.1
+  # Linux uses QR login until the experimental WPE WebKit implementation has
+  # a separately validated portable packaging path. No native WebView is linked.
+  flutter_inappwebview_linux:
+    path: linux/plugins/flutter_inappwebview_linux
   media_kit:
     git:
-      url: https://github.com/My-Responsitories/media-kit.git
+      url: https://github.com/CKopoer/media-kit.git
       path: media_kit
-      ref: 73771ec38176be2d984a3049c28177bce23b54a0
-  media_kit_libs_video:
-    git:
-      url: https://github.com/My-Responsitories/media-kit.git
-      path: libs/universal/media_kit_libs_video
-      ref: 73771ec38176be2d984a3049c28177bce23b54a0
-  media_kit_libs_android_video:
-    git:
-      url: https://github.com/My-Responsitories/media-kit.git
-      path: libs/android/media_kit_libs_android_video
-      ref: 73771ec38176be2d984a3049c28177bce23b54a0
-  media_kit_libs_ios_video:
-    git:
-      url: https://github.com/My-Responsitories/media-kit.git
-      path: libs/ios/media_kit_libs_ios_video
-      ref: 73771ec38176be2d984a3049c28177bce23b54a0
-  media_kit_libs_windows_video:
-    git:
-      url: https://github.com/My-Responsitories/media-kit.git
-      path: libs/windows/media_kit_libs_windows_video
-      ref: 73771ec38176be2d984a3049c28177bce23b54a0
-  media_kit_native_event_loop:
-    git:
-      url: https://github.com/My-Responsitories/media-kit.git
-      path: media_kit_native_event_loop
-      ref: 73771ec38176be2d984a3049c28177bce23b54a0
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
   media_kit_video:
     git:
-      url: https://github.com/bggRGjQaUbCoE/media-kit.git
+      url: https://github.com/CKopoer/media-kit.git
       path: media_kit_video
-      ref: fd8421d21eade4d6d12de137fa7df902fec20292
-  media_kit_libs_macos_video: 1.1.4
-  media_kit_libs_linux: 1.2.1
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
+  media_kit_libs_video:
+    git:
+      url: https://github.com/CKopoer/media-kit.git
+      path: libs/universal/media_kit_libs_video
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
+  media_kit_libs_android_video:
+    git:
+      url: https://github.com/CKopoer/media-kit.git
+      path: libs/android/media_kit_libs_android_video
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
+  media_kit_libs_windows_video:
+    git:
+      url: https://github.com/CKopoer/media-kit.git
+      path: libs/windows/media_kit_libs_windows_video
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
+  media_kit_libs_macos_video:
+    git:
+      url: https://github.com/CKopoer/media-kit.git
+      path: libs/macos/media_kit_libs_macos_video
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
+  media_kit_libs_ios_video:
+    git:
+      url: https://github.com/CKopoer/media-kit.git
+      path: libs/ios/media_kit_libs_ios_video
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
+  media_kit_libs_linux:
+    git:
+      url: https://github.com/CKopoer/media-kit.git
+      path: libs/linux/media_kit_libs_linux
+      ref: b1c7e4336140d8c4550c1e963365da8edfe56d0a
 
 dev_dependencies:
   flutter_driver:
@@ -104,10 +111,17 @@ flutter:
     enable-swift-package-manager: false
   uses-material-design: true
   assets:
+    - native/fvp/assets.lock.json
+    - native/fvp/NOTICE.md
+    - native/fvp/LICENSE-fvp.txt
+    - native/fvp/LICENSE-libass.txt
+    - native/fvp/mdk.podspec
+    - packages/bili_mux/LICENSE-FFmpeg.txt
     - assets/icons/
     - assets/branding/app_icon.png
     - assets/branding/bilibili_pink.png
     - assets/branding/dsconfinement_icon.png
+    - assets/branding/bilibili_pink_macos.icns
     - assets/branding/bilibili_LICENSE.md
     - assets/fonts/harmonyos_sans/LICENSE.txt
   fonts:

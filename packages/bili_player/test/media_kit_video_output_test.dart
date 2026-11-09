@@ -11,29 +11,28 @@ import 'package:media_kit_video/media_kit_video.dart' as mkv;
 final class _Player extends mk.PlatformPlayer {
   _Player() : super(configuration: const mk.PlayerConfiguration());
 
-  bool get hasWidthListener => sizeController.hasListener;
-  bool get hasHeightListener => sizeController.hasListener;
+  bool get hasWidthListener => widthController.hasListener;
+  bool get hasHeightListener => heightController.hasListener;
   int pauses = 0, plays = 0;
 
   @override
   Future<void> pause() async {
     pauses++;
-    state.playing = false;
+    state = state.copyWith(playing: false);
     playingController.add(false);
   }
 
   @override
   Future<void> play() async {
     plays++;
-    state.playing = true;
+    state = state.copyWith(playing: true);
     playingController.add(true);
   }
 
   void publishDimensions(int width, int height) {
-    state
-      ..width = width
-      ..height = height;
-    sizeController.add((width, height));
+    state = state.copyWith(width: width, height: height);
+    widthController.add(width);
+    heightController.add(height);
   }
 }
 
@@ -50,33 +49,34 @@ final class _PlatformOutput extends mkv.PlatformVideoController {
   void renderFrame() => waitUntilFirstFrameRenderedCompleter.complete();
 }
 
-final class _PlayerFacade extends Fake implements mk.Player {
-  _PlayerFacade(this.platform);
-
-  final mk.PlatformPlayer platform;
-
-  @override
-  mk.PlayerState get state => platform.state;
-
-  @override
-  mk.PlayerStream get stream => platform.stream;
-
-  @override
-  Future<void> pause({bool synchronized = true}) => platform.pause();
-
-  @override
-  Future<void> play({bool synchronized = true}) => platform.play();
-}
-
-final class _Controller extends _PlatformOutput {
+final class _Controller extends Fake implements mkv.VideoController {
   _Controller(_Player backend, int textureId, {bool rendered = true})
-    : super(_PlayerFacade(backend), textureId) {
+    : output = _PlatformOutput(mk.Player(platformPlayer: backend), textureId) {
+    notifier = ValueNotifier(output);
+    platform = Completer<mkv.PlatformVideoController>()..complete(output);
     if (rendered) renderFrame();
   }
-  _PlatformOutput get output => this;
+  final _PlatformOutput output;
+  @override
+  late final ValueNotifier<mkv.PlatformVideoController?> notifier;
+  @override
+  late final Completer<mkv.PlatformVideoController> platform;
+  @override
+  mk.Player get player => output.player;
+  @override
+  ValueNotifier<int?> get id => output.id;
+  @override
+  ValueNotifier<Rect?> get rect => output.rect;
+  @override
+  Future<void> get waitUntilFirstFrameRendered =>
+      output.waitUntilFirstFrameRendered;
+  @override
+  Future<void> setSize({int? width, int? height}) =>
+      output.setSize(width: width, height: height);
+  void renderFrame() => output.renderFrame();
   void dispose() {
-    id.dispose();
-    rect.dispose();
+    notifier.dispose();
+    output.dispose();
   }
 }
 
@@ -301,7 +301,7 @@ void main() {
       });
       harness.controllers.value = controller;
       await tester.pumpWidget(harness.build());
-      player.state.playing = playing;
+      player.state = player.state.copyWith(playing: playing);
       // No pump between hidden/paused: Android can suspend Flutter frames while
       // the outgoing video surface is still observing the old native player.
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
@@ -393,101 +393,5 @@ void main() {
     await tester.pumpWidget(harness.build());
     expect(identical(tester.state(find.byType(mkv.Video)), state), isTrue);
     expect(tester.widget<Texture>(find.byType(Texture)).textureId, 33);
-  });
-
-  testWidgets('detaching is resolved by the surface leaving the tree', (
-    tester,
-  ) async {
-    final player = _Player()..publishDimensions(1920, 1080);
-    final controller = _Controller(player, 55);
-    final harness = _Harness();
-    addTearDown(() async {
-      await tester.pumpWidget(const SizedBox());
-      harness.output.dispose();
-      controller.dispose();
-      await player.dispose();
-    });
-    harness.controllers.value = controller;
-    await tester.pumpWidget(harness.build());
-    expect(find.byType(mkv.Video), findsOneWidget);
-
-    // The widget tree still holds the texture until a frame rebuilds it, so a
-    // caller that disposes the player must not be told the surface is gone yet.
-    var detached = false;
-    harness.output.clearPlayer();
-    unawaited(
-      harness.output
-          .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
-          .then((_) => detached = true),
-    );
-    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
-    expect(find.byType(mkv.Video), findsOneWidget);
-    expect(detached, isFalse);
-
-    await tester.pump();
-    expect(find.byType(mkv.Video), findsNothing);
-    expect(detached, isTrue);
-  });
-
-  testWidgets('a replacement surface keeps the detach promise pending', (
-    tester,
-  ) async {
-    final first = _Player()..publishDimensions(1920, 1080);
-    final second = _Player()..publishDimensions(1920, 1080);
-    final outgoing = _Controller(first, 61);
-    final incoming = _Controller(second, 62);
-    final harness = _Harness();
-    addTearDown(() async {
-      await tester.pumpWidget(const SizedBox());
-      harness.output.dispose();
-      outgoing.dispose();
-      incoming.dispose();
-      await first.dispose();
-      await second.dispose();
-    });
-    harness.controllers.value = outgoing;
-    await tester.pumpWidget(harness.build());
-
-    var detached = false;
-    unawaited(
-      harness.output
-          .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
-          .then((_) => detached = true),
-    );
-    // Swapping within one stretch replaces the keyed surface: a video texture
-    // is still on screen, so the outstanding detach must not be reported done.
-    harness.output.clearPlayer();
-    harness.controllers.value = incoming;
-    await tester.pump();
-    expect(detached, isFalse);
-    expect(find.byType(mkv.Video), findsOneWidget);
-    expect(tester.widget<Texture>(find.byType(Texture)).textureId, 62);
-
-    var swapped = false;
-    unawaited(
-      harness.output
-          .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
-          .then((_) => swapped = true),
-    );
-    harness.output.clearPlayer();
-    await tester.pump();
-    expect(find.byType(mkv.Video), findsNothing);
-    expect(swapped, isTrue);
-  });
-
-  test('an output that never mounted a surface needs no frame', () async {
-    final output = MediaKitVideoOutput();
-    addTearDown(output.dispose);
-    for (final cleared in [false, true]) {
-      if (cleared) output.clearPlayer();
-      var detached = false;
-      unawaited(
-        output
-            .awaitSurfaceDetached(timeout: const Duration(seconds: 30))
-            .then((_) => detached = true),
-      );
-      await Future<void>.delayed(Duration.zero);
-      expect(detached, isTrue, reason: 'cleared=$cleared');
-    }
   });
 }

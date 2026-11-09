@@ -16,14 +16,13 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 
-apply(from = "patches/media_kit/apply.gradle")
-apply(from = "patches/media_kit/first-frame.gradle")
 
 subprojects {
     project.evaluationDependsOn(":app")
 }
 
 apply(from = "patches/audio_service/apply.gradle")
+apply(from = "patches/fvp/apply.gradle")
 
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)

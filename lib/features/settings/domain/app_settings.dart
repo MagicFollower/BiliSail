@@ -9,6 +9,7 @@ import '../../../domain/video_quality.dart';
 import '../../../domain/audio_quality.dart';
 import '../../../domain/live_stream_preference.dart';
 import '../../../domain/media_cdn.dart';
+import '../../../domain/playback_mode.dart';
 import 'shortcut_settings.dart';
 import '../../../domain/recommendation_settings.dart';
 
@@ -17,6 +18,7 @@ export '../../../domain/video_quality.dart';
 export '../../../domain/audio_quality.dart';
 export '../../../domain/live_stream_preference.dart';
 export '../../../domain/media_cdn.dart' show MediaCdnPreference;
+export '../../../domain/playback_mode.dart';
 
 enum AppThemePreference { system, light, dark }
 
@@ -56,6 +58,10 @@ enum DanmakuStylePreference { shadow, stroke, plain }
 
 enum SponsorBlockMode { disabled, manual, automatic }
 
+enum PlaybackBackendPreference { mediaKit, fvp }
+
+enum AndroidVideoOutputPreference { renderedTexture, directTexture }
+
 final class AppSettings {
   AppSettings({
     this.recommendations = const RecommendationSettings.defaults(),
@@ -85,13 +91,17 @@ final class AppSettings {
     this.autoPlay = true,
     this.defaultShowComments = false,
     this.videoCardHoverPlayback = true,
-    this.continuousPlayback = false,
+    bool? continuousPlayback,
     this.continuousRelatedPlayback = false,
+    PlaybackMode? playbackMode,
     this.resumePlayback = true,
     this.showCollapsedProgress = true,
     this.highEnergyProgressEnabled = false,
     this.playerControlsMode = PlayerControlsMode.click,
     this.fullscreenSwipeControls = true,
+    this.playerFullscreenGestureReverse = false,
+    this.playerFullscreenGesture = true,
+    this.playerShrinkVideo = true,
     this.preferredQuality = 80,
     this.preferredLiveQuality = 10000,
     this.liveStreamPreference = LiveStreamPreference.automatic,
@@ -99,7 +109,10 @@ final class AppSettings {
     this.preferredVideoCodec = VideoCodecPreference.h264,
     this.mediaCdn = MediaCdnPreference.automatic,
     this.videoDecoding = VideoDecodingPreference.automatic,
+    this.playbackBackend = PlaybackBackendPreference.mediaKit,
+    this.androidVideoOutput = AndroidVideoOutputPreference.renderedTexture,
     this.defaultPlaybackRate = 1.0,
+    List<double> playbackRates = PlaybackRates.values,
     this.rememberPlaybackRate = true,
     this.defaultVolume = 100.0,
     this.rememberVolumeGlobally = false,
@@ -128,7 +141,15 @@ final class AppSettings {
     this.subtitleBottomPadding = 24.0,
     this.sponsorBlockMode = SponsorBlockMode.manual,
     List<String> sponsorBlockCategories = supportedSponsorCategories,
-  }) : _danmakuBlockedWords = List.unmodifiable(danmakuBlockedWords),
+  }) : playbackMode =
+           playbackMode ??
+           (continuousPlayback == true || continuousRelatedPlayback
+               ? PlaybackMode.continuous
+               : PlaybackMode.pause),
+       continuousPlayback =
+           continuousPlayback ?? playbackMode == PlaybackMode.continuous,
+       playbackRates = PlaybackRates.normalize(playbackRates),
+       _danmakuBlockedWords = List.unmodifiable(danmakuBlockedWords),
        _sponsorBlockCategories = List.unmodifiable(sponsorBlockCategories);
 
   /// Constant defaults have no caller-owned collection inputs.
@@ -149,6 +170,9 @@ final class AppSettings {
     this.danmakuFontScale = 1.0,
     this.playerControlsMode = PlayerControlsMode.click,
     this.fullscreenSwipeControls = true,
+    this.playerFullscreenGestureReverse = false,
+    this.playerFullscreenGesture = true,
+    this.playerShrinkVideo = true,
   }) : theme = AppThemePreference.system,
        appIcon = AppIconPreference.bilisail,
        font = AppFontPreference.harmonyOsSans,
@@ -166,6 +190,7 @@ final class AppSettings {
        defaultShowComments = false,
        continuousPlayback = false,
        continuousRelatedPlayback = false,
+       playbackMode = PlaybackMode.pause,
        resumePlayback = true,
        showCollapsedProgress = true,
        preferredQuality = 80,
@@ -175,7 +200,10 @@ final class AppSettings {
        preferredVideoCodec = VideoCodecPreference.h264,
        mediaCdn = MediaCdnPreference.automatic,
        videoDecoding = VideoDecodingPreference.automatic,
+       playbackBackend = PlaybackBackendPreference.mediaKit,
+       androidVideoOutput = AndroidVideoOutputPreference.renderedTexture,
        defaultPlaybackRate = 1.0,
+       playbackRates = PlaybackRates.values,
        rememberPlaybackRate = true,
        defaultVolume = 100.0,
        rememberVolumeGlobally = false,
@@ -254,11 +282,15 @@ final class AppSettings {
   final bool videoCardHoverPlayback;
   final bool continuousPlayback;
   final bool continuousRelatedPlayback;
+  final PlaybackMode playbackMode;
   final bool resumePlayback;
   final bool showCollapsedProgress;
   final bool highEnergyProgressEnabled;
   final PlayerControlsMode playerControlsMode;
   final bool fullscreenSwipeControls;
+  final bool playerFullscreenGestureReverse;
+  final bool playerFullscreenGesture;
+  final bool playerShrinkVideo;
   final int preferredQuality;
   final int preferredLiveQuality;
   final LiveStreamPreference liveStreamPreference;
@@ -266,7 +298,11 @@ final class AppSettings {
   final VideoCodecPreference preferredVideoCodec;
   final MediaCdnPreference mediaCdn;
   final VideoDecodingPreference videoDecoding;
+  final PlaybackBackendPreference playbackBackend;
+
+  final AndroidVideoOutputPreference androidVideoOutput;
   final double defaultPlaybackRate;
+  final List<double> playbackRates;
   final bool rememberPlaybackRate;
   final double defaultVolume;
   final bool rememberVolumeGlobally;
@@ -340,11 +376,15 @@ final class AppSettings {
     bool? videoCardHoverPlayback,
     bool? continuousPlayback,
     bool? continuousRelatedPlayback,
+    PlaybackMode? playbackMode,
     bool? resumePlayback,
     bool? showCollapsedProgress,
     bool? highEnergyProgressEnabled,
     PlayerControlsMode? playerControlsMode,
     bool? fullscreenSwipeControls,
+    bool? playerFullscreenGestureReverse,
+    bool? playerFullscreenGesture,
+    bool? playerShrinkVideo,
     int? preferredQuality,
     int? preferredLiveQuality,
     LiveStreamPreference? liveStreamPreference,
@@ -352,7 +392,10 @@ final class AppSettings {
     VideoCodecPreference? preferredVideoCodec,
     MediaCdnPreference? mediaCdn,
     VideoDecodingPreference? videoDecoding,
+    PlaybackBackendPreference? playbackBackend,
+    AndroidVideoOutputPreference? androidVideoOutput,
     double? defaultPlaybackRate,
+    List<double>? playbackRates,
     bool? rememberPlaybackRate,
     double? defaultVolume,
     bool? rememberVolumeGlobally,
@@ -412,7 +455,21 @@ final class AppSettings {
     defaultShowComments: defaultShowComments ?? this.defaultShowComments,
     videoCardHoverPlayback:
         videoCardHoverPlayback ?? this.videoCardHoverPlayback,
-    continuousPlayback: continuousPlayback ?? this.continuousPlayback,
+    playbackMode:
+        playbackMode ??
+        (continuousPlayback != null
+            ? (continuousPlayback ||
+                      (continuousRelatedPlayback ??
+                          this.continuousRelatedPlayback)
+                  ? PlaybackMode.continuous
+                  : PlaybackMode.pause)
+            : continuousRelatedPlayback == true &&
+                  this.playbackMode == PlaybackMode.pause
+            ? PlaybackMode.continuous
+            : this.playbackMode),
+    continuousPlayback: playbackMode != null
+        ? playbackMode == PlaybackMode.continuous
+        : continuousPlayback ?? this.continuousPlayback,
     continuousRelatedPlayback:
         continuousRelatedPlayback ?? this.continuousRelatedPlayback,
     resumePlayback: resumePlayback ?? this.resumePlayback,
@@ -420,6 +477,11 @@ final class AppSettings {
     highEnergyProgressEnabled:
         highEnergyProgressEnabled ?? this.highEnergyProgressEnabled,
     playerControlsMode: playerControlsMode ?? this.playerControlsMode,
+    playerFullscreenGestureReverse:
+        playerFullscreenGestureReverse ?? this.playerFullscreenGestureReverse,
+    playerFullscreenGesture:
+        playerFullscreenGesture ?? this.playerFullscreenGesture,
+    playerShrinkVideo: playerShrinkVideo ?? this.playerShrinkVideo,
     fullscreenSwipeControls:
         fullscreenSwipeControls ?? this.fullscreenSwipeControls,
     preferredQuality: preferredQuality ?? this.preferredQuality,
@@ -429,7 +491,10 @@ final class AppSettings {
     preferredVideoCodec: preferredVideoCodec ?? this.preferredVideoCodec,
     mediaCdn: mediaCdn ?? this.mediaCdn,
     videoDecoding: videoDecoding ?? this.videoDecoding,
+    playbackBackend: playbackBackend ?? this.playbackBackend,
+    androidVideoOutput: androidVideoOutput ?? this.androidVideoOutput,
     defaultPlaybackRate: defaultPlaybackRate ?? this.defaultPlaybackRate,
+    playbackRates: playbackRates ?? this.playbackRates,
     rememberPlaybackRate: rememberPlaybackRate ?? this.rememberPlaybackRate,
     defaultVolume: defaultVolume ?? this.defaultVolume,
     rememberVolumeGlobally:
@@ -515,7 +580,10 @@ final class AppSettings {
       liveStreamPreference: LiveStreamPreference.fromJson(
         liveStreamPreference.toJson(),
       ),
-      defaultPlaybackRate: PlaybackRates.nearest(defaultPlaybackRate),
+      defaultPlaybackRate: PlaybackRates.nearest(
+        defaultPlaybackRate,
+        playbackRates,
+      ),
       defaultVolume: bounded(defaultVolume, 0, 100, 100),
       danmakuOpacity: bounded(danmakuOpacity, .2, 1, .8),
       danmakuFontScale: bounded(danmakuFontScale, .2, 1.5, 1),

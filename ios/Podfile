@@ -1,0 +1,42 @@
+platform :ios, '15.0'
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  config = File.expand_path(File.join('Flutter', 'Generated.xcconfig'), __dir__)
+  raise "Run flutter pub get before pod install: #{config}" unless File.exist?(config)
+  File.foreach(config) do |line|
+    match = line.match(/FLUTTER_ROOT\=(.*)/)
+    return match[1].strip if match
+  end
+  raise "FLUTTER_ROOT missing in #{config}"
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+  pod 'mdk', :podspec => '../native/fvp/mdk.podspec'
+  flutter_install_all_ios_pods __dir__
+  unless system('python3', File.expand_path('../tool/prepare-apple-media-libs.py', __dir__), 'ios')
+    raise 'Could not prepare the pinned mpv frameworks'
+  end
+  unless system('python3', File.expand_path('../tool/prepare-fvp-apple.py', __dir__), 'ios')
+    raise 'Could not prepare the pinned fvp Apple texture renderer'
+  end
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+  end
+end

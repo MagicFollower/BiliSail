@@ -8,9 +8,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/platform/window_service.dart';
+import '../../../core/platform/picture_in_picture_service.dart';
 import '../../../core/platform/window_size_policy.dart';
 import '../../../core/presentation/workspace_activity.dart';
 import '../../../core/presentation/android_system_ui.dart';
+import '../../../core/presentation/mobile_playback_status_bar.dart';
 import '../../../shared/ui/playback_page_commands.dart';
 import '../../../shared/ui/playback_navigation.dart';
 import '../../../shared/ui/width_layout_builder.dart';
@@ -19,7 +21,6 @@ import '../../../shared/ui/danmaku_composer_draft.dart';
 import '../../../shared/ui/player_controls_menu_scope.dart';
 import '../../../shared/ui/smooth_scroll_behavior.dart';
 import '../../../domain/video.dart';
-import '../../../domain/playback_rates.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../../core/input/shortcut_dispatcher.dart';
 import '../../../core/presentation/input_scope.dart';
@@ -32,15 +33,19 @@ import 'player_settings_dialog.dart';
 import 'player_danmaku_dialog.dart';
 import 'player_more_dialog.dart';
 import 'player_control_labels.dart';
+import 'player_loading_indicator.dart';
 import 'casting_dialog.dart';
 import '../application/casting_controller.dart';
 import 'player_swipe_controls.dart';
 import 'player_seek_controls.dart';
+import 'player_picture_controls.dart';
 import 'audio_playback_view.dart';
+import 'listening_sleep_timer_button.dart';
 import 'playback_timeline_bar.dart';
 import 'playback_snapshot_builder.dart';
 import 'live_stream_menu.dart';
 import 'live_stream_picker.dart';
+import 'mini_player.dart';
 import '../../../shared/ui/app_notice.dart';
 import '../../../shared/ui/bili_icons.dart';
 import '../../../shared/ui/shortcut_hint.dart';
@@ -85,13 +90,23 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
   int? _handledCompletionGeneration;
   // Inline and fullscreen views are recreated, but share the page's intent.
   late final ValueNotifier<bool> _controlsVisible;
+  final _fullScreenExitCover = ValueNotifier(false);
+  final _picture = PlayerPictureController();
+  late int _pictureGeneration;
   bool _fullScreen = false;
+  bool _miniPlayer = false;
+  bool _systemPip = false;
+  OverlayEntry? _miniOverlay;
+  Object? _miniRequest;
+  Timer? _pipExitTimer;
+  bool _fullScreenPresented = false;
   bool _active = false;
   bool _surfaceReady = false;
   Object? _activityRequest;
-  Route<void>? _fullScreenRoute;
+  _PlayerFullScreenRoute<void>? _fullScreenRoute;
   NavigatorState? _fullScreenNavigator;
   Object? _fullScreenRequest;
+  Completer<void>? _browseLayoutReady;
   FullScreenOrientation? _fullScreenOrientation;
   StreamSubscription<FullScreenOrientation?>? _deviceOrientationSubscription;
   bool? _viewLandscape;
@@ -117,15 +132,19 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
     );
     _settings = ValueNotifier(widget.settings);
     _session = ref.read(playbackSessionProvider)..attach(this);
+    _pictureGeneration = _session.sourceGeneration;
+    _session.addListener(_syncPicture);
     _session.snapshots.addListener(_updateFullScreenOrientation);
     _session.snapshots.addListener(_onPlaybackCompleted);
     _shortcuts = PlaybackShortcutController(
       session: _session,
       settings: () => widget.settings.shortcuts,
       active: () => mounted && _active,
-      fullscreen: () => _fullScreen,
+      fullscreen: () => _fullScreen || _miniPlayer,
       toggleFullscreen: () {
-        if (_fullScreen) {
+        if (_miniPlayer) {
+          unawaited(_exitMiniPlayer());
+        } else if (_fullScreen) {
           unawaited(_exitFullScreen());
         } else {
           unawaited(_enterFullScreen());
@@ -137,6 +156,7 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
       },
     );
     WidgetsBinding.instance.addObserver(this);
+    PictureInPictureService.instance.active.addListener(_pipChanged);
   }
 
   @override
@@ -155,12 +175,14 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
       }
     });
     final active = WorkspaceActivity.isActive(context);
+    if (active) widget.window.onMiniPlayerRequested = _requestMiniPlayer;
     if (_active == active) return;
     _active = active;
     _surfaceReady = false;
     final activityRequest = Object();
     _activityRequest = activityRequest;
     if (!active) {
+      _dismissMiniPlayer();
       _landscapeRotationPending = false;
       _shortcuts.cancel();
       _dismissFullScreen();
@@ -214,7 +236,6 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
           !_session.canAutoAdvance ||
           !_session.ownsPlayback(this) ||
           _session.isLive ||
-          _session.contentTarget is OfflinePlaybackTarget ||
           _session.sourceGeneration != generation ||
           _session.snapshots.value.phase != PlaybackPhase.ended ||
           _session.detail?.summary.id != widget.detail?.summary.id ||
@@ -222,12 +243,25 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
           _session.contentTarget != widget.target) {
         return;
       }
-      if (commands?.hasNext == true) {
-        if (widget.settings.continuousPlayback) {
-          commands?.onCompleted?.call();
-        }
-      } else if (widget.settings.continuousRelatedPlayback) {
-        commands?.onRelatedCompleted?.call();
+      switch (widget.settings.playbackMode) {
+        case PlaybackMode.pause:
+          break;
+        case PlaybackMode.continuous:
+          if (commands?.hasNext == true) {
+            if (widget.settings.continuousPlayback) {
+              commands?.onCompleted?.call();
+            }
+          } else if (widget.settings.continuousRelatedPlayback) {
+            commands?.onRelatedCompleted?.call();
+          }
+        case PlaybackMode.listLoop:
+          if (commands?.onLoopCompleted case final loop?) {
+            loop();
+          } else {
+            unawaited(_session.repeatCompleted(generation));
+          }
+        case PlaybackMode.singleLoop:
+          unawaited(_session.repeatCompleted(generation));
       }
     });
   }
@@ -292,14 +326,22 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
 
   @override
   void dispose() {
+    PictureInPictureService.instance.active.removeListener(_pipChanged);
+    _dismissMiniPlayer();
+    if (widget.window.onMiniPlayerRequested == _requestMiniPlayer) {
+      widget.window.onMiniPlayerRequested = null;
+    }
     WidgetsBinding.instance.removeObserver(this);
     _session.snapshots.removeListener(_updateFullScreenOrientation);
     _session.snapshots.removeListener(_onPlaybackCompleted);
     _dismissFullScreen();
+    _session.removeListener(_syncPicture);
+    _picture.dispose();
     _shortcuts.dispose();
     _session.detach(this);
     _settings.dispose();
     _controlsVisible.dispose();
+    _fullScreenExitCover.dispose();
     _pageCommands.dispose();
     _navigation.dispose();
     _danmakuDraft.dispose();
@@ -307,6 +349,7 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
   }
 
   void _dismissFullScreen() {
+    _completeBrowseLayoutWait();
     _shortcuts.cancel();
     _portraitExitRequest = null;
     _stopDeviceOrientation();
@@ -324,27 +367,82 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
     }
   }
 
-  bool _exitingShortcutFullScreen = false;
+  bool _exitingFullScreen = false;
   Future<void> _exitFullScreen() async {
-    if (_exitingShortcutFullScreen) return;
-    _exitingShortcutFullScreen = true;
-    _shortcuts.cancel();
-    final route = _fullScreenRoute;
-    final navigator = _fullScreenNavigator;
-    FocusManager.instance.primaryFocus?.unfocus(
-      disposition: UnfocusDisposition.scope,
-    );
-    await WidgetsBinding.instance.endOfFrame;
-    if (mounted &&
-        navigator != null &&
-        navigator.mounted &&
-        route != null &&
-        route.isCurrent) {
-      navigator.pop();
-    } else if (route == null) {
-      _dismissFullScreen();
+    if (_exitingFullScreen) return;
+    _exitingFullScreen = true;
+    _fullScreenExitCover.value =
+        !widget.window.hasDesktopWindow && _isPhoneDisplay;
+    _fullScreenPresented = false;
+    _stopDeviceOrientation();
+    try {
+      _shortcuts.cancel();
+      final route = _fullScreenRoute;
+      final navigator = _fullScreenNavigator;
+      final request = _fullScreenRequest;
+      FocusManager.instance.primaryFocus?.unfocus(
+        disposition: UnfocusDisposition.scope,
+      );
+      // Flush focus/semantics before removing the fullscreen subtree.
+      await WidgetsBinding.instance.endOfFrame;
+      if (mounted &&
+          navigator != null &&
+          navigator.mounted &&
+          route != null &&
+          route.isCurrent) {
+        if (!widget.window.hasDesktopWindow && request != null) {
+          // Keep the black route over the workspace while native rotation and
+          // system-bar insets are restored. The platform reply is not a frame.
+          await _setWindowFullScreen(request, false);
+          if (!mounted ||
+              !_active ||
+              !identical(request, _fullScreenRequest) ||
+              !route.isCurrent) {
+            return;
+          }
+          await _waitForBrowseFrame();
+        }
+        if (mounted && navigator.mounted && route.isCurrent) {
+          route.allowPop = true;
+          navigator.pop();
+        }
+      } else if (route == null) {
+        _dismissFullScreen();
+      }
+    } finally {
+      _exitingFullScreen = false;
+      if (mounted && (_fullScreenRoute?.isCurrent ?? false)) {
+        _fullScreenExitCover.value = false;
+      }
     }
-    _exitingShortcutFullScreen = false;
+  }
+
+  bool get _browseLayoutRestored =>
+      !widget.window.keepsBrowsePortrait ||
+      !_isPhoneDisplay ||
+      (!_isViewLandscape && _view.padding.top > 0);
+
+  void _completeBrowseLayoutWait() {
+    final ready = _browseLayoutReady;
+    if (ready != null && !ready.isCompleted) ready.complete();
+  }
+
+  Future<void> _waitForBrowseFrame() async {
+    if (!_browseLayoutRestored) {
+      final ready = Completer<void>();
+      _browseLayoutReady = ready;
+      // An OS that refuses rotation must not trap the user in fullscreen.
+      final timeout = Timer(const Duration(seconds: 2), () {
+        if (!ready.isCompleted) ready.complete();
+      });
+      try {
+        await ready.future;
+      } finally {
+        timeout.cancel();
+        if (identical(_browseLayoutReady, ready)) _browseLayoutReady = null;
+      }
+    }
+    await WidgetsBinding.instance.endOfFrame;
   }
 
   Future<void> _setWindowFullScreen(Object request, bool enabled) {
@@ -426,6 +524,7 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
 
   @override
   void didChangeMetrics() {
+    if (_browseLayoutRestored) _completeBrowseLayoutWait();
     final landscape = _isRotationLandscape;
     final compact = _usesCompactRotation;
     final phone = _isPhoneDisplay;
@@ -531,6 +630,7 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
   void _syncDeviceOrientation() {
     final watch =
         mounted &&
+        !_exitingFullScreen &&
         _active &&
         _appResumed &&
         _isPhoneDisplay &&
@@ -598,6 +698,13 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
     _deviceOrientationSubscription = null;
   }
 
+  void _syncPicture() {
+    if (_pictureGeneration != _session.sourceGeneration || _session.audioOnly) {
+      _pictureGeneration = _session.sourceGeneration;
+      _picture.reset();
+    }
+  }
+
   void _updateFullScreenOrientation() {
     _syncDeviceOrientation();
     _scheduleAutoFullScreen();
@@ -612,11 +719,13 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
     if (orientation == _fullScreenOrientation) return;
     _fullScreenOrientation = orientation;
     // The same owner/command queue also orders delayed dimensions against exit.
-    unawaited(_setWindowFullScreen(request, true));
+    if (_fullScreenPresented) {
+      unawaited(_setWindowFullScreen(request, true));
+    }
   }
 
   Future<void> _enterFullScreen() async {
-    if (_fullScreen || !_active) return;
+    if (_fullScreen || _miniPlayer || !_active) return;
     _shortcuts.cancel();
     final request = Object();
     final providerContainer = ProviderScope.containerOf(context);
@@ -636,51 +745,78 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
       if (!mounted || !_active || !identical(_fullScreenRequest, request)) {
         return;
       }
-      await _setWindowFullScreen(request, true);
-      if (!mounted || !_active || !identical(_fullScreenRequest, request)) {
-        return;
+      if (widget.window.hasDesktopWindow) {
+        await _setWindowFullScreen(request, true);
+        if (!mounted || !_active || !identical(_fullScreenRequest, request)) {
+          return;
+        }
       }
       // The detached view remains below the browser's Navigator in the widget
       // tree. Use this window's Navigator so its route fills the playback view.
       final navigator = Navigator.of(context);
-      final route = RawDialogRoute<void>(
+      final route = _PlayerFullScreenRoute<void>(
+        onPopRequested: widget.window.hasDesktopWindow
+            ? null
+            : () => unawaited(_exitFullScreen()),
         requestFocus: false,
         barrierDismissible: false,
         barrierLabel: '全屏播放器',
         transitionDuration: Duration.zero,
         pageBuilder: (dialogContext, _, _) => UncontrolledProviderScope(
           container: providerContainer,
-          child: AndroidSystemUi(
-            backgroundColor: Colors.black,
-            brightness: Brightness.dark,
-            child: Dialog.fullscreen(
-              backgroundColor: Colors.black,
-              child: _PlayerView(
-                session: _session,
-                settings: _settings,
-                controlsVisible: _controlsVisible,
-                shortcuts: _shortcuts,
-                onToggleComments: () => widget.onToggleComments(),
-                danmakuComposerBuilder: widget.danmakuComposerBuilder == null
-                    ? null
-                    : (context) => _buildDanmakuComposer(context),
-                danmakuOverlayBuilder: widget.danmakuOverlayBuilder == null
-                    ? null
-                    : (context) =>
-                          widget.danmakuOverlayBuilder?.call(context) ??
-                          const SizedBox.shrink(),
-                pageCommands: _pageCommands,
-                navigation: _navigation,
-                onNavigate: _navigateFromPlayer,
-                fullScreen: true,
-                onFullScreen: () {
-                  if (identical(
-                    _fullScreenRoute,
-                    ModalRoute.of(dialogContext),
-                  )) {
-                    navigator.pop();
-                  }
-                },
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _fullScreenExitCover,
+            // The OS can show bars before Flutter receives their new insets.
+            // Cover bright video frames too, while retaining the same surface.
+            builder: (_, covered, child) => Stack(
+              fit: StackFit.expand,
+              children: [
+                child!,
+                if (covered)
+                  const Positioned.fill(
+                    child: IgnorePointer(
+                      child: ColoredBox(color: Colors.black),
+                    ),
+                  ),
+              ],
+            ),
+            child: MobilePlaybackStatusBar(
+              enabled: true,
+              builder: (_) => AndroidSystemUi(
+                backgroundColor: Colors.black,
+                brightness: Brightness.dark,
+                child: Dialog.fullscreen(
+                  backgroundColor: Colors.black,
+                  child: _PlayerView(
+                    session: _session,
+                    settings: _settings,
+                    controlsVisible: _controlsVisible,
+                    picture: _picture,
+                    shortcuts: _shortcuts,
+                    onToggleComments: () => widget.onToggleComments(),
+                    danmakuComposerBuilder:
+                        widget.danmakuComposerBuilder == null
+                        ? null
+                        : (context) => _buildDanmakuComposer(context),
+                    danmakuOverlayBuilder: widget.danmakuOverlayBuilder == null
+                        ? null
+                        : (context) =>
+                              widget.danmakuOverlayBuilder?.call(context) ??
+                              const SizedBox.shrink(),
+                    pageCommands: _pageCommands,
+                    navigation: _navigation,
+                    onNavigate: _navigateFromPlayer,
+                    fullScreen: true,
+                    onFullScreen: () {
+                      if (identical(
+                        _fullScreenRoute,
+                        ModalRoute.of(dialogContext),
+                      )) {
+                        unawaited(_exitFullScreen());
+                      }
+                    },
+                  ),
+                ),
               ),
             ),
           ),
@@ -689,8 +825,26 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
       InputScope.of<Object>(context)?.routes.presentation(route);
       _fullScreenRoute = route;
       _fullScreenNavigator = navigator;
-      await navigator.push(route);
+      final closed = navigator.push(route);
+      try {
+        if (!widget.window.hasDesktopWindow) {
+          // Paint the black route before the OS rotates or hides the bars.
+          // Otherwise the light browsing page is exposed during the transition.
+          await WidgetsBinding.instance.endOfFrame;
+          if (mounted &&
+              _active &&
+              identical(_fullScreenRequest, request) &&
+              route.isActive) {
+            _fullScreenPresented = true;
+            await _setWindowFullScreen(request, true);
+          }
+        }
+        await closed;
+      } finally {
+        if (navigator.mounted && route.isActive) navigator.removeRoute(route);
+      }
     } finally {
+      _fullScreenPresented = false;
       _stopDeviceOrientation();
       if (identical(_fullScreenRequest, request)) _fullScreenRequest = null;
       _fullScreenRoute = null;
@@ -699,42 +853,198 @@ class _PlaybackPanelState extends ConsumerState<PlaybackPanel>
       await _setWindowFullScreen(request, false);
       _fullScreenOrientation = null;
       if (mounted) {
+        _fullScreenExitCover.value = false;
         setState(() => _fullScreen = false);
         _syncDeviceOrientation();
       }
     }
   }
 
+  void _requestMiniPlayer() => unawaited(_enterMiniPlayer());
+
+  void _pipChanged() {
+    if (!_systemPip || PictureInPictureService.instance.active.value) return;
+    _pipExitTimer?.cancel();
+    // The mode callback can precede onResume when the user expands PiP.
+    _pipExitTimer = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted || !_systemPip) return;
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (lifecycle == AppLifecycleState.paused ||
+          lifecycle == AppLifecycleState.hidden) {
+        unawaited(_session.pause());
+      }
+      unawaited(_exitMiniPlayer());
+    });
+  }
+
+  Future<void> _enterMiniPlayer() async {
+    if (!_active || _miniPlayer || _fullScreen || _session.media == null) {
+      return;
+    }
+    if (_miniRequest != null) return;
+    if (_session.audioOnly) {
+      showAppNotice(context, '请先退出听视频，再打开小窗');
+      return;
+    }
+    final request = Object();
+    _miniRequest = request;
+    _shortcuts.cancel();
+    _stopDeviceOrientation();
+    try {
+      final systemPip =
+          !widget.window.hasDesktopWindow &&
+          await PictureInPictureService.instance.isSupported();
+      if (!mounted || !_active || !identical(_miniRequest, request)) return;
+      _systemPip = systemPip;
+      setState(() => _miniPlayer = true);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !_active || !identical(_miniRequest, request)) return;
+      final overlay = OverlayEntry(
+        opaque: widget.window.hasDesktopWindow || _systemPip,
+        maintainState: true,
+        builder: (context) {
+          final player = ListenableBuilder(
+            listenable: _session,
+            builder: (context, _) => MiniPlayer(
+              session: _session,
+              window: widget.window,
+              systemPip: _systemPip,
+              onRestore: () => unawaited(_exitMiniPlayer()),
+              onClose: () {
+                if (widget.window.onMiniPlayerClose case final close?) {
+                  close();
+                } else {
+                  unawaited(_session.pause());
+                  unawaited(_exitMiniPlayer());
+                }
+              },
+            ),
+          );
+          return widget.window.hasDesktopWindow || _systemPip
+              ? Positioned.fill(child: player)
+              : Positioned.fill(
+                  child: FloatingMiniPlayer(
+                    aspectRatio: _miniAspectRatio,
+                    child: player,
+                  ),
+                );
+        },
+      );
+      _miniOverlay = overlay;
+      Overlay.of(context).insert(overlay);
+      // Publish the clean video before Android captures its source rectangle.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !_active || !identical(_miniRequest, request)) return;
+      if (widget.window.hasDesktopWindow) {
+        await widget.window.setMiniPlayer(true);
+      } else if (_systemPip) {
+        if (!await PictureInPictureService.instance.enter(_miniAspectRatio)) {
+          throw StateError('系统未允许进入画中画，请检查应用的小窗权限');
+        }
+      }
+    } catch (error) {
+      if (!identical(_miniRequest, request)) return;
+      await _exitMiniPlayer();
+      if (mounted) showAppNotice(context, '无法打开小窗：$error');
+    }
+  }
+
+  double get _miniAspectRatio {
+    final snapshot = _session.snapshots.value;
+    final dimensions = snapshot.videoDimensions;
+    return dimensions == null ? 16 / 9 : dimensions.width / dimensions.height;
+  }
+
+  Future<void> _exitMiniPlayer() async {
+    final request = _miniRequest;
+    if (request == null) return;
+    _miniRequest = null;
+    _pipExitTimer?.cancel();
+    final overlay = _miniOverlay;
+    _miniOverlay = null;
+    try {
+      if (widget.window.hasDesktopWindow) {
+        await widget.window.setMiniPlayer(false);
+      }
+    } catch (error) {
+      if (mounted) showAppNotice(context, '还原窗口失败：$error');
+    } finally {
+      overlay?.remove();
+      overlay?.dispose();
+      if (_miniRequest == null) _systemPip = false;
+      await WidgetsBinding.instance.endOfFrame;
+      if (mounted && _miniRequest == null) {
+        setState(() => _miniPlayer = false);
+        _syncDeviceOrientation();
+      }
+    }
+  }
+
+  void _dismissMiniPlayer() {
+    final restore = _miniPlayer || _miniRequest != null;
+    _pipExitTimer?.cancel();
+    _miniRequest = null;
+    _miniOverlay?.remove();
+    _miniOverlay?.dispose();
+    _miniOverlay = null;
+    _miniPlayer = false;
+    _systemPip = false;
+    if (restore && widget.window.hasDesktopWindow) {
+      unawaited(
+        widget.window.setMiniPlayer(false).catchError((
+          Object error,
+          StackTrace stack,
+        ) {
+          FlutterError.reportError(
+            FlutterErrorDetails(
+              exception: error,
+              stack: stack,
+              library: 'BiliSail mini player cleanup',
+            ),
+          );
+        }),
+      );
+    }
+  }
+
   @override
-  Widget build(BuildContext context) => CommandTargetScope<Object>(
-    scope: CommandScope.playback,
-    active: _active,
-    onCancel: _shortcuts.cancel,
-    revision: () => _session.sourceGeneration,
-    onNavigate: _dismissFullScreen,
-    commands: {
-      for (final action in _shortcuts.capabilities)
-        action: (stroke) => _shortcuts.execute(action, stroke),
-    },
-    child: _fullScreen
-        ? const ColoredBox(color: Colors.black)
-        : _PlayerView(
-            session: _session,
-            settings: _settings,
-            controlsVisible: _controlsVisible,
-            shortcuts: _shortcuts,
-            onToggleComments: widget.onToggleComments,
-            danmakuComposerBuilder: widget.danmakuComposerBuilder == null
-                ? null
-                : _buildDanmakuComposer,
-            danmakuOverlayBuilder: widget.danmakuOverlayBuilder,
-            onFullScreen: _enterFullScreen,
-            pageCommands: _pageCommands,
-            navigation: _navigation,
-            onNavigate: _navigateFromPlayer,
-            fullScreen: false,
-            active: _active && _surfaceReady,
-          ),
+  Widget build(BuildContext context) => MiniPlayerActions(
+    window: widget.window,
+    onEnter: _requestMiniPlayer,
+    child: CommandTargetScope<Object>(
+      scope: CommandScope.playback,
+      active: _active,
+      onCancel: _shortcuts.cancel,
+      revision: () => _session.sourceGeneration,
+      onNavigate: () {
+        _dismissMiniPlayer();
+        _dismissFullScreen();
+      },
+      commands: {
+        for (final action in _shortcuts.capabilities)
+          action: (stroke) => _shortcuts.execute(action, stroke),
+      },
+      child: _fullScreen || _miniPlayer
+          ? const ColoredBox(color: Colors.black)
+          : _PlayerView(
+              session: _session,
+              settings: _settings,
+              controlsVisible: _controlsVisible,
+              picture: _picture,
+              shortcuts: _shortcuts,
+              onToggleComments: widget.onToggleComments,
+              danmakuComposerBuilder: widget.danmakuComposerBuilder == null
+                  ? null
+                  : _buildDanmakuComposer,
+              danmakuOverlayBuilder: widget.danmakuOverlayBuilder,
+              onFullScreen: _enterFullScreen,
+              pageCommands: _pageCommands,
+              navigation: _navigation,
+              onNavigate: _navigateFromPlayer,
+              fullScreen: false,
+              active: _active && _surfaceReady,
+            ),
+    ),
   );
 
   Widget _buildDanmakuComposer(BuildContext context) {
@@ -770,6 +1080,7 @@ class _PlayerView extends StatefulWidget {
     required this.session,
     required this.settings,
     required this.controlsVisible,
+    required this.picture,
     required this.shortcuts,
     required this.onToggleComments,
     required this.onFullScreen,
@@ -784,6 +1095,7 @@ class _PlayerView extends StatefulWidget {
   final PlaybackSession session;
   final ValueListenable<AppSettings> settings;
   final ValueNotifier<bool> controlsVisible;
+  final PlayerPictureController picture;
   final PlaybackShortcutController shortcuts;
   final VoidCallback onToggleComments;
   final VoidCallback onFullScreen;
@@ -803,7 +1115,6 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
   final _swipeSeekPreview = ValueNotifier<Duration?>(null);
   final FocusNode _focusNode = FocusNode(debugLabel: 'video player');
   final GlobalKey _playerBoundsKey = GlobalKey();
-  bool _exitingFullScreen = false;
   bool _composeExpanded = false;
   final GlobalKey _composerKey = GlobalKey();
   Timer? _controlsHideTimer;
@@ -813,6 +1124,7 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
   final Set<String> _hoveredControlRegions = {};
   bool _mouseInside = false;
   PointerDeviceKind? _doubleTapKind;
+  bool _multiplePictureTouches = false;
   late AppLifecycleState? _appLifecycleState;
   bool _controlEditorFocused = false;
   int _openControlsMenus = 0;
@@ -891,6 +1203,10 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
   }
 
   void _onSettingsChanged() {
+    if (!widget.settings.value.playerShrinkVideo &&
+        widget.picture.value.scale < 1) {
+      widget.picture.reset();
+    }
     final mode = widget.settings.value.playerControlsMode;
     if (_controlsMode != mode) {
       _controlsMode = mode;
@@ -1052,7 +1368,7 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
   }
 
   void _onSurfaceTap() {
-    if (!widget.active) return;
+    if (!widget.active || _multiplePictureTouches) return;
     _focusNode.requestFocus();
     if (_dynamicControls) {
       if (!widget.session.isLive) {
@@ -1068,7 +1384,12 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
   void _onSurfaceDoubleTap() {
     final kind = _doubleTapKind;
     _doubleTapKind = null;
-    if (!widget.active || !_appActive || kind == null) return;
+    if (!widget.active ||
+        !_appActive ||
+        kind == null ||
+        _multiplePictureTouches) {
+      return;
+    }
     final input = InputScope.of<Object>(context);
     if (input?.routes.modal == true || (input?.dispatcher.barriers ?? 0) != 0) {
       return;
@@ -1097,9 +1418,14 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
     // Claim only the picture's wheel event so enclosing pages do not scroll.
     GestureBinding.instance.pointerSignalResolver.register(event, (_) {
       if (!mounted || !widget.active || !_appActive) return;
-      unawaited(
-        widget.shortcuts.adjustVolume(event.scrollDelta.dy < 0 ? 5 : -5),
-      );
+      final dy = event.scrollDelta.dy;
+      // macOS can split one wheel movement into many precise pixel deltas.
+      // Flutter maps a non-precise scroll line to 40 logical pixels there.
+      // Keep fractional volume so splitting the distance cannot amplify it.
+      final steps = defaultTargetPlatform == TargetPlatform.macOS
+          ? dy / 40
+          : dy.sign;
+      unawaited(widget.shortcuts.adjustVolume(-5 * steps));
     });
   }
 
@@ -1107,7 +1433,7 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
     widget.shortcuts.cancel();
     _onControlsMenuChanged(true);
     try {
-      await showPlayerSettings(context, tab: tab);
+      await showPlayerSettings(context, tab: tab, session: widget.session);
     } finally {
       widget.shortcuts.cancel();
       _onControlsMenuChanged(false);
@@ -1224,22 +1550,11 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
   );
 
   void _toggleFullScreen() {
-    if (!widget.fullScreen) {
-      widget.onFullScreen();
-      return;
+    if (widget.fullScreen) {
+      _focusNode.unfocus(disposition: UnfocusDisposition.scope);
+      FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
     }
-    if (_exitingFullScreen) return;
-    _exitingFullScreen = true;
-    _focusNode.unfocus(disposition: UnfocusDisposition.scope);
-    FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
-    unawaited(_finishFullScreenExit());
-  }
-
-  Future<void> _finishFullScreenExit() async {
-    // Let focus and semantics updates reach the engine before removing the
-    // fullscreen route's focused subtree.
-    await WidgetsBinding.instance.endOfFrame;
-    if (mounted) widget.onFullScreen();
+    widget.onFullScreen();
   }
 
   @override
@@ -1443,7 +1758,10 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
                           context,
                           layers: [
                             if (widget.active)
-                              VideoSurface(engine: session.engine),
+                              PlayerPicture(
+                                controller: widget.picture,
+                                child: VideoSurface(engine: session.engine),
+                              ),
                             if (widget.active &&
                                 settings.danmakuEnabled &&
                                 !session.isResolving &&
@@ -1456,118 +1774,188 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
                               _buildDanmakuOverlay(controls, settings),
                             Positioned.fill(
                               child: RepaintBoundary(
-                                child: PlayerSeekControls(
+                                child: PlayerPictureControls(
+                                  controller: widget.picture,
                                   enabled:
                                       widget.active &&
-                                      !session.isLive &&
                                       !session.isResolving &&
                                       session.media != null &&
-                                      session.error == null &&
-                                      snapshot.phase != PlaybackPhase.opening &&
-                                      snapshot.phase != PlaybackPhase.idle,
+                                      session.error == null,
                                   sourceGeneration: sourceGeneration,
-                                  position: () =>
-                                      session.snapshots.value.position,
-                                  duration: snapshot.duration,
-                                  preview: _swipeSeekPreview,
-                                  storyboard: session.storyboard,
-                                  onPreviewRequest: () {
-                                    if (session.sourceGeneration ==
-                                        sourceGeneration) {
-                                      unawaited(session.ensureStoryboard());
-                                    }
+                                  isCurrent: () =>
+                                      widget.active &&
+                                      session.sourceGeneration ==
+                                          sourceGeneration &&
+                                      !session.isResolving &&
+                                      !session.audioOnly &&
+                                      session.error == null,
+                                  allowShrink: settings.playerShrinkVideo,
+                                  onTouchSequence: () =>
+                                      _multiplePictureTouches = false,
+                                  onMultipleTouches: () {
+                                    _multiplePictureTouches = true;
+                                    widget.shortcuts.endTouchHold();
                                   },
-                                  onSeek: (position) async {
-                                    // A source may change before the next UI frame.
-                                    if (widget.active &&
-                                        _appActive &&
-                                        session.sourceGeneration ==
-                                            sourceGeneration &&
-                                        !session.isResolving &&
-                                        !session.isLive &&
-                                        session.media != null &&
-                                        session.error == null) {
-                                      await session.seek(position);
-                                    }
-                                  },
-                                  child: PlayerSwipeControls(
+                                  child: PlayerSeekControls(
                                     enabled:
-                                        settings.fullscreenSwipeControls &&
-                                        widget.active,
+                                        widget.active &&
+                                        !session.isLive &&
+                                        !session.isResolving &&
+                                        session.media != null &&
+                                        session.error == null &&
+                                        snapshot.phase !=
+                                            PlaybackPhase.opening &&
+                                        snapshot.phase != PlaybackPhase.idle,
                                     sourceGeneration: sourceGeneration,
-                                    volume: snapshot.volume,
-                                    setVolume: session.setVolume,
-                                    child: RawGestureDetector(
-                                      // The recognizer's deadline is fixed at creation.
-                                      key: ValueKey(
-                                        settings.shortcuts.holdDelayMs,
-                                      ),
-                                      behavior: HitTestBehavior.translucent,
-                                      excludeFromSemantics: true,
-                                      gestures: {
-                                        if (!session.isLive)
-                                          LongPressGestureRecognizer:
-                                              GestureRecognizerFactoryWithHandlers<
-                                                LongPressGestureRecognizer
-                                              >(
-                                                () =>
-                                                    LongPressGestureRecognizer(
-                                                      duration: Duration(
-                                                        milliseconds: settings
-                                                            .shortcuts
-                                                            .holdDelayMs,
-                                                      ),
-                                                      supportedDevices: {
-                                                        PointerDeviceKind.touch,
-                                                      },
-                                                    ),
-                                                (recognizer) {
-                                                  recognizer.onLongPressDown =
-                                                      (_) => widget.shortcuts
-                                                          .prepareTouchHold();
-                                                  recognizer.onLongPressStart =
-                                                      (_) => widget.shortcuts
-                                                          .beginTouchHold();
-                                                  recognizer
-                                                          .onLongPressMoveUpdate =
-                                                      (details) => widget
-                                                          .shortcuts
-                                                          .moveTouchHold(
-                                                            dx: details
-                                                                .offsetFromOrigin
-                                                                .dx,
-                                                            dy: details
-                                                                .offsetFromOrigin
-                                                                .dy,
-                                                          );
-                                                  recognizer.onLongPressEnd =
-                                                      (_) => widget.shortcuts
-                                                          .endTouchHold();
-                                                  recognizer.onLongPressCancel =
-                                                      widget
-                                                          .shortcuts
-                                                          .endTouchHold;
-                                                },
-                                              ),
-                                      },
-                                      child: GestureDetector(
-                                        key: const ValueKey(
-                                          'player-surface-tap-target',
+                                    position: () => session.commandPosition,
+                                    duration: snapshot.duration,
+                                    preview: _swipeSeekPreview,
+                                    storyboard: session.storyboard,
+                                    onPreviewRequest: () {
+                                      if (session.sourceGeneration ==
+                                          sourceGeneration) {
+                                        unawaited(session.ensureStoryboard());
+                                      }
+                                    },
+                                    onSeek: (position) async {
+                                      // A source may change before the next UI frame.
+                                      if (widget.active &&
+                                          _appActive &&
+                                          session.sourceGeneration ==
+                                              sourceGeneration &&
+                                          !session.isResolving &&
+                                          !session.isLive &&
+                                          session.media != null &&
+                                          session.error == null) {
+                                        await session.seek(position);
+                                      }
+                                    },
+                                    child: PlayerSwipeControls(
+                                      enabled:
+                                          settings.fullscreenSwipeControls &&
+                                          widget.active,
+                                      sourceGeneration: sourceGeneration,
+                                      volume: snapshot.volume,
+                                      setVolume: session.setVolume,
+                                      fullScreen: widget.fullScreen,
+                                      reverseFullScreenGesture: settings
+                                          .playerFullscreenGestureReverse,
+                                      onFullScreen:
+                                          widget.active &&
+                                              settings.playerFullscreenGesture
+                                          ? () {
+                                              if (_appActive &&
+                                                  session.sourceGeneration ==
+                                                      sourceGeneration &&
+                                                  !_multiplePictureTouches) {
+                                                _toggleFullScreen();
+                                              }
+                                            }
+                                          : null,
+                                      child: RawGestureDetector(
+                                        // The recognizer's deadline is fixed at creation.
+                                        key: ValueKey(
+                                          settings.shortcuts.holdDelayMs,
                                         ),
-                                        // Keep backend surface gestures out of
-                                        // this arena; media-kit's scale recognizer
-                                        // can claim a swipe before our drags.
-                                        behavior: HitTestBehavior.opaque,
-                                        onTap: _onSurfaceTap,
-                                        onDoubleTapDown: (details) =>
-                                            _doubleTapKind = details.kind,
-                                        onDoubleTapCancel: () =>
-                                            _doubleTapKind = null,
-                                        onDoubleTap: _onSurfaceDoubleTap,
+                                        behavior: HitTestBehavior.translucent,
+                                        excludeFromSemantics: true,
+                                        gestures: {
+                                          if (!session.isLive)
+                                            LongPressGestureRecognizer:
+                                                GestureRecognizerFactoryWithHandlers<
+                                                  LongPressGestureRecognizer
+                                                >(
+                                                  () =>
+                                                      LongPressGestureRecognizer(
+                                                        duration: Duration(
+                                                          milliseconds: settings
+                                                              .shortcuts
+                                                              .holdDelayMs,
+                                                        ),
+                                                        supportedDevices: {
+                                                          PointerDeviceKind
+                                                              .touch,
+                                                        },
+                                                      ),
+                                                  (recognizer) {
+                                                    recognizer
+                                                        .onLongPressDown = (_) {
+                                                      if (!_multiplePictureTouches) {
+                                                        widget.shortcuts
+                                                            .prepareTouchHold();
+                                                      }
+                                                    };
+                                                    recognizer
+                                                        .onLongPressStart = (_) {
+                                                      if (!_multiplePictureTouches) {
+                                                        widget.shortcuts
+                                                            .beginTouchHold();
+                                                      }
+                                                    };
+                                                    recognizer
+                                                            .onLongPressMoveUpdate =
+                                                        (details) => widget
+                                                            .shortcuts
+                                                            .moveTouchHold(
+                                                              dx: details
+                                                                  .offsetFromOrigin
+                                                                  .dx,
+                                                              dy: details
+                                                                  .offsetFromOrigin
+                                                                  .dy,
+                                                            );
+                                                    recognizer.onLongPressEnd =
+                                                        (_) => widget.shortcuts
+                                                            .endTouchHold();
+                                                    recognizer
+                                                            .onLongPressCancel =
+                                                        widget
+                                                            .shortcuts
+                                                            .endTouchHold;
+                                                  },
+                                                ),
+                                        },
+                                        child: GestureDetector(
+                                          key: const ValueKey(
+                                            'player-surface-tap-target',
+                                          ),
+                                          // Keep backend surface gestures out of
+                                          // this arena; media-kit's scale recognizer
+                                          // can claim a swipe before our drags.
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: _onSurfaceTap,
+                                          onDoubleTapDown: (details) =>
+                                              _doubleTapKind = details.kind,
+                                          onDoubleTapCancel: () =>
+                                              _doubleTapKind = null,
+                                          onDoubleTap: _onSurfaceDoubleTap,
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
+                              ),
+                            ),
+                            Positioned(
+                              bottom: smallWindow ? 56 : 96,
+                              left: 0,
+                              right: 0,
+                              child: ValueListenableBuilder(
+                                valueListenable: widget.picture,
+                                builder: (context, value, _) =>
+                                    controls &&
+                                        value !=
+                                            PlayerPictureController.identity
+                                    ? Center(
+                                        child: FilledButton.tonal(
+                                          key: const ValueKey(
+                                            'player-restore-picture',
+                                          ),
+                                          onPressed: widget.picture.reset,
+                                          child: const Text('还原画面'),
+                                        ),
+                                      )
+                                    : const SizedBox.shrink(),
                               ),
                             ),
                             if (widget.shortcuts.rateFeedback ||
@@ -1668,6 +2056,8 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
                                   child: _PlayerTopBar(
                                     navigation: widget.navigation,
                                     smallWindow: smallWindow,
+                                    showSleepTimer: !layout.compact,
+                                    onMenuChanged: _onControlsMenuChanged,
                                     onMore: _openMoreDialog,
                                     fullScreen: widget.fullScreen,
                                     onExitFullScreen: _toggleFullScreen,
@@ -1708,35 +2098,20 @@ class _PlayerViewState extends State<_PlayerView> with WidgetsBindingObserver {
                                 );
                               },
                             ),
-                            if (session.error == null &&
-                                (session.isResolving ||
-                                    session.isRecovering ||
+                            if (session.error == null)
+                              PlayerLoadingIndicator(
+                                key: ValueKey((
+                                  session.sourceGeneration,
+                                  snapshot.generation,
+                                )),
+                                preparing:
+                                    session.isResolving ||
+                                    snapshot.phase == PlaybackPhase.opening,
+                                recovering: session.isRecovering,
+                                buffering:
+                                    snapshot.desiredPlaying &&
                                     snapshot.phase != PlaybackPhase.ended &&
-                                        snapshot.isBuffering ||
-                                    snapshot.phase == PlaybackPhase.opening))
-                              Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const CircularProgressIndicator(
-                                      color: Colors.white,
-                                    ),
-                                    const SizedBox(height: 14),
-                                    Text(
-                                      session.isRecovering
-                                          ? '正在恢复播放…'
-                                          : session.isResolving ||
-                                                snapshot.phase ==
-                                                    PlaybackPhase.opening
-                                          ? '正在准备音视频…'
-                                          : '网络缓冲中…',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                    snapshot.isBuffering,
                               ),
                             if (session.error case final String error)
                               Positioned(
@@ -2727,6 +3102,23 @@ class _ControlBar extends StatelessWidget {
       action();
     },
     itemBuilder: (_) => [
+      if (!session.isLive)
+        PopupMenuItem(
+          value: () => unawaited(
+            showPlaybackSleepTimerDialog(
+              context,
+              session,
+              onMenuChanged: onMenuChanged,
+            ),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.timer_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('定时关闭'),
+            ],
+          ),
+        ),
       if (session.canListen)
         PopupMenuItem(
           value: () => unawaited(session.setAudioOnly(true)),
@@ -3093,6 +3485,30 @@ String _time(Duration value) {
   return '${minutes.toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
 }
 
+class _PlayerFullScreenRoute<T> extends RawDialogRoute<T> {
+  _PlayerFullScreenRoute({
+    required super.pageBuilder,
+    required super.requestFocus,
+    required super.barrierDismissible,
+    required super.barrierLabel,
+    required super.transitionDuration,
+    required this.onPopRequested,
+  });
+
+  final VoidCallback? onPopRequested;
+  bool allowPop = false;
+
+  @override
+  bool didPop(T? result) {
+    if (!allowPop && !willHandlePopInternally && onPopRequested != null) {
+      // Imperative pop and system Back both restore mobile presentation first.
+      onPopRequested?.call();
+      return false;
+    }
+    return super.didPop(result);
+  }
+}
+
 class _WindowFullScreenState {
   Object? owner;
   Future<void> commands = Future.value();
@@ -3163,7 +3579,7 @@ class _PlayerRateButton extends StatelessWidget {
           unawaited(session.setRate(rate));
         },
         itemBuilder: (_) => [
-          for (final rate in PlaybackRates.values)
+          for (final rate in session.playbackRates)
             PopupMenuItem(value: rate, child: Text('${rate}x')),
         ],
         child: Center(
@@ -3187,6 +3603,8 @@ class _PlayerTopBar extends StatelessWidget {
   const _PlayerTopBar({
     required this.navigation,
     required this.smallWindow,
+    required this.showSleepTimer,
+    required this.onMenuChanged,
     required this.onMore,
     required this.fullScreen,
     required this.onExitFullScreen,
@@ -3197,6 +3615,8 @@ class _PlayerTopBar extends StatelessWidget {
   });
   final ValueListenable<PlaybackNavigation?> navigation;
   final bool smallWindow;
+  final bool showSleepTimer;
+  final ValueChanged<bool> onMenuChanged;
   final VoidCallback onMore;
   final bool fullScreen;
   final VoidCallback onExitFullScreen;
@@ -3231,7 +3651,7 @@ class _PlayerTopBar extends StatelessWidget {
         colors: [Colors.black54, Colors.transparent],
       ),
     ),
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    padding: const EdgeInsets.only(top: 2, right: 6, bottom: 2),
     constraints: const BoxConstraints(minHeight: 52),
     child: SafeArea(
       top: fullScreen,
@@ -3246,6 +3666,33 @@ class _PlayerTopBar extends StatelessWidget {
               showHomeButton ||
               (fullScreen && Theme.of(context).platform == TargetPlatform.iOS);
           final buttons = <Widget>[
+            if (MiniPlayerActions.maybeOf(context) case final mini?)
+              _action(
+                '迷你小窗',
+                Icons.picture_in_picture_alt_rounded,
+                mini.onEnter,
+              ),
+            if (MiniPlayerActions.maybeOf(context) case final mini?
+                when mini.window.hasDesktopWindow)
+              ValueListenableBuilder<bool>(
+                valueListenable: mini.window.alwaysOnTop,
+                builder: (context, pinned, _) => _action(
+                  pinned ? '取消置顶' : '置顶',
+                  pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                  () => unawaited(mini.window.setAlwaysOnTop(!pinned)),
+                ),
+              ),
+            if (showSleepTimer && !session.isLive)
+              SizedBox(
+                width: _ControlsLayout.buttonWidth,
+                height: 40,
+                child: ListeningSleepTimerButton(
+                  session: session,
+                  compact: true,
+                  videoOverlay: true,
+                  onMenuChanged: onMenuChanged,
+                ),
+              ),
             if (castRequestFor(session) != null)
               _action(
                 '投屏',

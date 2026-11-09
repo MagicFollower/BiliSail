@@ -1,8 +1,26 @@
 # 第三方来源与分发检查
 
+## 2026-11-07 可选 fvp 后端
+
+音频健康采样桥接使用 MDK 0.39 的三个未修改 C API 头文件；来源、摘要和许可范围见 [头文件来源](packages/bili_player/third_party/mdk/SOURCE.md)，原许可通知随 `native/fvp/NOTICE.md` 分发。桥接只统计音频解码活动，不额外链接 MDK／FFmpeg。
+
+实验后端新增 BSD-3-Clause 的 [wang-bin/fvp](https://github.com/wang-bin/fvp/tree/e81637411c58a9ae28de246ee73ad06e3418f10e)，固定完整提交 `e81637411c58a9ae28de246ee73ad06e3418f10e`；其 MDK 核心固定官方 v0.39.0，逐平台 URL／SHA-256 见 `native/fvp/assets.lock.json`。MDK 的 SDK 授权与 Flutter 插件分别处理，官方说明 Flutter 用户可免费商用；原 SDK 许可保留在 `native/fvp/mdk.podspec`，SDK 附带 FFmpeg、libass 和可选专业解码插件的许可不能被插件 BSD 许可覆盖。接入方式、验证与分发边界见[可选 fvp 记录](docs/validation/fvp-backend-2026-11-07.md)。media_kit 和 bili_mux 的既有来源及许可继续独立保留。
+
+## 2026-11-07 Windows x64 硬解边缘修复
+
+Windows x64 改用个人 mpv `afd6da8843a07f463ba4c736a2ea636b1a92e23e` 重建的 SDK；固定 [原生资产](https://github.com/CKopoer/media-kit/releases/tag/native-windows-hwdec-edges-2026-11-07)、源码、构建容器和完整摘要见 [Windows 来源](windows/native/mpv/SOURCE.md)。mpv 为 LGPL-2.1-or-later，本次 FFmpeg 为 LGPL-3.0-or-later；LuaJIT／libsixel 的 MIT 和 subrandr 的 MPL-2.0 原始文本、容器附带的子依赖通知随 SDK 的 `provenance/` 分发。补充许可的打包脚本逐项验证原生 DLL、import library、头文件和 JAR 与 CI 产物内容不变。应用动态加载 DLL，保留替换和对应源码／构建材料；MIT 包装许可不覆盖静态子依赖许可。ARM64 和其他平台保留既有原生资产。
+
+## 2026-11-07 个人媒体 fork
+
+当前核心、视频和全部平台库插件统一来自 MIT 的 [CKopoer/media-kit](https://github.com/CKopoer/media-kit/tree/b1c7e4336140d8c4550c1e963365da8edfe56d0a)，官方基线为 `c533e446755f51cf53c7e57aea873f2aa5355f81`。mpv 源码由 [CKopoer/mpv](https://github.com/CKopoer/mpv) 维护；固定资产与原来源见 [native-2026-11-07](https://github.com/CKopoer/media-kit/releases/tag/native-2026-11-07)。Windows、Android、Apple 的首批资产为原摘要不变的上游镜像；Linux 从个人固定源码构建，子依赖继续记录发行版来源。MIT 不替代 mpv、FFmpeg、ANGLE 或其他子依赖的许可。当前入口及验证见[实施记录](docs/validation/media-kit-personal-fork-2026-11-07.md)；下列各次切换记录保留为历史。
+
+
+
 记录日期：2026-10-05。本文件用于本地 0.1.0 预览的来源追踪，不表示已经完成对外发行所需的全部原生许可证归档。项目尚未确定自己的开源许可证。
 
 ## 2026-11-01 Windows ANGLE 硬解回退修复
+
+2026-11-07 新增 Windows ARM64：libmpv 使用同一 `88eb9f2e73945d8bc9c133a2f67babaa9af34680` 的 LGPL aarch64 SDK；ANGLE 使用 BSD-3-Clause 的 `a96fca8d5ee2ca61e8de419e38cd577579281c9e`，构建材料为 [yorickreum/angle-libs](https://github.com/yorickreum/angle-libs/tree/485758dd4baf87570c2aac3cc47577a9514d3429)。两份原始归档逐字节镜像到个人媒体 fork；摘要、对应源码与分发许可见 [Windows 来源](windows/native/mpv/SOURCE.md)。ARM64 包附原始 ANGLE LICENSE 与来源记录，MIT 包装许可不替代其子依赖许可。
 
 Windows 保留以下 PiliPlus 核心／视频／库插件和 ANGLE 来源，完整 libmpv SDK 改用固定的 [zhongfly LGPL x86_64 构建 88eb9f2e73](https://github.com/zhongfly/mpv-winbuild/releases/tag/2026-10-12-88eb9f2e73)，包含 mpv 的 EGL device-query 修复。当前清单为 [media-assets.cmake](windows/native/media-assets.cmake)，归档、SDK 逐文件摘要、源码、构建记录及许可边界见 [SOURCE.md](windows/native/mpv/SOURCE.md)。许可、来源与清单随 Windows bundle 一并保留，动态链接方式不变。没有采用 DXGI 扩展、修改 Pub 缓存或切换其他平台。LGPL 标签不代替静态子依赖各自的许可与对应源码分发要求。
 

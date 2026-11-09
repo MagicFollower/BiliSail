@@ -1,7 +1,7 @@
 # bili_mux
 
 下载完成后的本地 MP4 / MKV 流复制组件，与 `bili_player` 的 libmpv/FFmpeg 隔离。
-打包目标为 Windows x64、Android arm64、macOS arm64／Intel x64、iOS arm64 和 Linux x64；Linux 同时用于 CI 原生回归。新增 iOS／Linux 应用包的首次远端构建及设备验收见[平台记录](../../docs/validation/ios-linux.md)，Intel macOS 构建状态见 [CI/CD](../../docs/validation/ci-cd.md#macos-dmg-安装)。
+打包目标为 Windows x64／ARM64、Android arm64、macOS arm64／Intel x64、iOS arm64 和 Linux x64；Linux 同时用于 CI 原生回归。新增 iOS／Linux 应用包的首次远端构建及设备验收见[平台记录](../../docs/validation/ios-linux.md)，Intel macOS 构建状态见 [CI/CD](../../docs/validation/ci-cd.md#macos-dmg-安装)。
 
 ## 原生来源与构建
 
@@ -13,11 +13,17 @@
 
 在仓库根目录执行，下列命令仅构建组件；首次下载约 17 MB 的源码归档，缓存于 `build/download_mux`。生成的 `native/prebuilt` 不提交 Git。修改包装代码后也需重新执行。
 
+CI 通过[组合 Action](../../.github/actions/restore-mux/action.yml)按原生源码、构建脚本、目标和工具链身份精确恢复最终组件；不回退其他键。非 Windows 使用实际编译器／SDK；Windows 使用[固定工具链清单](../../tool/windows-mux-toolchains.json)、runner image 和编译 flags，未命中才安装 MSYS2，实际包版本匹配清单才保存快照。包版本漂移继续源码构建，但不缓存到旧身份；清单更新须审阅对应工具链。Windows 快照和源码分发包保留实际 `toolchain.txt`。快照包含配置、来源与许可，逐文件核对摘要及 PE／ELF／Mach-O 架构，失效时清理该目标并从源码重建。每目标只保留一个代际，组件上限 80 MB、上传预留 100 MB，服从仓库 9 GB 缓存预算；不缓存对象目录、源码树或测试 ffprobe。Linux 由原生回归任务唯一写入，应用构建仅读取；其他目标由各自构建任务写入。缓存命中仍下载并验证源码归档；Windows 暖路径不需要 MSYS2 或展开 FFmpeg，Apple 重新准备 CocoaPods framework 布局，原生回归照常执行。普通本地命令默认继续源码构建，不启用 CI 快照。
+
 ```powershell
 # Windows：MSYS2 的 UCRT64 GCC/G++、make、curl、tar。
 # 本轮验证 GCC 13.2.0；可用 -MsysRoot 指定非默认安装目录。
 # 安装工具：在 MSYS2 运行 pacman -S --needed make mingw-w64-ucrt-x86_64-gcc
 ./tool/build-download-mux.ps1 -Target windows-x64
+
+# Windows ARM64：在 Windows 11 ARM64 主机使用 MSYS2 CLANGARM64。
+# pacman -S --needed make mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-llvm
+./tool/build-download-mux.ps1 -Target windows-arm64
 
 # Android：固定 NDK 28.2.13676358，API 24，16 KiB ELF 页对齐。
 # 可从 ANDROID_NDK_HOME、ANDROID_HOME 或 android/local.properties 找到 SDK。
@@ -41,8 +47,9 @@
 
 macOS、iOS、Linux 也可直接执行 `bash packages/bili_mux/tool/build.sh <target>`。
 组件构建完成后按通常方式执行 Flutter 构建。Windows／Linux CMake、Android Gradle 和 Apple CocoaPods 打包对应 DLL/SO/framework；各端随组件保留许可与来源/配置。iOS 与 macOS 使用各自的 framework 构建目录，FFI 按各自的 app bundle 布局加载；Linux 按可执行文件旁的 `lib/libbili_mux.so` 加载，兼容 AppImage 挂载目录与 Flatpak 沙盒。
+Windows 的两种架构分别保存在 `native/prebuilt/windows-x64` 和 `native/prebuilt/windows-arm64`，CMake 按 `FLUTTER_TARGET_PLATFORM` 选择目录；ARM64 采用 Clang／LLVM 和静态 C++ 运行库，不能复用 x64 DLL。
 macOS 的两种架构分别保存在 `native/prebuilt/macos-arm64` 和 `native/prebuilt/macos-x64`，构建后将所选架构复制到同一个 CocoaPods framework 目录；切换架构必须重建组件，并让应用的 Xcode `ARCHS` 与之匹配。发布入口 `tool/build-release.ps1` 自动完成这一流程，生成两份独立 DMG。
-iOS framework 使用扁平布局，`BiliMux`、`Info.plist`、`COPYING.LGPLv2.1`、`source.txt` 和 `configure.log` 均位于根目录；不能创建 macOS 式的 `Resources/`。Apple [打包步骤](tool/package-apple-framework.sh)每次重新生成 CocoaPods 使用的 framework，移除旧构建遗留目录；macOS 继续将许可与来源/配置放在 `Resources/`。无需 Xcode 的目录回归可运行 `bash packages/bili_mux/tool/test-apple-framework.sh`。
+iOS framework 使用扁平布局，`BiliMux`、`Info.plist`、`COPYING.LGPLv2.1`、`source.txt` 和 `configure.log` 均位于根目录；不能创建 macOS 式的 `Resources/`。macOS 的 CocoaPods framework 按 [Apple 版本化布局](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPFrameworks/Concepts/FrameworkAnatomy.html)生成：二进制位于 `Versions/A/BiliMux`，plist、许可与来源/配置位于 `Versions/A/Resources/`；`Versions/Current -> A`，根目录的 `BiliMux` 和 `Resources` 分别链接到 `Versions/Current` 下的对应项，不保留根目录 `Info.plist`。Apple [打包步骤](tool/package-apple-framework.sh)每次重新生成 CocoaPods 使用的 framework，移除旧构建目录和签名；`native/prebuilt/<target>/BiliMux.framework` 只作为该步骤的编译中间输入。无需 Xcode 的目录回归可运行 `bash packages/bili_mux/tool/test-apple-framework.sh`，覆盖 iOS、两种 macOS 架构及重复打包。
 `tool/build-release.ps1` 已自动先构建组件，并在安装包旁生成对应的 `.mux-source.zip`，包含 FFmpeg 原始归档、本项目包装源码与构建说明，便于重建与替换动态组件。
 缺失原生资产时 Windows/Android 构建会提示准备命令；非目标 ABI 的运行时能力为不可用。
 

@@ -5,10 +5,14 @@ import '../../../domain/user.dart';
 import '../../../domain/video.dart';
 import '../../../shared/ui/dynamic_post_interactions.dart';
 import '../../../shared/ui/network_avatar.dart';
+import '../../../shared/ui/app_cover_image.dart';
+import '../../../shared/ui/responsive_card_grid.dart';
+import '../../../shared/ui/season_card.dart';
 import '../../../shared/ui/sliver_dynamic_post_list.dart';
 import '../domain/profile_repository.dart';
 import 'profile_folder_video_grid.dart';
 import 'profile_video_card.dart';
+import 'profile_user_card.dart';
 
 /// Retain one lazy delegate for unchanged content, independent of scroll offset
 /// and paging/header status. Entry snapshots are immutable in the controller.
@@ -22,6 +26,9 @@ class ProfileSectionContent extends StatefulWidget {
     this.folderOpen = false,
     this.onOpenVideo,
     this.onOpenUser,
+    this.onOpenCollection,
+    this.onOpenSeason,
+    this.onManageUser,
   });
 
   final ProfileSection section;
@@ -31,6 +38,9 @@ class ProfileSectionContent extends StatefulWidget {
   final ValueChanged<Uri> onOpenLink;
   final ValueChanged<VideoSummary>? onOpenVideo;
   final ValueChanged<UserId>? onOpenUser;
+  final ValueChanged<ProfileEntry>? onOpenCollection;
+  final ValueChanged<String>? onOpenSeason;
+  final ValueChanged<ProfileEntry>? onManageUser;
 
   @override
   State<ProfileSectionContent> createState() => _ProfileSectionContentState();
@@ -57,7 +67,10 @@ class _ProfileSectionContentState extends State<ProfileSectionContent> {
         oldWidget.onOpenFolder != widget.onOpenFolder ||
         oldWidget.onOpenLink != widget.onOpenLink ||
         oldWidget.onOpenVideo != widget.onOpenVideo ||
-        oldWidget.onOpenUser != widget.onOpenUser) {
+        oldWidget.onOpenUser != widget.onOpenUser ||
+        oldWidget.onManageUser != widget.onManageUser ||
+        oldWidget.onOpenCollection != widget.onOpenCollection ||
+        oldWidget.onOpenSeason != widget.onOpenSeason) {
       _content = null;
       _videoGrid = null;
     }
@@ -85,6 +98,14 @@ class _ProfileSectionContentState extends State<ProfileSectionContent> {
   }
 
   Widget _buildContent() {
+    if (widget.section == ProfileSection.following ||
+        widget.section == ProfileSection.followers) {
+      return ProfileUserGrid(
+        entries: widget.entries,
+        onOpen: widget.onOpenUser,
+        onManage: widget.onManageUser,
+      );
+    }
     final kind = _kind ??= _classify();
     if (kind == _ContentKind.folderVideos) {
       return ProfileFolderVideoGrid(
@@ -105,6 +126,20 @@ class _ProfileSectionContentState extends State<ProfileSectionContent> {
       );
     }
     if (kind == _ContentKind.entries) {
+      if (widget.entries.isNotEmpty &&
+          widget.entries.every(
+            (entry) => const {
+              ProfileEntryKind.folder,
+              ProfileEntryKind.collection,
+              ProfileEntryKind.season,
+            }.contains(entry.kind),
+          )) {
+        return SliverResponsiveCardGrid(
+          itemCount: widget.entries.length,
+          itemBuilder: (context, index) =>
+              _libraryCard(context, widget.entries[index]),
+        );
+      }
       return SliverList.builder(
         itemCount: widget.entries.length,
         itemBuilder: (context, index) => Padding(
@@ -151,6 +186,111 @@ class _ProfileSectionContentState extends State<ProfileSectionContent> {
     video: video,
     onTap: () => widget.onOpenVideo?.call(video),
   );
+
+  Widget _libraryCard(BuildContext context, ProfileEntry entry) {
+    if (entry.kind == ProfileEntryKind.season) {
+      final seasonId = entry.seasonId;
+      return SeasonCard(
+        key: ValueKey('profile-library-${entry.kind.name}-${entry.id}'),
+        title: entry.title,
+        subtitle: entry.subtitle,
+        coverUrl: entry.coverUrl,
+        label: widget.section == ProfileSection.bangumi ? '追番' : '追剧',
+        onTap: seasonId != null && widget.onOpenSeason != null
+            ? () => widget.onOpenSeason?.call(seasonId)
+            : null,
+      );
+    }
+    final scheme = Theme.of(context).colorScheme;
+    final label = switch (entry.kind) {
+      ProfileEntryKind.folder => '收藏夹',
+      _ => entry.collection?.isSeries == true ? '系列' : '合集',
+    };
+    final VoidCallback? open = switch (entry.kind) {
+      ProfileEntryKind.folder => () => widget.onOpenFolder(entry),
+      ProfileEntryKind.collection when widget.onOpenCollection != null =>
+        () => widget.onOpenCollection?.call(entry),
+      _ => null,
+    };
+    return Material(
+      color: scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: ValueKey('profile-library-${entry.kind.name}-${entry.id}'),
+        onTap: open,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(
+                    color: scheme.surfaceContainerHighest,
+                    child: entry.coverUrl == null
+                        ? const Icon(Icons.video_library_outlined, size: 36)
+                        : AppCoverImage(
+                            url: entry.coverUrl.toString(),
+                            excludeFromSemantics: true,
+                            errorBuilder: (_, _, _) =>
+                                const Icon(Icons.broken_image_outlined),
+                          ),
+                  ),
+                  Positioned(
+                    left: 8,
+                    bottom: 8,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xB3000000),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        child: Text(
+                          label,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    entry.count == null ? '视频数量未知' : '${entry.count} 个视频',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _entry(BuildContext context, ProfileEntry entry) {
     final post = entry.dynamicPost;

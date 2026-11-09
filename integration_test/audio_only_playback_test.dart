@@ -4,6 +4,8 @@ import 'package:bili_player/bili_player.dart';
 import 'package:bilisail/domain/request_cancellation.dart';
 import 'package:bilisail/domain/video.dart';
 import 'package:bilisail/features/playback/application/playback_session.dart';
+import 'package:bilisail/features/playback/application/playback_manager.dart';
+import 'package:bilisail/features/playback/application/playback_listening_mode.dart';
 import 'package:bilisail/features/playback/domain/playback_repository.dart';
 import 'package:bilisail/features/settings/domain/app_settings.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +15,207 @@ import 'package:integration_test/integration_test.dart';
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
+
+  for (final backend in ['media_kit', 'fvp']) {
+    testWidgets('shared timer pauses a replacement native page: $backend', (
+      tester,
+    ) async {
+      initializePlayerBackend();
+      final fixtures = Platform.environment['BILI_TEST_MEDIA_DIR']!;
+      var now = DateTime(2026, 11, 8);
+      final manager = PlaybackManager(
+        sleepTimerNow: () => now,
+        createSession: (sleepTimer) => PlaybackSession(
+          sleepTimer: sleepTimer,
+          engine: ConfigurablePlayerEngine(
+            createEngine: () async =>
+                backend == 'fvp' ? FvpEngine() : MediaKitEngine(),
+          ),
+          repository: _Repository(Directory(fixtures).uri),
+          progress: _Progress(),
+          accountScope: () => 'guest',
+        ),
+      );
+      try {
+        await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+        final first = manager.acquire('first');
+        first.configureSettings(
+          AppSettings(defaultVolume: 0, resumePlayback: false),
+        );
+        await _withFrames(tester, first.open(_detail, _part));
+        expect(first.error, isNull);
+        first.startSleepTimer(const Duration(minutes: 2));
+        now = now.add(const Duration(seconds: 30));
+        final second = manager.acquire('second');
+        second.configureSettings(
+          AppSettings(defaultVolume: 0, resumePlayback: false),
+        );
+        await _withFrames(tester, second.open(_detail, _part));
+        expect(second.error, isNull);
+        expect(second.sleepTimer.remaining, const Duration(seconds: 90));
+        manager.release('first', first);
+        await _withFrames(tester, manager.drainReleases());
+        expect(second.sleepTimer.remaining, const Duration(seconds: 90));
+        now = now.add(const Duration(seconds: 90));
+        second.sleepTimer.checkDeadline();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(second.engine.currentSnapshot.desiredPlaying, isFalse);
+        expect(second.engine.currentSnapshot.phase, PlaybackPhase.paused);
+        final position = second.engine.currentSnapshot.position;
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(
+          (second.engine.currentSnapshot.position - position).abs(),
+          lessThan(const Duration(milliseconds: 200)),
+        );
+        expect(second.canAutoAdvance, isFalse);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _withFrames(tester, manager.close());
+      }
+    });
+  }
+
+  for (final backend in ['media_kit', 'fvp']) {
+    for (final paused in [false, true]) {
+      testWidgets(
+        'listening retains native progress: $backend paused=$paused',
+        (tester) async {
+          initializePlayerBackend();
+          final fixtures = Platform.environment['BILI_TEST_MEDIA_DIR']!;
+          final listeningMode = PlaybackListeningMode();
+          final engine = ConfigurablePlayerEngine(
+            createEngine: () async =>
+                backend == 'fvp' ? FvpEngine() : MediaKitEngine(),
+          );
+          final session = PlaybackSession(
+            engine: engine,
+            listeningMode: listeningMode,
+            repository: _Repository(Directory(fixtures).uri),
+            progress: _Progress(),
+            accountScope: () => 'guest',
+          );
+          session.configureSettings(
+            AppSettings(autoPlay: false, resumePlayback: false),
+          );
+          try {
+            await tester.pumpWidget(
+              MaterialApp(
+                home: ListenableBuilder(
+                  listenable: session,
+                  builder: (_, _) => session.audioOnly
+                      ? const SizedBox.shrink()
+                      : VideoSurface(engine: engine),
+                ),
+              ),
+            );
+            await _withFrames(tester, session.open(_detail, _part));
+            expect(session.error, isNull);
+            await _withFrames(tester, session.pause());
+            await _withFrames(tester, session.seek(const Duration(seconds: 2)));
+            await _withFrames(tester, session.setRate(1.5));
+            await _withFrames(tester, session.setVolume(0));
+            if (!paused) await _withFrames(tester, session.play());
+
+            for (final listening in [true, false, true]) {
+              final before = engine.currentSnapshot.position;
+              await _withFrames(tester, session.setAudioOnly(listening));
+              expect(session.error, isNull);
+              expect(session.audioOnly, listening);
+              // Read native diagnostics as well as the sampled snapshot: an
+              // optimistic start-position snapshot can hide playback at zero.
+              for (var sample = 0; sample < 2; sample++) {
+                await tester.pump(const Duration(milliseconds: 350));
+                final info = await engine.inspectPlaybackInformation();
+                final native = info?.diagnostics;
+                expect(native, isNotNull);
+                expect(
+                  native!.position.inMilliseconds,
+                  inInclusiveRange(
+                    before.inMilliseconds - 250,
+                    before.inMilliseconds + (paused ? 250 : 1800),
+                  ),
+                );
+                expect(
+                  (engine.currentSnapshot.position - native.position).abs(),
+                  lessThan(const Duration(milliseconds: 500)),
+                );
+                expect(native.hasDecodedVideo, !listening);
+                expect(engine.currentSnapshot.desiredPlaying, !paused);
+                expect(engine.currentSnapshot.rate, 1.5);
+                expect(engine.currentSnapshot.volume, 0);
+              }
+              if (!paused) {
+                expect(engine.currentSnapshot.position, greaterThan(before));
+              }
+            }
+            final nextEngine = ConfigurablePlayerEngine(
+              createEngine: () async =>
+                  backend == 'fvp' ? FvpEngine() : MediaKitEngine(),
+            );
+            final next = PlaybackSession(
+              engine: nextEngine,
+              listeningMode: listeningMode,
+              repository: _Repository(Directory(fixtures).uri),
+              progress: _Progress(),
+              accountScope: () => 'guest',
+            );
+            try {
+              await _withFrames(
+                tester,
+                next.open(
+                  _detail,
+                  _part,
+                  desiredPlaying: false,
+                  position: const Duration(seconds: 2),
+                  volume: 0,
+                ),
+              );
+              await tester.pump(const Duration(milliseconds: 350));
+              expect(next.error, isNull);
+              expect(next.audioOnly, isTrue);
+              final info = await nextEngine.inspectPlaybackInformation();
+              expect(info?.diagnostics?.hasDecodedVideo, isFalse);
+              expect(
+                info?.diagnostics?.position.inMilliseconds,
+                closeTo(2000, 250),
+              );
+            } finally {
+              await _withFrames(tester, next.close());
+            }
+            if (paused) {
+              // A confirmed paused position must also survive a seek to zero,
+              // another seek, and finally starting the real audio clock.
+              await _withFrames(tester, session.seek(Duration.zero));
+              await tester.pump(const Duration(milliseconds: 350));
+              expect(
+                engine.currentSnapshot.position,
+                lessThan(const Duration(milliseconds: 100)),
+              );
+              await _withFrames(
+                tester,
+                session.seek(const Duration(seconds: 2)),
+              );
+              await tester.pump(const Duration(milliseconds: 350));
+              expect(
+                engine.currentSnapshot.position.inMilliseconds,
+                closeTo(2000, 250),
+              );
+              await _withFrames(tester, session.play());
+              await tester.pump(const Duration(milliseconds: 700));
+              final info = await engine.inspectPlaybackInformation();
+              expect(
+                info?.diagnostics?.position.inMilliseconds,
+                inInclusiveRange(2500, 4000),
+              );
+            }
+          } finally {
+            await tester.pumpWidget(const SizedBox.shrink());
+            await _withFrames(tester, session.close());
+          }
+        },
+      );
+    }
+  }
 
   testWidgets(
     'listening requests only audio, then restores paused DASH video',
@@ -67,7 +270,7 @@ void main() {
       final engine = MediaKitEngine(onDiagnostic: diagnostics.add);
       final session = PlaybackSession(
         engine: engine,
-        repository: _Repository(server.port),
+        repository: _Repository(Uri.parse('http://127.0.0.1:${server.port}/')),
         progress: _Progress(),
         accountScope: () => 'guest',
       );
@@ -274,8 +477,8 @@ const _detail = VideoDetail(
 );
 
 class _Repository extends Fake implements PlaybackRepository {
-  _Repository(this.port);
-  final int port;
+  _Repository(this.baseUri);
+  final Uri baseUri;
   @override
   Future<PlaybackMedia> resolve(
     VideoId video,
@@ -285,12 +488,12 @@ class _Repository extends Fake implements PlaybackRepository {
     required RequestCancellation cancellation,
   }) async => PlaybackMedia(
     video: PlaybackTrack(
-      urls: [Uri.parse('http://127.0.0.1:$port/video.mp4')],
+      urls: [baseUri.resolve('video.mp4')],
       codec: 'avc1',
       bandwidth: 1000,
     ),
     audio: PlaybackTrack(
-      urls: [Uri.parse('http://127.0.0.1:$port/audio.m4a')],
+      urls: [baseUri.resolve('audio.m4a')],
       codec: 'mp4a',
       bandwidth: 128,
     ),

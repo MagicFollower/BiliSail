@@ -4,11 +4,171 @@ import '../api_client.dart';
 import '../models.dart';
 import '../models/profile_models.dart';
 
-/// Read-only Web space protocol. Private or restricted content stays restricted.
+/// Web space reads and explicit relationship writes. Privacy remains enforced.
 final class ProfileClient {
   const ProfileClient(this.api);
   final BiliApiClient api;
   static const _size = 30;
+  static const _collectionSize = 10;
+
+  Future<void> report(
+    String mid, {
+    required Set<int> contents,
+    int? reason,
+    ApiRequestContext? context,
+  }) => api.reportMember(
+    mid,
+    contents: contents,
+    reason: reason,
+    context: context,
+  );
+
+  Future<ApiProfileSpaceDetails> loadDetails(
+    String mid, {
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    const e = 'profile_details';
+    final data = await api.requestWbiJson(
+      '/x/space/wbi/acc/info',
+      {'mid': mid, 'platform': 'web', 'web_location': '1550101', 'token': ''},
+      e,
+      context: context,
+    );
+    if (_key(data['mid'], e) != mid) _fail(e);
+    return ApiProfileSpaceDetails(
+      bannerUrl:
+          _uri(_optionalMap(data['top_photo_v2'])['l_img']) ??
+          _uri(data['top_photo']),
+      gender: _string(data['sex']),
+      birthday: _string(data['birthday']),
+    );
+  }
+
+  Future<ApiPage<ApiProfileEntry>> loadCollections(
+    String mid, {
+    required int page,
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    _page(page);
+    const e = 'profile_collections';
+    final data = await _get('/x/polymer/web-space/seasons_series_list', e, {
+      'mid': mid,
+      'page_num': '$page',
+      'page_size': '$_collectionSize',
+    }, context);
+    final lists = _map(data['items_lists'], e);
+    final total = _number(_map(lists['page'], e)['total']);
+    if (total == null || total < 0) _fail(e);
+    final entries = <ApiProfileEntry>[];
+    for (final isSeries in [false, true]) {
+      for (final value in _list(
+        lists[isSeries ? 'series_list' : 'seasons_list'],
+        e,
+      )) {
+        final meta = _map(_map(value, e)['meta'], e);
+        final id = _key(meta[isSeries ? 'series_id' : 'season_id'], e);
+        entries.add(
+          ApiProfileEntry(
+            id: '${isSeries ? 'series' : 'season'}:$id',
+            kind: ApiProfileEntryKind.collection,
+            collectionId: id,
+            isSeries: isSeries,
+            title: _text(meta['name'], e),
+            subtitle: _string(meta['description']),
+            coverUrl: _uri(meta['cover']),
+            count: _number(meta['total']),
+          ),
+        );
+      }
+    }
+    return _paged(entries, page, total, pageSize: _collectionSize);
+  }
+
+  Future<ApiPage<ApiProfileEntry>> loadCollectionVideos(
+    String mid,
+    String id, {
+    required bool isSeries,
+    required int page,
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    _id(id);
+    _page(page);
+    const e = 'profile_collection_videos';
+    final data = await _get(
+      isSeries
+          ? '/x/series/archives'
+          : '/x/polymer/web-space/seasons_archives_list',
+      e,
+      isSeries
+          ? {
+              'mid': mid,
+              'series_id': id,
+              'pn': '$page',
+              'ps': '$_size',
+              'sort': 'asc',
+            }
+          : {
+              'mid': mid,
+              'season_id': id,
+              'page_num': '$page',
+              'page_size': '$_size',
+              'sort_reverse': 'false',
+            },
+      context,
+    );
+    final total = _number(_map(data['page'], e)['total']);
+    if (total == null || total < 0) _fail(e);
+    final items = _list(data['archives'], e).map((value) {
+      final item = _map(value, e), stat = _optionalMap(_map(value, e)['stat']);
+      return _video({
+        ...item,
+        'mid': mid,
+        'play': stat['view'],
+        'danmaku': stat['danmaku'],
+      }, e);
+    }).toList();
+    return _paged(items, page, total);
+  }
+
+  Future<ApiPage<ApiProfileEntry>> loadFollowedSeasons(
+    String mid, {
+    required bool cinema,
+    required int page,
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    _page(page);
+    const e = 'profile_followed_seasons';
+    final data = await _get('/x/space/bangumi/follow/list', e, {
+      'vmid': mid,
+      'type': cinema ? '2' : '1',
+      'pn': '$page',
+      'ps': '$_size',
+    }, context);
+    final total = _number(data['total']);
+    if (total == null || total < 0) _fail(e);
+    final items = _list(data['list'] ?? (total == 0 ? const [] : null), e).map((
+      value,
+    ) {
+      final item = _map(value, e);
+      final id = _key(item['season_id'], e);
+      return ApiProfileEntry(
+        id: id,
+        seasonId: id,
+        kind: ApiProfileEntryKind.season,
+        title: _text(item['title'], e),
+        subtitle: _string(
+          item['index_show'] ?? _optionalMap(item['new_ep'])['index_show'],
+        ),
+        coverUrl: _uri(item['cover']),
+      );
+    }).toList();
+    return _paged(items, page, total);
+  }
+
   Future<Map<String, Object?>> _get(
     String path,
     String endpoint,
@@ -26,15 +186,29 @@ final class ProfileClient {
   }) async {
     _id(mid);
     const e = 'profile';
-    final data = await _get('/x/web-interface/card', e, {'mid': mid}, context);
+    final data = await _get('/x/web-interface/card', e, {
+      'mid': mid,
+      'photo': 'true',
+    }, context);
     final card = _map(data['card'], e);
     if (_key(card['mid'], e) != mid) _fail(e);
     final official = _optionalMap(card['official_verify']);
     final vip = _optionalMap(card['vip']);
+    final label = _optionalMap(vip['label']);
     return ApiUserProfile(
       mid: mid,
       name: _text(card['name'], e),
       avatarUrl: _uri(card['face']),
+      pendantUrl: _uri(_optionalMap(card['pendant'])['image']),
+      bannerUrl:
+          _uri(_optionalMap(data['space'])['l_img']) ??
+          _uri(_optionalMap(data['space'])['s_img']),
+      vipLabelImageUrl: label['use_img_label'] == true
+          ? _uri(label['img_label_uri_hans_static']) ??
+                _uri(label['img_label_uri_hans'])
+          : null,
+      vipStatus: _number(vip['status']),
+      vipType: _number(vip['type']),
       signature: _string(card['sign']),
       level: _number(_optionalMap(card['level_info'])['current_level']),
       verifyType: _number(official['type']),
@@ -261,44 +435,184 @@ final class ProfileClient {
     );
   }
 
+  Future<ApiProfileContentPrivacy> loadContentPrivacy(
+    String mid, {
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    const e = 'profile_content_privacy';
+    final data = await _get('/x/space/setting', e, {'mid': mid}, context);
+    final privacy = _map(data['privacy'], e);
+    bool hidden(Object? value) => switch (_number(value)) {
+      0 => true,
+      1 => false,
+      _ => _fail(e),
+    };
+    return ApiProfileContentPrivacy(
+      foldersHidden: hidden(privacy['fav_video']),
+      seasonsHidden: hidden(privacy['bangumi']),
+    );
+  }
+
+  Future<bool> loadBlocked(String mid, {ApiRequestContext? context}) async {
+    _id(mid);
+    const e = 'profile_relation';
+    final data = await _get('/x/relation', e, {'fid': mid}, context);
+    final attribute = _number(data['attribute']);
+    if (attribute == null || attribute < 0) _fail(e);
+    return attribute & 128 != 0;
+  }
+
+  Future<void> setBlocked(
+    String mid,
+    bool blocked, {
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    await api.submitForm('/x/relation/modify', 'profile_set_blocked', {
+      'fid': mid,
+      'act': blocked ? '5' : '6',
+      're_src': '11',
+    }, context: context);
+  }
+
   Future<ApiPage<ApiProfileEntry>> loadRelations(
     String mid, {
     required bool followers,
     required int page,
+    String orderType = '',
     ApiRequestContext? context,
   }) async {
     _id(mid);
     _page(page);
     final e = followers ? 'profile_followers' : 'profile_followings';
-    final data = await _get(
-      '/x/relation/${followers ? 'followers' : 'followings'}',
-      e,
-      {'vmid': mid, 'pn': '$page', 'ps': '$_size', 'order': 'desc'},
-      context,
-    );
-    final items = _list(data['list'], e).map((v) {
-      final item = _map(v, e);
-      final id = _key(item['mid'], e);
-      return ApiProfileEntry(
-        id: id,
-        kind: ApiProfileEntryKind.user,
-        userMid: id,
-        title: _text(item['uname'], e),
-        subtitle: _string(item['sign']),
-        coverUrl: _uri(item['face']),
-      );
-    }).toList();
+    final data =
+        await _get('/x/relation/${followers ? 'followers' : 'followings'}', e, {
+          'vmid': mid,
+          'pn': '$page',
+          'ps': '$_size',
+          'order': 'desc',
+          if (orderType.isNotEmpty) 'order_type': orderType,
+        }, context);
+    final items = _list(data['list'], e).map((v) => _relation(v, e)).toList();
     final total = _number(data['total']);
     if (total == null || total < 0) _fail(e);
     return _paged(items, page, total);
   }
 
+  Future<ApiPage<ApiProfileEntry>> searchFollowing(
+    String mid,
+    String keyword, {
+    required int page,
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    _page(page);
+    if (keyword.trim().isEmpty || keyword.runes.length > 100) {
+      throw ArgumentError('Invalid following search');
+    }
+    const e = 'profile_following_search';
+    final data = await api.requestWbiJson(
+      '/x/relation/followings/search',
+      {
+        'vmid': mid,
+        'pn': '$page',
+        'ps': '$_size',
+        'name': keyword.trim(),
+        'order': 'desc',
+        'order_type': 'attention',
+        'gaia_source': 'main_web',
+        'web_location': '333.999',
+      },
+      e,
+      context: context,
+    );
+    return _relationPage(data, page, e);
+  }
+
+  Future<ApiPage<ApiProfileEntry>> loadBlacklist({
+    required int page,
+    ApiRequestContext? context,
+  }) async {
+    _page(page);
+    const e = 'profile_blacklist';
+    final data = await _get('/x/relation/blacks', e, {
+      'pn': '$page',
+      'ps': '$_size',
+      'order': 'desc',
+    }, context);
+    return _relationPage(data, page, e);
+  }
+
+  static ApiPage<ApiProfileEntry> _relationPage(
+    Map<String, Object?> data,
+    int page,
+    String e,
+  ) {
+    final total = _number(data['total']);
+    if (total == null || total < 0) _fail(e);
+    final items = _list(
+      data['list'] ?? (total == 0 ? const [] : null),
+      e,
+    ).map((value) => _relation(value, e)).toList();
+    return _paged(items, page, total);
+  }
+
+  Future<ApiPage<ApiProfileEntry>> loadFollowingGroup(
+    String mid,
+    String groupId, {
+    required int page,
+    ApiRequestContext? context,
+  }) async {
+    _id(mid);
+    _page(page);
+    if (!RegExp(r'^-?(0|[1-9]\d*)$').hasMatch(groupId)) {
+      throw ArgumentError('Invalid follow group ID');
+    }
+    const e = 'profile_following_group';
+    final data = await api.requestValue(
+      Uri.https('api.bilibili.com', '/x/relation/tag', {
+        'mid': mid,
+        'tagid': groupId,
+        'pn': '$page',
+        'ps': '$_size',
+      }),
+      e,
+      context: context,
+    );
+    final items = _list(
+      data ?? const [],
+      e,
+    ).map((v) => _relation(v, e)).toList();
+    // This endpoint returns an array without a total or continuation flag.
+    final more = items.length >= _size;
+    return ApiPage(
+      List.unmodifiable(items),
+      hasMore: more,
+      nextCursor: more ? '${page + 1}' : null,
+    );
+  }
+
+  static ApiProfileEntry _relation(Object? value, String e) {
+    final item = _map(value, e);
+    final id = _key(item['mid'], e);
+    return ApiProfileEntry(
+      id: id,
+      kind: ApiProfileEntryKind.user,
+      userMid: id,
+      title: _text(item['uname'], e),
+      subtitle: _string(item['sign']),
+      coverUrl: _uri(item['face']),
+    );
+  }
+
   static ApiPage<ApiProfileEntry> _paged(
     List<ApiProfileEntry> items,
     int page,
-    int total,
-  ) {
-    final more = items.isNotEmpty && page * _size < total;
+    int total, {
+    int pageSize = _size,
+  }) {
+    final more = items.isNotEmpty && page * pageSize < total;
     return ApiPage(
       List.unmodifiable(items),
       hasMore: more,

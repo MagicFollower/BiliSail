@@ -7,6 +7,7 @@ import 'app_network_image.dart';
 import 'bili_badges.dart';
 import 'image_viewer.dart';
 import '../../features/comments/domain/comment_text.dart';
+import '../../features/comments/domain/comment_time.dart';
 import '../../features/comments/domain/comments_repository.dart';
 import 'comment_text_styles.dart';
 
@@ -126,7 +127,7 @@ class _CommentRichContentState extends State<CommentRichContent> {
                 recognizer == null ||
                     (part.kind == CommentTextKind.mention && onTap == null)
                 ? null
-                : TextStyle(color: Theme.of(context).colorScheme.primary),
+                : TextStyle(color: styles.linkColor),
             recognizer: onTap == null ? null : recognizer,
             mouseCursor: onTap == null ? null : SystemMouseCursors.click,
           ),
@@ -167,14 +168,11 @@ class _CommentRichContentState extends State<CommentRichContent> {
               if (comment.verifyType == 0 || comment.verifyType == 1)
                 BiliVerifyBadge(type: comment.verifyType!),
               if (comment.vipLabel != null)
-                Text(
-                  comment.vipLabel!,
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
+                Text(comment.vipLabel!, style: styles.badge),
               if (comment.medalName != null)
                 Text(
                   '${comment.medalName} ${comment.medalLevel ?? ''}',
-                  style: Theme.of(context).textTheme.labelSmall,
+                  style: styles.badge,
                 ),
             ],
           ),
@@ -208,6 +206,9 @@ class _CommentRichContentState extends State<CommentRichContent> {
                           url: publicImageThumbnail(
                             comment.pictures[index],
                             width: 264,
+                            // Resizing decoded pixels alone still downloads the
+                            // full GIF, which can exceed the byte-cache limit.
+                            resizeAnimated: true,
                           ).toString(),
                           cacheWidth: 264,
                           cacheHeight: 264,
@@ -244,7 +245,7 @@ class CommentAuthorHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context), c = comment;
     final styles = CommentTextStyles(theme);
-    final time = c.publishedAt?.toLocal();
+    final time = commentTimeLabel(c.publishedAt);
     final location = c.ipLocation?.trim();
     final hasLocation = location != null && location.isNotEmpty;
     final identity = Column(
@@ -262,8 +263,8 @@ class CommentAuthorHeader extends StatelessWidget {
               child: Text(
                 c.author,
                 style: styles.author.copyWith(
-                  color: c.vipLabel != null
-                      ? theme.colorScheme.primary
+                  color: c.nicknameColor != null
+                      ? Color(0xFF000000 | c.nicknameColor!)
                       : styles.author.color,
                 ),
               ),
@@ -275,8 +276,10 @@ class CommentAuthorHeader extends StatelessWidget {
             if (c.vipLabel != null)
               Text(
                 c.vipLabel!,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.primary,
+                style: styles.badge.copyWith(
+                  color: c.nicknameColor != null
+                      ? Color(0xFF000000 | c.nicknameColor!)
+                      : theme.colorScheme.primary,
                 ),
               ),
             if (c.medalName != null)
@@ -288,25 +291,19 @@ class CommentAuthorHeader extends StatelessWidget {
                 ),
                 child: Text(
                   '${c.medalName} ${c.medalLevel ?? ''}',
-                  style: theme.textTheme.labelSmall,
+                  style: styles.badge,
                 ),
               ),
           ],
         ),
-        if (time != null || hasLocation)
+        if (time.isNotEmpty || hasLocation)
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Wrap(
               spacing: 8,
               runSpacing: 2,
               children: [
-                if (time != null)
-                  Text(
-                    time.year == DateTime.now().year
-                        ? '${time.month}-${time.day}'
-                        : '${time.year}-${time.month}-${time.day}',
-                    style: styles.metadata,
-                  ),
+                if (time.isNotEmpty) Text(time, style: styles.metadata),
                 if (hasLocation) Text(location, style: styles.metadata),
               ],
             ),

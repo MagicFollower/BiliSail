@@ -5,6 +5,147 @@ import 'package:bili_player/src/native_readiness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('paused track readiness belongs to the current load and seek', () async {
+    final state = NativeLoadState();
+    addTearDown(state.dispose);
+    expect(state.tracksReady, false);
+    state.started(1);
+    expect(state.tracksReady, false);
+    state.playbackRestarted();
+    expect(state.tracksReady, true);
+    state.seekStarted();
+    expect(state.tracksReady, false);
+    state.clockChanged(seconds: 20);
+    expect(state.tracksReady, false);
+    state.playbackRestarted();
+    expect(state.tracksReady, true);
+    state.started(2);
+    expect(state.tracksReady, false);
+  });
+  test('replacement loads require their own playback restart', () async {
+    final state = NativeLoadState();
+    addTearDown(state.dispose);
+    state.started(1);
+    state.playbackRestarted();
+    final previous = state.loadCount;
+    state.started(2);
+    expect(state.loadCount, greaterThan(previous));
+    expect(state.restartedLoadCount, lessThan(state.loadCount));
+    state.playbackRestarted();
+    expect(state.restartedLoadCount, state.loadCount);
+    await state.dispose();
+    state.started(3);
+    expect(state.loadCount, 2);
+  });
+  test('seek readiness requires a new seek and its playback restart', () async {
+    final state = NativeLoadState();
+    addTearDown(state.dispose);
+    state.playbackRestarted();
+    final before = state.seekCount;
+    var ready = false;
+    final waiting = waitForNativeState(
+      ready: () =>
+          state.seekCount > before &&
+          state.restartedSeekCount == state.seekCount,
+      superseded: () => false,
+      changes: [state.changes],
+      timeout: const Duration(seconds: 1),
+    ).then((_) => ready = true);
+    state.playbackRestarted();
+    await Future<void>.delayed(Duration.zero);
+    expect(ready, isFalse);
+    state.seekStarted();
+    state.clockChanged(seconds: 9);
+    await Future<void>.delayed(Duration.zero);
+    expect(ready, isFalse);
+    state.playbackRestarted();
+    await waiting;
+    expect(ready, isTrue);
+    state.seekStarted();
+    expect(state.restartedSeekCount, lessThan(state.seekCount));
+  });
+
+  test(
+    'seek restarts invalidate clocks and cannot cross source disposal',
+    () async {
+      final state = NativeLoadState();
+      state.clockChanged(seconds: 1, epoch: 0);
+      state.seekStarted();
+      state.clockChanged(seconds: 1, epoch: 0);
+      expect(state.audioPosition, isNull);
+      state.playbackRestarted();
+      await state.dispose();
+      state.seekStarted();
+      state.playbackRestarted();
+      expect(state.seekCount, 1);
+      expect(state.restartedSeekCount, 1);
+      final replacement = NativeLoadState();
+      addTearDown(replacement.dispose);
+      expect(replacement.seekCount, 0);
+      expect(replacement.restartedSeekCount, 0);
+    },
+  );
+
+  test('output color confirmation can follow decoded dimensions', () async {
+    final state = NativeLoadState();
+    addTearDown(state.dispose);
+    var ready = false;
+    final waiting = waitForNativeState(
+      ready: () => state.videoOutputMatrix == 'bt.709',
+      superseded: () => false,
+      changes: [state.changes],
+      timeout: const Duration(seconds: 1),
+    ).then((_) => ready = true);
+    state.outputChanged(NativeOutputProperty.colorMatrix, 'dolbyvision');
+    await Future<void>.delayed(Duration.zero);
+    expect(ready, isFalse);
+    state.outputChanged(NativeOutputProperty.colorMatrix, 'bt.709');
+    await waiting;
+    expect(ready, isTrue);
+  });
+
+  test(
+    'source replacement and disposal cannot inherit output confirmation',
+    () async {
+      final old = NativeLoadState();
+      old.outputChanged(NativeOutputProperty.driver, 'gpu-next');
+      final next = NativeLoadState();
+      addTearDown(next.dispose);
+      expect(next.videoOutputDriver, isNull);
+      expect(next.videoOutputMatrix, isNull);
+      await old.dispose();
+      old.outputChanged(NativeOutputProperty.driver, 'gpu');
+      expect(old.videoOutputDriver, 'gpu-next');
+    },
+  );
+  test('seek and pause invalidate pending clock replies', () async {
+    final state = NativeLoadState();
+    state.clockChanged(seconds: 10, epoch: 0);
+    state.resetClocks();
+    state.clockChanged(seconds: 10, epoch: 0);
+    expect(state.audioPosition, isNull);
+    state.clockChanged(seconds: 40, epoch: 1);
+    expect(state.audioPosition, const Duration(seconds: 40));
+    await state.dispose();
+  });
+
+  test(
+    'clock cache validates native samples and ignores disposed replies',
+    () async {
+      final state = NativeLoadState();
+      state.clockChanged(seconds: 12.25);
+      expect(state.audioPosition, const Duration(milliseconds: 12250));
+      for (final invalid in [null, double.nan, double.infinity, -0.1]) {
+        state.clockChanged(seconds: invalid);
+        expect(state.audioPosition, isNull);
+      }
+      state.clockChanged(seconds: 12.25);
+      await state.dispose();
+      state.clockChanged(seconds: 50);
+      expect(state.audioPosition, const Duration(milliseconds: 12250));
+    },
+  );
+
   test(
     'preparation keeps the original failure and ignores late errors',
     () async {

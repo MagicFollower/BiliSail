@@ -6,7 +6,7 @@ import '../shared/ui/video_card_surface.dart';
 abstract final class BiliTheme {
   static const accent = Color(0xFFD94B68);
   static const canvas = Colors.white;
-  static const ink = Color(0xFF253343);
+  static const ink = Color(0xFF18191C);
 
   static ThemeData light({
     AppFontPreference font = AppFontPreference.harmonyOsSans,
@@ -34,8 +34,14 @@ abstract final class BiliTheme {
   ) {
     final dark = brightness == Brightness.dark;
     final surface = dark ? const Color(0xFF1C2530) : canvas;
-    final foreground = dark ? const Color(0xFFEAEAEA) : ink;
+    final foreground = dark ? const Color(0xFFE7E9EB) : ink;
     final muted = dark ? const Color(0xFFACB8C7) : const Color(0xFF66778A);
+    final secondaryText = dark
+        ? const Color(0xFFA2A7AE)
+        : const Color(0xFF61666D);
+    final tertiaryText = dark
+        ? const Color(0xFF757A81)
+        : const Color(0xFF9499A0);
     final panel = dark ? const Color(0xFF232F3D) : const Color(0xFFF2F6FA);
     final border = dark ? const Color(0xFF384657) : const Color(0xFFE1E9F1);
     final primary = dark ? const Color(0xFFEF8399) : accent;
@@ -53,7 +59,7 @@ abstract final class BiliTheme {
           secondary: primary,
           surface: surface,
           onSurface: foreground,
-          onSurfaceVariant: muted,
+          onSurfaceVariant: secondaryText,
           surfaceContainerLowest: surface,
           surfaceContainerLow: panel,
           surfaceContainer: panel,
@@ -95,8 +101,18 @@ abstract final class BiliTheme {
         indicatorColor: scheme.primaryContainer,
         selectedIconTheme: IconThemeData(color: primary),
         unselectedIconTheme: IconThemeData(color: muted),
-        selectedLabelTextStyle: TextStyle(color: primary),
-        unselectedLabelTextStyle: TextStyle(color: muted),
+        selectedLabelTextStyle: TextStyle(
+          color: primary,
+          fontSize: 12,
+          fontWeight: FontWeight.w400,
+          height: 17 / 12,
+        ),
+        unselectedLabelTextStyle: TextStyle(
+          color: tertiaryText,
+          fontSize: 12,
+          fontWeight: FontWeight.w400,
+          height: 17 / 12,
+        ),
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: surface,
@@ -207,7 +223,7 @@ abstract final class BiliTheme {
         bodyMedium: base.textTheme.bodyMedium?.copyWith(fontSize: 14),
         bodySmall: base.textTheme.bodySmall?.copyWith(
           fontSize: 12,
-          color: muted,
+          color: tertiaryText,
         ),
       ),
     );

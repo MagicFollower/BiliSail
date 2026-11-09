@@ -8,7 +8,7 @@ enum AppIconPreference {
   final String asset;
 }
 
-enum AppIconSurface { unsupported, launcher }
+enum AppIconSurface { unsupported, launcher, window, dock }
 
 abstract interface class AppIconService {
   AppIconSurface get surface;

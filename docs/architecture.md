@@ -6,7 +6,7 @@
 
 BiliSail（哔帆）是一个专注观看体验的跨平台 Bilibili 第三方客户端，以视频和直播为中心。首要目标是播放稳定、弹幕流畅、移动与桌面交互自然，以及 API 变化时可以局部修复。
 
-首批交付 Android arm64、Windows x64、macOS arm64。Windows 先作为本地调试入口，但 Android 和 macOS 从 M0 就必须进入验证矩阵。2026-10-26 增加 iOS arm64（iOS 15+）和 Linux x64 的工程与 CI：前者输出未签名 IPA，后者输出 Flatpak／AppImage，构建和设备验收状态见[扩展记录](validation/ios-linux.md)。2026-10-29 增加 macOS Intel x64 的 CI 与独立 DMG 打包配置，最低 macOS 13（Native Assets 迁移后）；CI #221 的两种 macOS 架构均通过构建、启动与合成 Keychain 验证，设备安装升级和音画验收仍待完成，见 [CI/CD](validation/ci-cd.md#macos-dmg-安装)。Android x64 用于模拟器；Windows arm64 仍属后续扩展。Web 不列入本轮范围，其 CORS、Cookie、解码器和后台能力需要单独方案。
+首批交付 Android arm64、Windows x64、macOS arm64。Windows 先作为本地调试入口，但 Android 和 macOS 从 M0 就必须进入验证矩阵。2026-10-26 增加 iOS arm64（iOS 15+）和 Linux x64 的工程与 CI：前者输出未签名 IPA，后者输出 Flatpak／AppImage，构建和设备验收状态见[扩展记录](validation/ios-linux.md)。2026-10-29 增加 macOS Intel x64 的 CI 与独立 DMG 打包配置，最低 macOS 13（Native Assets 迁移后）；CI #221 的两种 macOS 架构均通过构建、启动与合成 Keychain 验证，设备安装升级和音画验收仍待完成，见 [CI/CD](validation/ci-cd.md#macos-dmg-安装)。Android x64 用于模拟器；2026-11-07 加入 Windows ARM64 的独立 CI 和安装器配置，Windows 11 ARM64 为目标下限；构建与设备验收边界见 [CI/CD](validation/ci-cd.md#windows-arm64-构建)。Web 不列入本轮范围，其 CORS、Cookie、解码器和后台能力需要单独方案。
 
 初始最低系统为 Android API 24、Windows 10、macOS 12；2026-10-29 的 Native Assets 迁移将 macOS 应用部署下限提高到 13，见[切换方案](predidit-media-migration.md)。M0 选择具体 Flutter SDK 和插件版本后，按它们支持范围的交集锁定最终下限和 ABI，不引用某个播放器包的较低系统要求代替 Flutter 的要求。[Flutter 支持平台](https://docs.flutter.dev/reference/supported-platforms)
 
@@ -27,6 +27,10 @@ BiliSail（哔帆）是一个专注观看体验的跨平台 Bilibili 第三方�
 
 按用户要求提前实现头像账号菜单与 Web 消息收件箱，见 [账号菜单与消息](validation/account-messages.md)。`auth` 负责账号摘要和菜单，`messages` 的纯 Dart Repository 契约与应用控制器负责读取、私信发送和已读回执；`app` 通过账号消息指示端口注入未读数，避免两个 Feature 循环依赖。账号 scope、session epoch、请求代次共同隔离旧响应；私信与草稿只在有界内存中保留。此项不代表完整 M3/M4 或三端验收。
 
+2026-11-05 消息重构沿用 Web Cookie 边界，增加不可变的富消息卡片/详情/链接及可选会话管理端口；协议包解析，Repository 映射，页面仅渲染领域数据。窄屏以四类通知入口和私信列表组织，宽屏分类、会话与正文分栏，按内容区可用宽度适配。支持的公开视频、影视、直播和用户链接由组合根映射到既有工作区页面，其他目标沿用外链限制。方案、参考许可、单次写入与验收记录见[消息中心重构](validation/messages-redesign-2026-11-05.md)。
+
+同日第二轮增加可选私信发送与消息中心管理端口，表情／图片、服务器消息设置和聊天管理继续与普通应用偏好分离；图片只保留有界内存，显式发送才上传。通知的直接回复以独立评论控制器实例和共享发送框完成，保持评论目标、root/parent 与账号隔离，避免修改已打开视频页的回复目标。界面、协议与验证见[消息表情、发送与管理入口](validation/messages-rich-composition-2026-11-05.md)。
+
 | 层面 | 方案 | 理由与限制 |
 | --- | --- | --- |
 | UI | Flutter stable + Dart，Material 3 为基础的自有主题 | 共用组件与状态，按窗口和输入方式调整布局 |
@@ -34,7 +38,7 @@ BiliSail（哔帆）是一个专注观看体验的跨平台 Bilibili 第三方�
 | 路由 | `go_router` | 声明式路由、导航栈、深链入口 |
 | API | 纯 Dart `bili_api` + `dio` | 便于单测和协议调整；HTTP 客户端不泄漏到界面 |
 | 数据模型 | Dart 不可变类型；复杂联合状态按需用 `freezed`，JSON 按需生成 | Domain 不依赖 JSON/Protobuf 字段；避免为简单类型强制生成 |
-| 播放 | `bili_player` 封装 `media_kit`、`media_kit_video`、视频原生库 | 首选后端，须通过 DASH/直播/请求头三端验证；`fvp` 是备选 |
+| 播放 | `bili_player` 封装 `media_kit`、`media_kit_video`、视频原生库和可选后端 | media_kit 默认；fvp／MDK 可选；后端清理与旧设置兼容见[清理记录](validation/playback-backends-2026-11-08.md)；逐平台 DASH、请求头和输出验收分别记录 |
 | 下载合并 | `bili_mux` 的精简原生 MP4 封装与 Dart FFI | 只读写已下载的本地文件，不访问播放器内部 ABI；三端验证见[合并记录](validation/download-muxing-results.md) |
 | 弹幕 | `bili_danmaku`：Dart 调度 + `canvas_danmaku` 绘制适配 | 保留确认媒体／到达时钟、布局、字体效果和有界缓存；上游负责批量 Canvas 合成，见[迁移](predidit-media-migration.md) |
 | 持久化 | Drift/SQLite、安全存储、文件缓存 | 结构化数据、凭据、媒体文件分别管理 |
@@ -172,6 +176,8 @@ bilisail/                         # 工程名；本地检出目录目前仍为 b
 Riverpod 负责状态订阅和注入，不承担弹幕逐帧广播。路由 provider 用销毁回调取消请求和订阅；有意跨页面存活的服务必须显式管理，不能因自动释放误停播放。[Riverpod 自动释放](https://riverpod.dev/docs/concepts2/auto_dispose)
 
 播放倍速和音量各有一份应用运行期间的共享内存记录，由 app 创建并注入各播放会话。播放页明确调整后，后续新源继承最近成功选择；已有播放源保持自己的速度和音量，重启回到持久化设置中的默认值。倍速仅用于点播，长按临时加速不写入；音量也覆盖直播。状态归属和验证见 [应用会话内继承倍速与音量](validation/session-playback-rate.md)。
+
+2026-11-08 听视频改为本次应用运行期间的全局选择，由组合根创建 `PlaybackListeningMode` 并注入全部正式播放会话。手动切换同步已有点播会话，后续新视频、分 P／剧集、连续播放和返回历史页均使用最新选择；进度与播放／暂停意图仍由各会话持有。停止、关闭播放页和账号清理不清除此选择，应用重启恢复视频模式；不落盘，不受旧页面模式检查点覆盖。直播保持原播放源并保留全局选择，独立音轨限制及验证见[听视频](validation/listen-video.md#运行期全局模式2026-11-08)。
 
 ### 身份与旧请求隔离
 

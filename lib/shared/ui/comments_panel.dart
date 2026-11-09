@@ -35,6 +35,8 @@ class CommentsPanel extends ConsumerStatefulWidget {
     this.onLogin,
     this.onOpenUser,
     this.playbackPosition,
+    this.composerOnly = false,
+    this.onSent,
   });
   final CommentTarget target;
   final int? replyCount;
@@ -42,6 +44,8 @@ class CommentsPanel extends ConsumerStatefulWidget {
   final VoidCallback? onLogin;
   final ValueChanged<UserId>? onOpenUser;
   final Duration? Function()? playbackPosition;
+  final bool composerOnly;
+  final VoidCallback? onSent;
   @override
   ConsumerState<CommentsPanel> createState() => _CommentsPanelState();
 }
@@ -67,6 +71,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
   var _replyStorage = PageStorageBucket();
   double _topOffset = 0;
   String? _shownRoot;
+  bool _loadMoreScheduled = false;
   RequestCancellation? _linkCancellation;
   @override
   void initState() {
@@ -265,6 +270,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
 
   Future<void> _send() async {
     final state = ref.read(_provider);
+    if (widget.composerOnly && state.replyTarget == null) return;
     if (!state.signedIn) {
       _login();
       return;
@@ -291,6 +297,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
       if (current.openRoot?.id == root && current.replyTarget == null) {
         _resetDraft();
       }
+      widget.onSent?.call();
     }
   }
 
@@ -351,6 +358,27 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
         _shownRoot = null;
       },
     );
+    if (widget.composerOnly) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Consumer(
+            builder: (context, ref, _) {
+              final message = ref.watch(
+                _provider.select((state) => state.message),
+              );
+              return message == null
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(message),
+                    );
+            },
+          ),
+          Flexible(child: _composer()),
+        ],
+      );
+    }
     if (_shownRoot != rootId) {
       _shownRoot = rootId;
       _replyStorage = PageStorageBucket();
@@ -463,14 +491,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                       onPressed: _closeDetail,
                       icon: const Icon(Icons.arrow_back),
                     ),
-                    Expanded(
-                      child: Text('评论详情', style: theme.textTheme.titleSmall),
-                    ),
-                    IconButton(
-                      tooltip: '关闭评论详情',
-                      onPressed: _closeDetail,
-                      icon: const Icon(Icons.close),
-                    ),
+                    Expanded(child: Text('评论详情', style: styles.detailTitle)),
                   ],
                 ),
                 const Divider(height: 1),
@@ -497,7 +518,10 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
           _text,
         ]),
         builder: (context, _) => _composerContent(
-          expanded: _composerFocus.hasFocus || _emotePickerOpen.value,
+          expanded:
+              widget.composerOnly ||
+              _composerFocus.hasFocus ||
+              _emotePickerOpen.value,
           duration: MediaQuery.disableAnimationsOf(context)
               ? Duration.zero
               : const Duration(milliseconds: 200),
@@ -528,10 +552,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
       final controller = ref.read(_provider.notifier);
       final theme = Theme.of(context);
       final root = state.openRoot;
-      final inputStyle = theme.textTheme.bodyMedium?.copyWith(
-        fontSize: 13,
-        height: 1.4,
-      );
+      final styles = CommentTextStyles(theme);
       final iconStyle = IconButton.styleFrom(
         minimumSize: const Size.square(32),
         padding: const EdgeInsets.all(6),
@@ -567,17 +588,18 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                         Expanded(
                           child: Text(
                             '回复 @${state.replyTarget!.author}',
-                            style: theme.textTheme.bodySmall,
+                            style: styles.metadata,
                           ),
                         ),
-                        IconButton(
-                          tooltip: '取消回复',
-                          style: iconStyle,
-                          onPressed: state.busy
-                              ? null
-                              : controller.cancelTarget,
-                          icon: const Icon(Icons.close, size: 16),
-                        ),
+                        if (!widget.composerOnly)
+                          IconButton(
+                            tooltip: '取消回复',
+                            style: iconStyle,
+                            onPressed: state.busy
+                                ? null
+                                : controller.cancelTarget,
+                            icon: const Icon(Icons.close, size: 16),
+                          ),
                       ],
                     ),
                   AnimatedSize(
@@ -590,7 +612,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                       // Keep native Enter behavior stable while collapsed.
                       keyboardType: TextInputType.multiline,
                       textInputAction: TextInputAction.newline,
-                      style: inputStyle,
+                      style: styles.input,
                       readOnly: !state.signedIn,
                       onTap: state.signedIn ? null : _login,
                       onTapOutside: (_) => _composerFocus.unfocus(),
@@ -598,6 +620,9 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                       maxLines: expanded ? 4 : 1,
                       maxLength: 1000,
                       decoration: InputDecoration(
+                        hintStyle: state.signedIn
+                            ? styles.inputHint
+                            : styles.disabledInput,
                         hintText: state.signedIn
                             ? root == null
                                   ? '发一条友善的评论'
@@ -701,6 +726,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
 
   Widget _composerToolbar(CommentsState state, ButtonStyle iconStyle) {
     final theme = Theme.of(context);
+    final styles = CommentTextStyles(theme);
     final toolStyle = iconStyle.copyWith(
       minimumSize: const WidgetStatePropertyAll(Size.square(40)),
     );
@@ -709,6 +735,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
     final length = _text.text.runes.length;
     final canSend =
         canEdit &&
+        (!widget.composerOnly || state.replyTarget != null) &&
         !state.loading &&
         !state.replyLoading &&
         !state.uncertain.contains('send') &&
@@ -769,12 +796,16 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
     final submit = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          '$length/1000',
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: length > 1000
-                ? theme.colorScheme.error
-                : theme.colorScheme.onSurfaceVariant,
+        Flexible(
+          child: Text(
+            '$length/1000',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: styles.counter.copyWith(
+              color: length > 1000
+                  ? theme.colorScheme.error
+                  : styles.counter.color,
+            ),
           ),
         ),
         const SizedBox(width: 10),
@@ -782,7 +813,9 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
           style: FilledButton.styleFrom(
             minimumSize: const Size(56, 32),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            textStyle: theme.textTheme.labelMedium,
+            textStyle: styles.submit,
+            foregroundColor: Colors.white,
+            disabledForegroundColor: styles.metadata.color,
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
           onPressed: canSend ? _send : null,
@@ -854,6 +887,42 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
     onReplyFocus: _focus.requestFocus,
   );
 
+  void _scheduleLoadMore(BuildContext context) {
+    if (_loadMoreScheduled) return;
+    _loadMoreScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadMoreScheduled = false;
+      if (!mounted ||
+          !context.mounted ||
+          widget.composerOnly ||
+          widget.target.oid.isEmpty ||
+          !WorkspaceActivity.isActive(context)) {
+        return;
+      }
+      // Read the current branch after layout: a target/account/detail switch
+      // may have replaced the list since the notification was dispatched.
+      final state = ref.read(_provider);
+      final replies = state.openRoot != null;
+      if (state.busy ||
+          (replies ? state.replyLoading : state.loading) ||
+          (replies ? state.replyLoadFailed : state.loadFailed) ||
+          !(replies ? state.replyHasMore : state.hasMore) ||
+          (replies ? state.replyPage : state.page) == 0) {
+        return;
+      }
+      final scroll = replies ? _replyScroll : _topScroll;
+      if (!scroll.hasClients ||
+          !scroll.position.hasContentDimensions ||
+          scroll.position.extentAfter > 240) {
+        return;
+      }
+      final controller = ref.read(_provider.notifier);
+      unawaited(replies ? controller.loadReplies() : controller.load());
+    });
+    // Metrics can arrive after layout. Request one check, without polling.
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
   Widget _list() => Consumer(
     builder: (context, ref, _) {
       ref.watch(
@@ -864,6 +933,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
             state.openRoot == null ? state.sort : null,
             state.openRoot == null ? state.loading : state.replyLoading,
             state.openRoot == null ? state.hasMore : state.replyHasMore,
+            state.openRoot == null ? state.loadFailed : state.replyLoadFailed,
             state.message,
             state.openRoot == null ? state.totalCount : null,
           ),
@@ -871,9 +941,13 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
       );
       final state = ref.read(_provider);
       final root = state.openRoot;
+      ref.listen(_provider.select((state) => state.busy), (previous, busy) {
+        if (previous == true && !busy) _scheduleLoadMore(context);
+      });
       final active = WorkspaceActivity.isActive(context);
       _topScroll.configure(context, active: active && root == null);
       _replyScroll.configure(context, active: active && root != null);
+      _scheduleLoadMore(context);
       final comments = root == null ? state.items : state.replyItems;
       final loading = root == null ? state.loading : state.replyLoading;
       final more = root == null ? state.hasMore : state.replyHasMore;
@@ -908,7 +982,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     child: Text(
                       '全部回复 ${root.replyCount}',
-                      style: Theme.of(context).textTheme.titleSmall,
+                      style: CommentTextStyles(Theme.of(context)).sectionTitle,
                     ),
                   );
           }
@@ -939,6 +1013,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                               (root == null && (widget.replyCount ?? 0) > 0)
                         ? '当前会话未返回可展示的评论'
                         : '还没有评论，来聊聊吧',
+                    style: CommentTextStyles(Theme.of(context)).empty,
                   ),
                   if (more) _loadMore(root),
                 ],
@@ -951,7 +1026,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
               padding: const EdgeInsets.all(12),
               child: Text(
                 comments.length >= 500 ? '已显示 500 条评论' : '没有更多了',
-                style: Theme.of(context).textTheme.bodySmall,
+                style: CommentTextStyles(Theme.of(context)).footer,
               ),
             ),
           );
@@ -959,9 +1034,33 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
       );
       // NestedScrollView creates positions with persistence enabled itself.
       // Bound reply storage to this one detail visit despite that default.
-      return root == null
-          ? list
-          : PageStorage(bucket: _replyStorage, child: list);
+      return NotificationListener<ScrollMetricsNotification>(
+        onNotification: (notification) {
+          if (notification.depth == 0 &&
+              notification.metrics.axis == Axis.vertical) {
+            _scheduleLoadMore(context);
+          }
+          return false;
+        },
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification.depth == 0 &&
+                notification.metrics.axis == Axis.vertical &&
+                switch (notification) {
+                  ScrollUpdateNotification(:final scrollDelta) =>
+                    (scrollDelta ?? 0) > 0,
+                  OverscrollNotification(:final overscroll) => overscroll > 0,
+                  _ => false,
+                }) {
+              _scheduleLoadMore(context);
+            }
+            return false;
+          },
+          child: root == null
+              ? list
+              : PageStorage(bucket: _replyStorage, child: list),
+        ),
+      );
     },
   );
 
@@ -976,7 +1075,12 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
               ? null
               : () =>
                     root == null ? controller.load() : controller.loadReplies(),
-          child: Text(state.message == null ? '加载更多' : '重试加载'),
+          child: Text(
+            (root == null ? state.loadFailed : state.replyLoadFailed)
+                ? '重试加载'
+                : '加载更多',
+            style: CommentTextStyles(Theme.of(context)).footer,
+          ),
         ),
       );
     },
@@ -1174,7 +1278,9 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
                               ? theme.colorScheme.primary
                               : theme.colorScheme.outline,
                           icon: Icon(
-                            BiliIcons.like,
+                            c.liked
+                                ? Icons.thumb_up_alt
+                                : Icons.thumb_up_alt_outlined,
                             semanticLabel: c.liked ? '取消点赞评论' : '点赞评论',
                           ),
                         ),
@@ -1230,7 +1336,14 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
                                             : null,
                                         child: Text(
                                           '${r.author}：',
-                                          style: styles.previewAuthor,
+                                          style: styles.previewAuthor.copyWith(
+                                            color: r.nicknameColor != null
+                                                ? Color(
+                                                    0xFF000000 |
+                                                        r.nicknameColor!,
+                                                  )
+                                                : null,
+                                          ),
                                         ),
                                       ),
                                       CommentRichContent(
@@ -1247,12 +1360,7 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
                                   ),
                                 ),
                               ),
-                          Text(
-                            '共 ${c.replyCount} 条回复 ›',
-                            style: styles.metadata.copyWith(
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
+                          Text('共 ${c.replyCount} 条回复 ›', style: styles.link),
                         ],
                       ),
                     ),

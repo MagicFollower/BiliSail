@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../../../domain/playback_rates.dart';
+
 import '../../../domain/recommendation_settings.dart';
 
 import '../../../core/storage/app_database.dart';
@@ -147,6 +149,12 @@ class SqliteSettingsRepository implements SettingsRepository {
       ),
       continuousPlayback: boolean('continuousPlayback', false),
       continuousRelatedPlayback: boolean('continuousRelatedPlayback', false),
+      playbackMode: decoded.containsKey('playbackMode')
+          ? PlaybackMode.values
+                    .where((mode) => mode.name == decoded['playbackMode'])
+                    .firstOrNull ??
+                PlaybackMode.pause
+          : null,
       resumePlayback: boolean('resumePlayback', true),
       showCollapsedProgress: boolean('showCollapsedProgress', true),
       highEnergyProgressEnabled: boolean(
@@ -189,9 +197,26 @@ class SqliteSettingsRepository implements SettingsRepository {
               .where((item) => item.name == decoded['videoDecoding'])
               .firstOrNull ??
           VideoDecodingPreference.automatic,
+      playbackBackend:
+          PlaybackBackendPreference.values
+              .where((item) => item.name == decoded['playbackBackend'])
+              .firstOrNull ??
+          PlaybackBackendPreference.mediaKit,
+      androidVideoOutput:
+          AndroidVideoOutputPreference.values
+              .where((item) => item.name == decoded['androidVideoOutput'])
+              .firstOrNull ??
+          AndroidVideoOutputPreference.renderedTexture,
       defaultPlaybackRate: number('defaultPlaybackRate', 1.0),
+      playbackRates: PlaybackRates.fromJson(decoded['playbackRates']),
       rememberPlaybackRate: boolean('rememberPlaybackRate', true),
       fullscreenSwipeControls: boolean('fullscreenSwipeControls', true),
+      playerFullscreenGestureReverse: boolean(
+        'playerFullscreenGestureReverse',
+        false,
+      ),
+      playerFullscreenGesture: boolean('playerFullscreenGesture', true),
+      playerShrinkVideo: boolean('playerShrinkVideo', true),
       defaultVolume: number('defaultVolume', 100.0),
       rememberVolumeGlobally: boolean('rememberVolumeGlobally', false),
       audioNormalization:
@@ -256,11 +281,10 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 40 carried upstream's default-dynamic-tab and rate-memory keys next to
-        // this branch's dock/liquid-card keys. 41 records that the
-        // `dockGlassRefraction` key is gone; the reader never branches on this
-        // number, it only states what the payload holds (F73 口径).
-        'schemaVersion': 41,
+        // 44 carries upstream's newest keys next to this branch's dock/liquid-card
+        // keys; the reader never branches on this number, it only states what the
+        // payload holds (F73 口径).
+        'schemaVersion': 44,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
@@ -270,6 +294,9 @@ class SqliteSettingsRepository implements SettingsRepository {
         'liquidVideoCards': value.liquidVideoCards,
         'defaultDynamicTab': value.defaultDynamicTab.name,
         'fullscreenSwipeControls': value.fullscreenSwipeControls,
+        'playerFullscreenGestureReverse': value.playerFullscreenGestureReverse,
+        'playerFullscreenGesture': value.playerFullscreenGesture,
+        'playerShrinkVideo': value.playerShrinkVideo,
         'navigationMode': value.navigationMode.name,
         'allowConcurrentPlayback': value.allowConcurrentPlayback,
         'cacheImages': value.cacheImages,
@@ -294,6 +321,7 @@ class SqliteSettingsRepository implements SettingsRepository {
         'videoCardHoverPlayback': value.videoCardHoverPlayback,
         'continuousPlayback': value.continuousPlayback,
         'continuousRelatedPlayback': value.continuousRelatedPlayback,
+        'playbackMode': value.playbackMode.name,
         'resumePlayback': value.resumePlayback,
         'showCollapsedProgress': value.showCollapsedProgress,
         'highEnergyProgressEnabled': value.highEnergyProgressEnabled,
@@ -305,7 +333,10 @@ class SqliteSettingsRepository implements SettingsRepository {
         'preferredVideoCodec': value.preferredVideoCodec.name,
         'mediaCdn': value.mediaCdn.name,
         'videoDecoding': value.videoDecoding.name,
+        'androidVideoOutput': value.androidVideoOutput.name,
+        'playbackBackend': value.playbackBackend.name,
         'defaultPlaybackRate': value.defaultPlaybackRate,
+        'playbackRates': value.playbackRates,
         'rememberPlaybackRate': value.rememberPlaybackRate,
         'defaultVolume': value.defaultVolume,
         'rememberVolumeGlobally': value.rememberVolumeGlobally,

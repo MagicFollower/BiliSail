@@ -23,6 +23,7 @@ import '../domain/playback_history_repository.dart';
 import 'playback_history_reporter.dart';
 import 'playback_rate_memory.dart';
 import 'playback_volume_memory.dart';
+import 'playback_listening_mode.dart';
 import 'playback_startup_diagnostics.dart';
 import '../../settings/domain/app_settings.dart';
 
@@ -47,35 +48,23 @@ class PlaybackSession extends ChangeNotifier {
     Duration Function()? historyNow,
     Duration Function()? danmakuNow,
     DateTime Function()? sleepTimerNow,
+    ListeningSleepTimer? sleepTimer,
     this.startupNow,
     PlaybackRateMemory? rateMemory,
     PlaybackVolumeMemory? volumeMemory,
+    PlaybackListeningMode? listeningMode,
     PlaybackStartupDiagnostics? startupDiagnostics,
   }) : sessionEpoch = sessionEpoch ?? _zeroEpoch,
        startupDiagnostics = startupDiagnostics ?? PlaybackStartupDiagnostics(),
        _rateMemory = rateMemory ?? PlaybackRateMemory(),
-       _volumeMemory = volumeMemory ?? PlaybackVolumeMemory() {
+       _volumeMemory = volumeMemory ?? PlaybackVolumeMemory(),
+       _listeningMode = listeningMode ?? PlaybackListeningMode(),
+       _ownsSleepTimer = sleepTimer == null {
+    _listeningMode.addListener(_applyListeningMode);
     _clock.start();
-    sleepTimer = ListeningSleepTimer(
-      now: sleepTimerNow,
-      onElapsed: () {
-        if (_disposed || _closing || !_audioOnly) return;
-        final next = _nextSourceIntent;
-        if (next != null) {
-          // A related-video route can mount after the alarm. Keep its listening
-          // identity while revoking the already accepted autoplay request.
-          _nextSourceIntent = (
-            id: next.id,
-            cid: next.cid,
-            playing: false,
-            position: next.position,
-            scope: next.scope,
-            epoch: next.epoch,
-          );
-        }
-        unawaited(pause());
-      },
-    );
+    this.sleepTimer =
+        sleepTimer ??
+        ListeningSleepTimer(now: sleepTimerNow, onElapsed: pauseForSleepTimer);
     final history = historyRepository;
     _historyReporter = history == null
         ? null
@@ -115,7 +104,9 @@ class PlaybackSession extends ChangeNotifier {
         if (_scheduleRecovery(failure)) {
           return;
         }
-        error = contentTarget is OfflinePlaybackTarget
+        error =
+            contentTarget is OfflinePlaybackTarget &&
+                failure.kind != PlayerFailureKind.nativeProcessExited
             ? '本地视频播放失败，文件可能无法解码或已不可访问'
             : failure.message;
         _notify();
@@ -126,7 +117,9 @@ class PlaybackSession extends ChangeNotifier {
   final SponsorRepository? sponsorRepository;
   final PlaybackRateMemory _rateMemory;
   final PlaybackVolumeMemory _volumeMemory;
+  final PlaybackListeningMode _listeningMode;
   AppSettings _settings = const AppSettings.defaults();
+  List<double> get playbackRates => _settings.playbackRates;
   RequestCancellation? _sponsorCancellation;
   List<SponsorSegment> sponsorSegments = const [];
   final Set<String> _skippedSponsors = {};
@@ -239,7 +232,7 @@ class PlaybackSession extends ChangeNotifier {
       }
       final replacementGeneration = _generation + 1;
       _recoveryGeneration = replacementGeneration;
-      final recovery = retry();
+      final recovery = retry(retainPresentation: true);
       // open clears the queued timer synchronously. Keep recovery visible
       // through resolution, native open and the first audio readiness check.
       _recoveryInProgress = true;
@@ -348,19 +341,98 @@ class PlaybackSession extends ChangeNotifier {
   String? contentTitle;
   bool get isLive => contentTarget is LivePlaybackTarget;
   bool _audioOnly = false;
-  bool _foregroundAudioOnly = false;
   bool _allowColorFallback = true;
   bool get audioOnly => _audioOnly;
   late final ListeningSleepTimer sleepTimer;
+  final bool _ownsSleepTimer;
   bool get canAutoAdvance => !sleepTimer.elapsed;
+  PlaybackMode get playbackMode => _settings.playbackMode;
+  int _playbackModeRevision = 0;
+  int get playbackModeRevision => _playbackModeRevision;
+  Object? _automaticRepeat;
 
   void startSleepTimer(Duration duration) {
-    if (_disposed || _closing || !_audioOnly || !sourceMatchesAccount) return;
+    if (_disposed || _closing || isLive || !sourceMatchesAccount) return;
     sleepTimer.start(duration);
   }
 
+  void pauseForSleepTimer() {
+    if (_disposed || _closing || !sleepTimer.elapsed) return;
+    final next = _nextSourceIntent;
+    if (next != null) {
+      // Revoke an accepted autoplay intent before its new route can mount.
+      _nextSourceIntent = (
+        id: next.id,
+        cid: next.cid,
+        playing: false,
+        position: next.position,
+        scope: next.scope,
+        epoch: next.epoch,
+      );
+    }
+    unawaited(pause());
+  }
+
   bool get continuousRelatedPlaybackEnabled =>
-      _settings.continuousRelatedPlayback && canAutoAdvance;
+      _settings.playbackMode == PlaybackMode.continuous &&
+      _settings.continuousRelatedPlayback &&
+      canAutoAdvance;
+
+  /// Automatic repeats cannot acknowledge an expired timer as a manual play can.
+  Future<void> repeatCompleted(int generation) async {
+    sleepTimer.checkDeadline();
+    final mode = playbackMode;
+    final modeRevision = playbackModeRevision;
+    if (_disposed ||
+        _closing ||
+        generation != _generation ||
+        !canAutoAdvance ||
+        !sourceMatchesAccount ||
+        !_playbackAllowed ||
+        isLive ||
+        _resolving ||
+        (mode != PlaybackMode.singleLoop && mode != PlaybackMode.listLoop) ||
+        snapshots.value.phase != PlaybackPhase.ended) {
+      return;
+    }
+    final operation = _automaticRepeat = Object();
+    _cancelCloudResume();
+    _desiredPlaying = true;
+    try {
+      await engine.seek(Duration.zero);
+      sleepTimer.checkDeadline();
+      if (_disposed ||
+          generation != _generation ||
+          !identical(_automaticRepeat, operation) ||
+          !sourceMatchesAccount) {
+        return;
+      }
+      if (!canAutoAdvance ||
+          !_playbackAllowed ||
+          playbackModeRevision != modeRevision) {
+        _desiredPlaying = false;
+        return;
+      }
+      danmaku.seekConfirmed(engine.currentSnapshot.position);
+      _lastCommentWindow = null;
+      _ensureComments(engine.currentSnapshot.position);
+      await _syncPlayback(forcePlay: true);
+      if (!_disposed && generation == _generation) await _saveProgress();
+    } on PlayerFailure catch (failure) {
+      if (!_disposed &&
+          generation == _generation &&
+          identical(_automaticRepeat, operation) &&
+          sourceMatchesAccount &&
+          playbackModeRevision == modeRevision) {
+        _desiredPlaying = false;
+        error = failure.message;
+        _notify();
+      }
+    } finally {
+      if (identical(_automaticRepeat, operation)) _automaticRepeat = null;
+    }
+  }
+
   bool get canListen =>
       !isLive &&
       media?.kind == PlaybackMediaKind.dash &&
@@ -580,7 +652,6 @@ class PlaybackSession extends ChangeNotifier {
       subtitleLabel: _subtitlePreference,
       voice: _voice,
       audioQuality: _audioQuality,
-      audioOnly: _foregroundAudioOnly,
     );
     _checkpoints[owner] = checkpoint;
     if (_settings.navigationMode != WorkspaceNavigationMode.multipleTabs) {
@@ -686,10 +757,6 @@ class PlaybackSession extends ChangeNotifier {
       title: title,
       voice: restored?.voice ?? const PlaybackVoice.original(),
       audioQuality: restored?.audioQuality,
-      audioOnly: nextPlaying != null
-          ? _foregroundAudioOnly
-          : restored?.audioOnly ??
-                (sameOwner && sameKind && _foregroundAudioOnly),
     );
   }
 
@@ -791,7 +858,6 @@ class PlaybackSession extends ChangeNotifier {
     AudioQualityPreference? audioQuality,
     int? liveLine,
     LiveStreamPreference? liveStream,
-    bool? audioOnly,
   }) => _open(
     video,
     selected,
@@ -807,7 +873,6 @@ class PlaybackSession extends ChangeNotifier {
     audioQuality: audioQuality,
     liveLine: liveLine,
     liveStream: liveStream,
-    audioOnly: audioOnly,
   );
 
   Future<void> _open(
@@ -825,14 +890,15 @@ class PlaybackSession extends ChangeNotifier {
     AudioQualityPreference? audioQuality,
     int? liveLine,
     LiveStreamPreference? liveStream,
-    bool? audioOnly,
     bool allowColorFallback = true,
     Duration? startupBudget,
+    bool retainPresentation = false,
   }) async {
     if (_disposed || _closing) return;
     if (target == null && (video == null || selected == null)) return;
     if (!force &&
-        (audioOnly == null || audioOnly == _audioOnly) &&
+        _audioOnly ==
+            (_listeningMode.enabled && target is! LivePlaybackTarget) &&
         detail?.summary.id == video?.summary.id &&
         part?.cid == selected?.cid &&
         contentTarget == target &&
@@ -849,11 +915,11 @@ class PlaybackSession extends ChangeNotifier {
       _remainingRecoveryBudget =
           startupBudget ?? _PlaybackStartupRecovery.totalBudget;
     }
-    _foregroundAudioOnly = audioOnly ?? _foregroundAudioOnly;
     _allowColorFallback = allowColorFallback;
-    final requestedAudioOnly = _foregroundAudioOnly;
+    final requestedAudioOnly =
+        _listeningMode.enabled && target is! LivePlaybackTarget;
     _audioOnly = requestedAudioOnly;
-    if (!requestedAudioOnly) sleepTimer.cancel();
+    if (_ownsSleepTimer && target is LivePlaybackTarget) sleepTimer.cancel();
     sleepTimer.checkDeadline();
     _audioRecovery = null;
     // Capture source settings together; a preference change during resolution
@@ -984,7 +1050,7 @@ class PlaybackSession extends ChangeNotifier {
       final stopped = startupDiagnostics.measure(
         generation,
         PlaybackStartupStage.stopPrevious,
-        engine.stop,
+        retainPresentation ? engine.pause : engine.stop,
       );
       final contentResolver = contentRepository;
       final resolution = startupDiagnostics.measure(
@@ -1094,7 +1160,9 @@ class PlaybackSession extends ChangeNotifier {
       _openingPosition = resume;
       PlayerFailure? lastFailure;
       final audio = resolved.audio;
-      if (resolved.kind == PlaybackMediaKind.dash && audio == null) {
+      if (resolved.kind == PlaybackMediaKind.dash &&
+          audio == null &&
+          !resolved.isIntentionallySilent) {
         throw const AppFailure(AppFailureKind.playback, '未取得点播音频轨道');
       }
       if (requestedAudioOnly &&
@@ -1212,6 +1280,8 @@ class PlaybackSession extends ChangeNotifier {
                         isLive: isLive,
                       )
                     : DashPairSource(
+                        isIntentionallySilent: resolved.isIntentionallySilent,
+                        duration: resolved.duration,
                         video: MediaTrack(
                           uri: videoUri,
                           requestPolicy: policy,
@@ -1234,7 +1304,15 @@ class PlaybackSession extends ChangeNotifier {
                   volume: checkpoint?.volume ?? oldVolume,
                   audioGainDb: _audioGainFor(resolved),
                   videoDecoding: videoDecoding,
+                  androidVideoOutput: switch (_settings.androidVideoOutput) {
+                    AndroidVideoOutputPreference.renderedTexture =>
+                      AndroidVideoOutputMode.renderedTexture,
+                    AndroidVideoOutputPreference.directTexture =>
+                      AndroidVideoOutputMode.directTexture,
+                  },
                   openTimeout: attemptBudget,
+                  retainPresentation:
+                      retainPresentation || checkpoint != null || attempt > 0,
                 ),
               ),
             );
@@ -1358,7 +1436,6 @@ class PlaybackSession extends ChangeNotifier {
             title: title,
             voice: _voice,
             audioQuality: requestedAudioQuality,
-            audioOnly: requestedAudioOnly,
             allowColorFallback: false,
             startupBudget:
                 preparingRecovery?.totalRemaining ?? _remainingRecoveryBudget,
@@ -1375,7 +1452,8 @@ class PlaybackSession extends ChangeNotifier {
             ? target is OfflinePlaybackTarget
                   ? '当前设备无法正确显示此离线视频的杜比视界格式'
                   : '当前设备无法正确显示此视频格式，未取得兼容视频流'
-            : contentTarget is OfflinePlaybackTarget
+            : contentTarget is OfflinePlaybackTarget &&
+                  failure.kind != PlayerFailureKind.nativeProcessExited
             ? '无法播放本地视频，文件可能无法解码或已不可访问'
             : failure.message;
         _resolving = false;
@@ -1709,6 +1787,13 @@ class PlaybackSession extends ChangeNotifier {
 
   /// Applies this page's settings without changing another page's engine.
   void configureSettings(AppSettings settings) {
+    if (settings.playbackMode != _settings.playbackMode) {
+      _playbackModeRevision++;
+      if (_automaticRepeat != null) {
+        _automaticRepeat = null;
+        _desiredPlaying = false;
+      }
+    }
     final previous = _settings;
     _settings = settings.normalized();
     _rateMemory.configure(enabled: _settings.rememberPlaybackRate);
@@ -1806,6 +1891,9 @@ class PlaybackSession extends ChangeNotifier {
               _settings.sponsorBlockCategories.join(',')) {
         unawaited(_loadSponsorSegments());
       }
+    }
+    if (!listEquals(previous.playbackRates, _settings.playbackRates)) {
+      notifyListeners();
     }
   }
 
@@ -2330,6 +2418,7 @@ class PlaybackSession extends ChangeNotifier {
   }
 
   Future<void> togglePlaying() async {
+    _automaticRepeat = null;
     if (!_desiredPlaying || snapshots.value.phase == PlaybackPhase.ended) {
       sleepTimer.checkDeadline();
       sleepTimer.acknowledgeElapsed();
@@ -2371,6 +2460,7 @@ class PlaybackSession extends ChangeNotifier {
 
   /// Idempotent system play commands must never toggle a playing source off.
   Future<void> play() async {
+    _automaticRepeat = null;
     if (_disposed || _closing) return;
     sleepTimer.checkDeadline();
     sleepTimer.acknowledgeElapsed();
@@ -2393,6 +2483,7 @@ class PlaybackSession extends ChangeNotifier {
   }
 
   Future<void> pause() async {
+    _automaticRepeat = null;
     _desiredPlaying = false;
     _cancelRecovery();
     _notify();
@@ -2451,13 +2542,13 @@ class PlaybackSession extends ChangeNotifier {
           if (failure.kind != PlayerFailureKind.nativePlayback ||
               !recovery.canRetry) {
             // Exhausting a deadline must also cancel the underlying command.
-            if (recovery.remaining <= Duration.zero) await engine.stop();
+            if (recovery.remaining <= Duration.zero) await engine.pause();
             rethrow;
           }
           final checkpoint = engine.currentSnapshot;
           _resolving = true;
           _notify();
-          await engine.stop();
+          await engine.pause();
           if (!recovery.isCurrent()) return;
           await recovery.reopen(checkpoint);
           if (!recovery.isCurrent()) return;
@@ -2528,10 +2619,54 @@ class PlaybackSession extends ChangeNotifier {
     return operation;
   }
 
+  int _seekRevision = 0;
+  Duration? _seekTarget;
+  int? _seekTargetGeneration;
+
+  // Command anchors may use an unconfirmed target; playback clocks must not.
+  Duration get commandPosition => _seekTargetGeneration == _generation
+      ? _seekTarget ?? snapshots.value.position
+      : snapshots.value.position;
+
+  Future<void> seekBy(Duration offset) {
+    // Native position remains at the old frame until seek finishes. Repeated
+    // relative commands must advance the pending target instead of restarting it.
+    final position = commandPosition;
+    var target = position + offset;
+    final duration = snapshots.value.duration;
+    if (target < Duration.zero) target = Duration.zero;
+    if (duration > Duration.zero && target > duration) target = duration;
+    if (target == position) return Future.value();
+    return seek(target);
+  }
+
   Future<void> seek(Duration target) async {
-    if (isLive) return;
+    if (isLive || _disposed || _closing) return;
+    if (target < Duration.zero) target = Duration.zero;
+    final revision = ++_seekRevision;
+    final generation = _generation;
+    _seekTarget = target;
+    _seekTargetGeneration = generation;
+    if (_automaticRepeat != null) {
+      _automaticRepeat = null;
+      _desiredPlaying = false;
+    }
     _cancelCloudResume();
-    await _command(() => engine.seek(target));
+    try {
+      await _command(() => engine.seek(target));
+    } finally {
+      if (generation == _generation && revision == _seekRevision) {
+        _seekTarget = null;
+      }
+    }
+    if (_disposed ||
+        _closing ||
+        generation != _generation ||
+        revision != _seekRevision ||
+        engine.currentSnapshot.isSeeking ||
+        engine.currentSnapshot.phase == PlaybackPhase.failed) {
+      return;
+    }
     danmaku.seekConfirmed(engine.currentSnapshot.position);
     _lastCommentWindow = null;
     _ensureComments(engine.currentSnapshot.position);
@@ -2761,11 +2896,23 @@ class PlaybackSession extends ChangeNotifier {
   Future<void> setAudioOnly(bool enabled) async {
     if (_disposed ||
         _closing ||
-        enabled == _foregroundAudioOnly ||
+        enabled == _listeningMode.enabled ||
         (enabled && (!canListen || _resolving))) {
       return;
     }
-    _foregroundAudioOnly = enabled;
+    await _listeningMode.select(enabled);
+  }
+
+  Future<void> _applyListeningMode() async {
+    if (_disposed ||
+        _closing ||
+        _sourceCancellation?.isCancelled != false ||
+        !sourceMatchesAccount ||
+        isLive ||
+        _audioOnly == _listeningMode.enabled ||
+        (contentTarget == null && (detail == null || part == null))) {
+      return;
+    }
     await open(
       detail,
       part,
@@ -2773,7 +2920,6 @@ class PlaybackSession extends ChangeNotifier {
       title: contentTitle,
       quality: _quality,
       force: true,
-      audioOnly: enabled,
       position: media == null ? _openingPosition : snapshots.value.position,
       rate:
           _temporaryRateOriginal ??
@@ -2860,7 +3006,7 @@ class PlaybackSession extends ChangeNotifier {
     );
   }
 
-  Future<void> retry() async {
+  Future<void> retry({bool retainPresentation = false}) async {
     final video = detail;
     final selected = part;
     if (contentTarget != null || (video != null && selected != null)) {
@@ -2878,17 +3024,17 @@ class PlaybackSession extends ChangeNotifier {
         target: contentTarget,
         title: contentTitle,
         allowColorFallback: _allowColorFallback,
+        retainPresentation: retainPresentation,
       );
     }
   }
 
   Future<void> stop({bool clearCheckpoints = true}) async {
-    sleepTimer.cancel();
+    if (_ownsSleepTimer) sleepTimer.cancel();
     _cancelRecovery();
     _audioRecovery = null;
     _audioOnly = false;
     _audioQuality = null;
-    _foregroundAudioOnly = false;
     _nextSourceIntent = null;
     if (clearCheckpoints) {
       _checkpoints.clear();
@@ -2943,6 +3089,7 @@ class PlaybackSession extends ChangeNotifier {
   Future<void> close() async {
     if (_disposed || _closing) return;
     _closing = true;
+    _listeningMode.removeListener(_applyListeningMode);
     Object? firstError;
     StackTrace? firstStack;
     Future<void> attempt(Future<void> Function() action) async {
@@ -2965,7 +3112,7 @@ class PlaybackSession extends ChangeNotifier {
     await attempt(engine.dispose);
     await attempt(() async => snapshots.dispose());
     await attempt(() async => highEnergy.dispose());
-    await attempt(() async => sleepTimer.dispose());
+    if (_ownsSleepTimer) await attempt(() async => sleepTimer.dispose());
     await attempt(() async => danmakuSendStyle.dispose());
     await attempt(() async => danmaku.dispose());
     _clock.stop();
@@ -3038,7 +3185,6 @@ final class _PlaybackCheckpoint {
     this.target,
     this.voice = const PlaybackVoice.original(),
     this.audioQuality,
-    this.audioOnly = false,
   });
   final VideoId? videoId;
   final String? cid;
@@ -3055,7 +3201,6 @@ final class _PlaybackCheckpoint {
   final String? subtitleLabel;
   final PlaybackVoice voice;
   final AudioQualityPreference? audioQuality;
-  final bool audioOnly;
 }
 
 String sponsorCategoryLabel(String category) => switch (category) {

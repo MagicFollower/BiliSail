@@ -1,15 +1,13 @@
 import '../../../domain/user.dart';
 import '../../../domain/dynamic_post.dart';
 import '../../../shared/ui/responsive_card_grid.dart';
+import '../../../shared/ui/season_card.dart';
 import '../../../shared/ui/sliver_dynamic_post_list.dart';
 import '../../../shared/ui/network_avatar.dart';
 import '../../../shared/ui/app_cover_image.dart';
 import '../../../shared/ui/paged_scroll_viewport.dart';
 
 import 'package:flutter/material.dart';
-
-import '../../../shared/ui/liquid_pull_refresh.dart';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,10 +34,13 @@ import '../../../shared/ui/app_notice.dart';
 import 'home_feed_cards.dart';
 import 'favorite_folder_edit_dialog.dart';
 import '../application/home_controller.dart';
+import '../application/dynamic_authors_controller.dart';
+import '../domain/dynamic_author.dart';
 import '../application/favorite_playback_queue.dart';
 import '../application/watch_later_removal_controller.dart';
 import '../domain/home_channel.dart';
 import '../domain/home_repository.dart';
+import '../../dynamic/domain/dynamic_link.dart';
 
 final class HomeContent extends ConsumerStatefulWidget {
   const HomeContent({
@@ -72,6 +73,8 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   bool? _bodyCanUnsubscribe;
   Widget? _bodySliver;
   FavoriteQueueRequest? _favoriteRequest;
+  UserId? _dynamicAuthor;
+  String? _accountScope;
 
   void _clearBodyCache() {
     _bodyItems = null;
@@ -114,7 +117,30 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
         ),
       );
     }
-    final scope = ref.read(homeRepositoryProvider).accountScope;
+    final repository = ref.watch(homeRepositoryProvider);
+    final scope = repository.accountScope;
+    if (_accountScope != scope) {
+      _accountScope = scope;
+      _dynamicAuthor = null;
+      _visitedQueries.clear();
+      _clearBodyCache();
+    }
+    final isDynamic =
+        repository is HomeDynamicRepository &&
+        (widget.channel == HomeChannel.dynamic ||
+            widget.channel == HomeChannel.videoDynamic);
+    final pageActive = widget.active && WorkspaceActivity.isActive(context);
+    if (isDynamic) {
+      final selected = ref.watch(
+        dynamicAuthorsProvider(scope).select((state) => state.selected?.id),
+      );
+      // A hidden tab keeps its current list and request ownership. Apply the
+      // shared selection on activation rather than loading every retained tab.
+      if (pageActive && selected != _dynamicAuthor) {
+        _dynamicAuthor = selected;
+        _clearBodyCache();
+      }
+    }
     final liveBrowse =
         widget.channel == HomeChannel.live &&
         (widget.section == '推荐直播' || widget.section == '全部分区');
@@ -135,7 +161,7 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
           ? 'ugc:${_folder?.id}'
           : _folder?.id,
     );
-    _visitedQueries.add(query);
+    if (_dynamicAuthor == null) _visitedQueries.add(query);
     if (_visitedQueries.length > 20) {
       // Retain the parent plus at most 19 recently visited folders per subtab.
       final evicted = _visitedQueries.firstWhere(
@@ -144,9 +170,13 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
       _visitedQueries.remove(evicted);
     }
     for (final visited in _visitedQueries) {
-      ref.watch(homeControllerProvider(visited));
+      if (_dynamicAuthor == null) ref.watch(homeControllerProvider(visited));
     }
-    final feed = ref.watch(homeControllerProvider(query));
+    final author = _dynamicAuthor;
+    final provider = author != null
+        ? dynamicAuthorFeedProvider((query: query, authorId: author))
+        : homeControllerProvider(query);
+    final feed = ref.watch(provider);
     final favoriteRequest = _favoriteRequest =
         widget.channel == HomeChannel.favorites &&
             (_folder != null || widget.section == '默认收藏夹')
@@ -160,11 +190,14 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
       // body. Release its models and callbacks; paging errors still carry data.
       _clearBodyCache();
     }
-    final controller = ref.read(homeControllerProvider(query).notifier);
+    final controller = ref.read(provider.notifier);
+    Future<void> refresh() => Future.wait([
+      controller.refresh(),
+      if (isDynamic) ref.read(dynamicAuthorsProvider(scope).notifier).refresh(),
+    ]);
     final watchLaterActions = widget.channel == HomeChannel.watchLater
         ? ref.watch(watchLaterRemovalProvider(scope))
         : null;
-    final pageActive = widget.active && WorkspaceActivity.isActive(context);
     return CommandTargetScope<Object>(
       scope: CommandScope.page,
       active: pageActive,
@@ -173,27 +206,31 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
         if (pageActive)
           ShortcutAction.refresh: (stroke) async {
             if (stroke.phase != InputPhase.down) return CommandOutcome.noOp;
-            await controller.refresh();
+            await refresh();
             return CommandOutcome.completed;
           },
       },
       child: PagedScrollViewport(
-        key: ValueKey(query),
+        key: ValueKey((query, _dynamicAuthor)),
+        keepScrollOffset: _dynamicAuthor == null,
         active: widget.active,
         canLoadMore:
+            !(widget.channel == HomeChannel.live && widget.section == '我的关注') &&
             feed.hasMore &&
             !feed.loadingMore &&
             feed.items.asData != null &&
             feed.pageError == null,
         contentVersion: feed,
         onLoadMore: controller.loadMore,
-        onRefresh: controller.refresh,
-        builder: (scrollController) => LiquidPullRefresh(
-          onRefresh: controller.refresh,
+        onRefresh: refresh,
+        builder: (scrollController) => RefreshIndicator(
+          onRefresh: refresh,
           child: CustomScrollView(
-            key: PageStorageKey(
-              'home-${widget.channel.name}-${widget.section}-$scope-${query.folderId}',
-            ),
+            key: _dynamicAuthor != null
+                ? ValueKey((query, _dynamicAuthor))
+                : PageStorageKey(
+                    'home-${widget.channel.name}-${widget.section}-$scope-${query.folderId}',
+                  ),
             controller: scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
@@ -373,7 +410,7 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
         ],
         onOpenUser: (id) => context.go('/user/${id.value}'),
         onOpenVideo: (video) => context.go('/video/${video.id.value}'),
-        onOpenLink: _openLink,
+        onOpenLink: _openDynamicLink,
         // Routes recreate callbacks on each navigation. Forward through this
         // State so cached cards use the latest action without a new delegate.
         onLogin: widget.onLogin == null ? null : _login,
@@ -440,6 +477,20 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
         if (widget.channel == HomeChannel.live &&
             item.kind == HomeEntryKind.live) {
           return LiveRoomCard(key: key, entry: item, onTap: () => _open(item));
+        }
+        if (item.kind == HomeEntryKind.season) {
+          return SeasonCard(
+            key: key,
+            title: item.title,
+            subtitle: item.subtitle,
+            coverUrl: item.coverUrl,
+            label: widget.channel == HomeChannel.favorites
+                ? widget.section == '我的追剧'
+                      ? '追剧'
+                      : '追番'
+                : widget.channel.label,
+            onTap: () => _open(item),
+          );
         }
         return _EntryCard(key: key, entry: item, onTap: () => _open(item));
       },
@@ -705,6 +756,15 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
     await _openLink(uri);
   }
 
+  Future<void> _openDynamicLink(Uri uri) async {
+    final room = dynamicLiveRoom(uri);
+    if (room != null) {
+      context.go('/live/${room.value}');
+      return;
+    }
+    await _openLink(uri);
+  }
+
   Future<void> _openLink(Uri uri) async {
     var opened = false;
     try {
@@ -770,7 +830,6 @@ final class _EntryCard extends StatelessWidget {
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Card(
-    margin: entry.kind == HomeEntryKind.season ? EdgeInsets.zero : null,
     clipBehavior: Clip.antiAlias,
     child: InkWell(
       onTap: entry.kind == HomeEntryKind.video && entry.bvid == null

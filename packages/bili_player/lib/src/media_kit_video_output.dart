@@ -10,16 +10,24 @@ import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
 
 import 'player_contract.dart';
+import 'android_video_viewport.dart';
 import 'native_video_surface.dart';
+import 'native_player_properties.dart';
 import 'video_composition.dart';
 import 'video_decoder_configuration.dart';
 
 /// Owns the current media-kit output without issuing playback commands.
 final class MediaKitVideoOutput
     implements FlutterVideoOutput, VideoFrameReadiness {
-  MediaKitVideoOutput() {
+  MediaKitVideoOutput({bool? limitAndroidOutputToViewport})
+    : limitAndroidOutputToViewport =
+          limitAndroidOutputToViewport ??
+          const bool.fromEnvironment('BILISAIL_ANDROID_VIEWPORT') {
     _controller.addListener(_observeFrameReadiness);
   }
+
+  /// Keep this candidate opt-in until device resize/color acceptance completes.
+  final bool limitAndroidOutputToViewport;
 
   final ValueNotifier<mkv.VideoController?> _controller = ValueNotifier(null);
   final ValueNotifier<bool> _frameReady = ValueNotifier(false);
@@ -56,12 +64,16 @@ final class MediaKitVideoOutput
           rect.width > 0 &&
           rect.height > 0 &&
           (rect.width > 1 || rect.height > 1) &&
-          state.width > 0 &&
-          state.height > 0;
+          (state.width ?? 0) > 0 &&
+          (state.height ?? 0) > 0;
     }
 
     void update() {
       if (!isCurrent()) return;
+      if (controller.rect.value case final rect?
+          when rect.width > 1 && rect.height > 1) {
+        _updateAndroidViewport();
+      }
       if (!canPresent()) {
         _frameReady.value = false;
         return;
@@ -79,18 +91,21 @@ final class MediaKitVideoOutput
 
     controller.id.addListener(update);
     controller.rect.addListener(update);
-    final size = controller.player.stream.size.listen((_) => update());
+    final width = controller.player.stream.width.listen((_) => update());
+    final height = controller.player.stream.height.listen((_) => update());
     _readinessCleanup.addAll([
       () => controller.id.removeListener(update),
       () => controller.rect.removeListener(update),
-      () => unawaited(size.cancel()),
+      () => unawaited(width.cancel()),
+      () => unawaited(height.cancel()),
     ]);
     // Android's SDK signal also finishes paused preparation. Presentation
     // must wait for a sized video buffer without blocking that preparation.
     final presentation = Platform.isAndroid
-        ? _pluginChannel.invokeMethod<void>('BiliSail.WaitForVideoFrame', {
-            'handle': controller.player.handle.toString(),
-          })
+        ? _viewportChannel.invokeMethod<void>(
+            'VideoOutputManager.WaitForVideoFrame',
+            {'handle': controller.player.nativeHandle.toString()},
+          )
         : controller.waitUntilFirstFrameRendered;
     _presentation = presentation;
     unawaited(
@@ -107,7 +122,7 @@ final class MediaKitVideoOutput
     );
   }
 
-  static const _pluginChannel = MethodChannel(
+  static const _viewportChannel = MethodChannel(
     'com.alexmercerind/media_kit_video',
   );
   Object? _viewportOwner;
@@ -125,8 +140,54 @@ final class MediaKitVideoOutput
   Future<void> _androidSurfaceSize = Future.value();
   bool _androidSurfaceSizeFailed = false;
   int _androidSurfaceRevision = 0;
+  AndroidVideoSurfaceSizer? _androidViewportSizer;
 
-  void enableAndroidDolbyVision() => _androidDolbyVision = true;
+  bool get _usesAndroidViewport =>
+      Platform.isAndroid &&
+      limitAndroidOutputToViewport &&
+      !_androidDolbyVision;
+
+  VideoDimensions _androidTarget(VideoDimensions source) {
+    if (!_usesAndroidViewport) return source;
+    final layout = _viewportLayout;
+    if (layout == null) return source;
+    return androidVideoViewport(
+      source,
+      physicalWidth: layout.width * layout.dpr,
+      physicalHeight: layout.height * layout.dpr,
+    );
+  }
+
+  void _updateAndroidViewport() {
+    if (!_usesAndroidViewport || _viewportOwner == null) return;
+    final source = _videoDimensions;
+    final player = _player;
+    final sizer = _androidViewportSizer;
+    if (source == null || player == null || sizer == null) return;
+    final target = _androidTarget(source);
+    // The pinned controller restores decoded-size buffers on videoParams.
+    // Its final rect notification follows that write. Repair both sizes here;
+    // our own VO resize can notify again, so first check the native value.
+    final matches =
+        player.getProperty('android-surface-size') ==
+        '${target.width}x${target.height}';
+    if (matches && sizer.applied == target) return;
+    _androidSurfaceSizeFailed = false;
+    _androidSurfaceSize = sizer.request(target, force: !matches).catchError((
+      Object error,
+    ) {
+      if (identical(_androidViewportSizer, sizer)) {
+        _androidSurfaceSizeFailed = true;
+        debugPrint('Android video viewport failed: ${error.runtimeType}');
+      }
+    });
+  }
+
+  void enableAndroidDolbyVision() {
+    _androidDolbyVision = true;
+    _androidViewportSizer?.invalidate();
+    _androidViewportSizer = null;
+  }
 
   Future<void> prepareAndroidSurface(String Function(String) read) async {
     if (!Platform.isAndroid) return;
@@ -134,26 +195,38 @@ final class MediaKitVideoOutput
     final revision = _bindingRevision;
     final dimensions = nativeVideoSurfaceDimensions(read);
     if (_disposed || player == null || dimensions == null) return;
-    await _sizeAndroidSurface(player, dimensions, revision);
+    await _sizeAndroidSurface(player, _androidTarget(dimensions), revision);
   }
 
   Future<void> _sizeAndroidSurface(
     mk.Player player,
     VideoDimensions dimensions,
-    int revision,
-  ) async {
+    int revision, {
+    bool viewport = false,
+  }) async {
+    final owner = _viewportOwner;
+    bool viewportCurrent() {
+      final source = _videoDimensions;
+      return _usesAndroidViewport &&
+          identical(owner, _viewportOwner) &&
+          source != null &&
+          _androidTarget(source) == dimensions;
+    }
+
+    if (viewport && !viewportCurrent()) return;
     // Android attaches the Surface before MediaCodec is created. Its default
     // 1x1 buffer would turn the paused first frame into a stretched solid color.
     // on_preloaded keeps decoding blocked until both sizes have been applied.
-    await _pluginChannel
+    await _viewportChannel
         .invokeMethod<void>('VideoOutputManager.SetSurfaceTextureSize', {
-          'handle': player.handle.toString(),
+          'handle': player.nativeHandle.toString(),
           'width': dimensions.width.toString(),
           'height': dimensions.height.toString(),
         })
         .timeout(const Duration(seconds: 2));
     if (_disposed ||
         revision != _bindingRevision ||
+        (viewport && !viewportCurrent()) ||
         !identical(_player, player)) {
       return;
     }
@@ -161,9 +234,20 @@ final class MediaKitVideoOutput
       'android-surface-size',
       '${dimensions.width}x${dimensions.height}',
     );
+    if (viewport &&
+        player.getProperty('android-surface-size') !=
+            '${dimensions.width}x${dimensions.height}') {
+      throw StateError(
+        'The native backend rejected the Android viewport size.',
+      );
+    }
   }
 
   VideoDimensions? get dimensions {
+    if (_androidViewportSizer?.applied case final size?
+        when _usesAndroidViewport) {
+      return size;
+    }
     final rect = _controller.value?.rect.value;
     return rect == null
         ? null
@@ -196,56 +280,39 @@ final class MediaKitVideoOutput
 
   int _bindingRevision = 0;
 
-  /// Video surfaces currently attached to the element tree. The native plugin
-  /// releases the Android `Surface` and its texture entry while disposing the
-  /// player, so a caller that is about to dispose must be able to prove the
-  /// texture has actually left the tree, not merely been asked to leave it.
-  int _mountedSurfaces = 0;
-  final _detachWaiters = <Completer<void>>[];
-
-  /// Resolves once no video surface remains mounted. Bounded because a bound
-  /// controller that was never mounted, or a surface stuck behind a paused
-  /// frame pipeline, must not pin the caller's release sequence.
-  Future<void> awaitSurfaceDetached({
-    Duration timeout = const Duration(milliseconds: 400),
-  }) async {
-    if (_disposed || _mountedSurfaces == 0) return;
-    final waiter = Completer<void>();
-    _detachWaiters.add(waiter);
-    await waiter.future.timeout(timeout, onTimeout: () {});
-  }
-
-  void _surfaceMounted() => _mountedSurfaces++;
-
-  void _surfaceUnmounted() {
-    // A keyed surface swap mounts its replacement before the old element is
-    // unmounted, so waiters resolve on the count reaching zero rather than on
-    // any promise that a later mount might have superseded.
-    _mountedSurfaces--;
-    if (_mountedSurfaces > 0) return;
-    for (final waiter in _detachWaiters) {
-      waiter.complete();
-    }
-    _detachWaiters.clear();
-  }
-
   Future<void> bindPlayer(
     mk.Player player, {
     required int generation,
     required VideoDecodingMode decoding,
+    AndroidVideoOutputMode androidOutput =
+        AndroidVideoOutputMode.renderedTexture,
   }) async {
     if (_disposed) throw StateError('Video output is disposed.');
     _player = player;
     _sourceGeneration = generation;
     final revision = ++_bindingRevision;
-    final controller = await mkv.VideoController.create(
+    _androidViewportSizer?.invalidate();
+    _androidViewportSizer = _usesAndroidViewport
+        ? AndroidVideoSurfaceSizer(
+            isCurrent: () =>
+                !_disposed &&
+                revision == _bindingRevision &&
+                identical(_player, player),
+            apply: (size) =>
+                _sizeAndroidSurface(player, size, revision, viewport: true),
+          )
+        : null;
+    final controller = mkv.VideoController(
       player,
       configuration: videoDecoderConfiguration(
         isAndroid: Platform.isAndroid,
         decoding: decoding,
+        androidOutput: androidOutput,
         usesDolbyVisionRenderer: () => _androidDolbyVision,
       ),
     );
+    WidgetsBinding.instance.ensureVisualUpdate();
+    await controller.platform.future;
     if (_disposed ||
         revision != _bindingRevision ||
         !identical(_player, player)) {
@@ -298,11 +365,10 @@ final class MediaKitVideoOutput
   }
 
   void _updateDecodedSize() {
+    _updateAndroidViewport();
     final controller = _controller.value;
     final dimensions = _videoDimensions;
-    if (Platform.isAndroid &&
-        controller?.configuration.vo == 'gpu-next' &&
-        dimensions != null) {
+    if (Platform.isAndroid && _androidDolbyVision && dimensions != null) {
       final player = _player;
       if (player == null) return;
       final revision = _bindingRevision;
@@ -315,9 +381,9 @@ final class MediaKitVideoOutput
       _androidSurfaceSizeFailed = false;
       _androidSurfaceSize = () async {
         try {
-          await _pluginChannel
+          await _viewportChannel
               .invokeMethod<void>('VideoOutputManager.SetSurfaceTextureSize', {
-                'handle': player.handle.toString(),
+                'handle': player.nativeHandle.toString(),
                 'width': dimensions.width.toString(),
                 'height': dimensions.height.toString(),
               })
@@ -344,7 +410,7 @@ final class MediaKitVideoOutput
       height: dimensions.height,
     );
     unawaited(
-      result?.catchError((Object error) {
+      result.catchError((Object error) {
         debugPrint('Windows decoded video size failed: ${error.runtimeType}');
       }),
     );
@@ -356,6 +422,8 @@ final class MediaKitVideoOutput
   }
 
   void clearPlayer() {
+    _androidViewportSizer?.invalidate();
+    _androidViewportSizer = null;
     _bindingRevision++;
     _sourceGeneration++;
     _viewportRevision++;
@@ -386,31 +454,25 @@ final class MediaKitVideoOutput
         ? const ColoredBox(color: Color(0xFF000000))
         // The backend is a visual layer. Its built-in InteractiveViewer must
         // not consume wheel signals or gestures owned by the host controls.
-        : _SurfacePresence(
-            // Keyed by the controller so a same-frame rebind cannot reuse this
-            // element and leave the mount count permanently too high.
-            key: ObjectKey(controller),
-            output: this,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: _frameReady,
-              child: IgnorePointer(
-                child: mkv.Video(
-                  // VideoState subscribes to its initial player's dimensions. A
-                  // same-frame clear/rebind must not retain the old subscriptions.
-                  key: ObjectKey(controller),
-                  controller: controller,
-                  controls: mkv.NoVideoControls,
-                  // PlaybackSession owns lifecycle and the user's pause intent.
-                  // The old surface may still be mounted while switching to audio.
-                  pauseUponEnteringBackgroundMode: false,
-                  resumeUponEnteringForegroundMode: false,
-                ),
+        : ValueListenableBuilder<bool>(
+            valueListenable: _frameReady,
+            child: IgnorePointer(
+              child: mkv.Video(
+                // VideoState subscribes to its initial player's dimensions. A
+                // same-frame clear/rebind must not retain the old subscriptions.
+                key: ObjectKey(controller),
+                controller: controller,
+                controls: mkv.NoVideoControls,
+                // PlaybackSession owns lifecycle and the user's pause intent.
+                // The old surface may still be mounted while switching to audio.
+                pauseUponEnteringBackgroundMode: false,
+                resumeUponEnteringForegroundMode: false,
               ),
-              builder: (_, ready, child) => _VideoFrameMask(
-                key: const ValueKey('video-first-frame-mask'),
-                ready: ready,
-                child: child,
-              ),
+            ),
+            builder: (_, ready, child) => _VideoFrameMask(
+              key: const ValueKey('video-first-frame-mask'),
+              ready: ready,
+              child: child,
             ),
           ),
   );
@@ -421,6 +483,7 @@ final class MediaKitVideoOutput
     _viewportOwner = owner;
     _viewportLayout = null;
     _viewportShrinkTimer?.cancel();
+    _androidViewportSizer?.invalidate();
     // An inline surface may have left a small cap. Remove it immediately when
     // a new surface claims the same player, before its first layout callback.
     if (Platform.isWindows) {
@@ -460,10 +523,15 @@ final class MediaKitVideoOutput
     _viewportOwner = null;
     _viewportLayout = null;
     _viewportShrinkTimer?.cancel();
+    _androidViewportSizer?.invalidate();
     _viewportRevision++;
   }
 
   void _updateViewportCap() {
+    if (_usesAndroidViewport) {
+      _updateAndroidViewport();
+      return;
+    }
     final layout = _viewportLayout;
     if (!Platform.isWindows || layout == null || _viewportOwner == null) return;
     final physicalWidth = (layout.width * layout.dpr).ceil().clamp(1, 16384);
@@ -531,7 +599,7 @@ final class MediaKitVideoOutput
   ) async {
     try {
       const deadline = Duration(seconds: 5);
-      final handle = player.handle;
+      final handle = player.nativeHandle;
       if (_disposed ||
           generation != _sourceGeneration ||
           revision != _viewportRevision ||
@@ -539,7 +607,7 @@ final class MediaKitVideoOutput
           !identical(_controller.value, controller)) {
         return;
       }
-      await _pluginChannel
+      await _viewportChannel
           .invokeMethod<void>('VideoOutputManager.SetViewportSize', {
             'handle': handle.toString(),
             'width': cap.width?.toString() ?? 'null',
@@ -556,38 +624,6 @@ final class MediaKitVideoOutput
       }
     }
   }
-}
-
-/// Reports whether the video subtree is present in the element tree.
-final class _SurfacePresence extends StatefulWidget {
-  const _SurfacePresence({
-    super.key,
-    required this.output,
-    required this.child,
-  });
-
-  final MediaKitVideoOutput output;
-  final Widget child;
-
-  @override
-  State<_SurfacePresence> createState() => _SurfacePresenceState();
-}
-
-final class _SurfacePresenceState extends State<_SurfacePresence> {
-  @override
-  void initState() {
-    super.initState();
-    widget.output._surfaceMounted();
-  }
-
-  @override
-  void dispose() {
-    widget.output._surfaceUnmounted();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => widget.child;
 }
 
 /// Consume native buffers while hiding their uninitialized RGB contents. An

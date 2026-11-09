@@ -50,8 +50,11 @@ final class PlayerDiagnostics {
 enum PlayerDiagnosticKind {
   openStarted,
   openReady,
+  openStageChanged,
+  nativeProcessExited,
   openTerminated,
   videoInterrupted,
+  playbackStalled,
   nativeLog,
   nativeError,
   recovered,
@@ -73,6 +76,14 @@ enum NativeErrorCause {
 }
 
 enum NativeLogSeverity { warning, error, fatal }
+
+enum PlaybackStallReason {
+  playbackClock,
+  audioClock,
+  videoBuffer,
+  audioFrames,
+  videoClock,
+}
 
 /// The bounded source-open step, without media URLs or native log text.
 enum NativeReadinessStage { tracks, externalAudio, videoDecode, videoOutput }
@@ -160,6 +171,9 @@ final class PlayerDiagnosticEvent {
     this.nativeErrorCode,
     this.readinessStage,
     this.diagnostics,
+    this.stallReason,
+    this.stalledFor,
+    this.audioPosition,
   }) : timestamp = DateTime.now().toUtc();
 
   final DateTime timestamp;
@@ -171,6 +185,9 @@ final class PlayerDiagnosticEvent {
   final int? nativeErrorCode;
   final NativeReadinessStage? readinessStage;
   final PlayerDiagnostics? diagnostics;
+  final PlaybackStallReason? stallReason;
+  final Duration? stalledFor;
+  final Duration? audioPosition;
 
   Map<String, Object?> toJson() => {
     'time': timestamp.toIso8601String(),
@@ -184,6 +201,9 @@ final class PlayerDiagnosticEvent {
     'buffering': snapshot.isBuffering,
     'seeking': snapshot.isSeeking,
     'rate': snapshot.rate,
+    'stallReason': ?stallReason?.name,
+    'stalledForMs': ?stalledFor?.inMilliseconds,
+    'audioPositionMs': ?audioPosition?.inMilliseconds,
     'severity': ?severity?.name,
     'nativeErrorCode': ?nativeErrorCode,
     'readinessStage': ?readinessStage?.name,

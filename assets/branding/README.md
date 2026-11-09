@@ -11,30 +11,22 @@
 - [icon_scale_comparison.png](icon_scale_comparison.png)：24、30、36、48、64 px 的放大前后对比，上行原图、下行放大 10%；浅色／深色背景上的图标按实际像素尺寸展示。
 - [第二轮三个方案](candidates-v2/README.md)：A、B、C 原图及并排预览全部保留；放大前图稿保存在 [C 原图](candidates-v2/c-sail-corner.png)，原多尺寸预览保存在 [icon_preview_v2.png](icon_preview_v2.png)。
 - [app_icon_v1.png](app_icon_v1.png) 与 [icon_preview_v1.png](icon_preview_v1.png)：保留第一版帆船图标与预览，生成提示词见下文历史记录。
-- [生成脚本](../../tool/generate_app_icons.py)：自 `f8e5506` 平台收敛起只产出 Android 五种密度（48/72/96/144/192），Windows ICO、macOS AppIcon、iOS appiconset 与 Linux 256 px 段落已删除——那些工程在本树不存在。可按名字参数化只重建某一个图标。
+- [生成脚本](../../tool/generate_app_icons.py)：Android 五种密度、Windows 七种 ICO 尺寸、macOS 七种 AppIcon 尺寸、iOS AppIcon 全尺寸及 Linux 256 px 图标。iOS 在白底合成不透明 RGB，其余平台保留 alpha；新增平台的图标资源未做设备显示验收。
 - [主体缩放脚本](../../tool/scale_app_icon.ps1)：从保留的 C 原图重建当前图稿，固定 1.10 倍，不会重复放大当前文件。
 
 当前图稿 SHA-256：`8bfa0684f99c9a530abf155f480e4ca1ef1c7a57b7c7c463f602980397b5d3e9`。
 
 ## 可选图标（2026-10-30）
 
-2026-11-02 加入第三个选项。「设置 → 外观 → 应用图标」提供哔帆（默认）、粉红小电视与禁闭三项，不提供蓝色版本。
+“设置 → 外观 → 应用图标”仅提供默认的哔帆图标与“粉红小电视”，不提供蓝色版本。
 
 - [bilibili_source.svg](bilibili_source.svg) 原样取自 [Simple Icons 的 Bilibili 图标](https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/bilibili.svg)，固定提交 `90646e4bf7f3b89df6c37e65baf3e7bc759a517c`，SHA-256 为 `0b31005ccf765a9d37be2c42f1d36e44572ccadb088250626d9905ae5d4f3d21`，源项目为 CC0，保留[许可原文](bilibili_LICENSE.md)。这份独立矢量素材不是原船帆图稿、官网旧版 JPEG 或 `biliicon.ttf` 的字标。
 - [bilibili_pink.svg](bilibili_pink.svg) 仅设置 `#FB7299` 填色和安全边距，通过固定开发工具 `resvg-py 0.5.0` 渲染为透明 [bilibili_pink.png](bilibili_pink.png)，1254 × 1254，SHA-256 为 `1f28bac11797840eab6e5d1ffc8479cc48b7827599540defd2f5ac19404b9aee`。不增加应用运行依赖。
-- `generate_app_icons.py` 从三个运行时源图生成 Android 五种密度：`app_icon.png` → `ic_launcher`、`bilibili_pink.png` → `ic_launcher_bilibili`、`dsconfinement_icon.png` → `ic_launcher_dsconfinement`。
+- `generate_app_icons.py` 从两份高分辨率图稿生成 Android 五种密度、Windows 七种 ICO 尺寸与 iPhone/iPad 的 `BilibiliIcon.appiconset`（iOS 合成白底 RGB）。Linux 从 Flutter 资产读取 1254px 原图，不修改安装目录。
 - 2026-10-31 修正 macOS 切换后的尺寸：哔帆通过 AppKit 恢复安装时的系统图标，避免用原始 PNG 覆盖；粉红小电视使用专用 [bilibili_pink_macos.icns](bilibili_pink_macos.icns)。其 1024px 透明画布居中放置 820px 图稿，四周各 102px 留白，包含 16/32/64/128/256/512/1024px 及对应 Retina 表示；原生明确设置 512pt 逻辑尺寸。应用内预览及侧边栏继续使用原 PNG，侧边栏随已提交的设置切换并保持 36 × 36 逻辑像素。
-- Android 通过三个启动别名（`LauncherDefault` / `LauncherBilibili` / `LauncherDsconfinement`）切换桌面图标，主 Activity 始终启用；正式与 `.test` 开发包分别保持自己的选择。`AppIconHandler` 的别名表、`R.mipmap` 表与 `AppIconPreference` 枚举由 `test/features/settings/app_icon_test.dart` 的一致性用例守住——三处清单分属三种语言，只有这条用例会发现某个图标可选但设备上无效。
+- Android 通过两个启动别名切换桌面图标，主 Activity 始终启用；正式与 `.test` 开发包分别保持自己的选择。iOS 通过系统备用图标 API 切换。桌面刷新速度、旧固定快捷方式及系统提示由系统决定。
 - Windows 改变运行中窗口的大/小图标，新播放窗口沿用选择，播放窗标题栏返回按钮仍保留；任务栏分组与固定入口可能继续使用安装图标。macOS 只改变运行中的 Dock 图标；Linux 只改变窗口图标，Wayland/桌面环境可能优先显示 `.desktop` 中的安装图标。已有快捷方式、安装包、访达、启动台和 Linux 应用菜单图标不自动替换。
 - 选择保存在现有设置快照，旧值或非法值回退哔帆，恢复默认同步恢复图标。移动端启动读取系统保留的图标，避免 iOS 启动时重复弹提示；桌面启动重新应用已保存选择。切换与保存串行，保存失败尝试恢复原生图标，失败会显示重试提示。
-
-### 禁闭（2026-11-02 新增）
-
-- 来源是用户 2026-11-02 提供的 `app.ico`（原先落在仓库根目录，无人引用），登记为 [dsconfinement_source.ico](dsconfinement_source.ico)，SHA-256 `7afcdd8c3fc908bca42e8d67e5428aa05d09463be75680b14702866d5f0b109b`。内含 11 帧 PNG 压缩图（16/20/24/32/40/48/64/72/96/128/256，均 32bpp 带 alpha），描述为女仆从舱门后探头的「禁闭」意象。
-- 运行时源图 [dsconfinement_icon.png](dsconfinement_icon.png) 就是 ICO 的最大帧 256 × 256 RGBA，SHA-256 `2dd3978bd01f3e66ec23cb88abce241dba1e4bd9751e23ad02dc1d7be9882be3`，由 `generate_app_icons.py dsconfinement` 光栅化，`check_app_icons.py` 断言它与源帧逐像素相同。
-- 与另两个 1254 px 图稿不同，最高分辨率只有 256 px：Android 五档密度（48…192）与侧边栏 36 逻辑像素的 brand logo 都在其下，全部是下采样，没有放大损失；要更高解析力必须由用户提供位图源，ICO 反推不出来。
-- `.ico` 本身不进应用包：`pubspec.yaml` 只登记 PNG 源图，Flutter 与 Android mipmap 都不解码 ICO 容器。
-- 权利归属：由用户直接提供，未记录第三方来源与许可条款；Bilibili 标识的权利仍归原权利人。
 
 验证与未测项见[应用图标切换记录](../../docs/validation/app-icon-switching.md)。Bilibili 标识的权利仍归原权利人，本次采用不声明品牌或素材再分发授权。
 
@@ -52,13 +44,13 @@ pwsh -NoProfile -File tool/scale_app_icon.ps1
 
 画布中心为 `(627, 627)`，像素坐标按 `p' = center + 1.10 × (p - center)` 变换，使用 System.Drawing HighQualityBicubic 插值。可见轮廓按 alpha 大于 128 测量，从 1073 × 971 增至 1180 × 1068 px；边界取整产生的比例差异不足一个像素。天线、小船帆和脚部完整保留。
 
-生成平台资源的命令（可省略参数以重建全部三个图标）：
+生成平台资源的命令：
 
 ```text
-uv run --with pillow==12.3.0 --with resvg-py==0.5.0 python tool/generate_app_icons.py dsconfinement
+uv run --with pillow==12.3.0 --with resvg-py==0.5.0 python tool/generate_app_icons.py
 ```
 
-该命令从保存的源图构建 Android 密度资源，保留 alpha；不重新调用生成服务。历史品牌图稿的生成服务具有随机性，提示词用于追踪设计，不能保证重生成相同像素。没有新增应用运行依赖。运行 `uv run --with pillow==12.3.0 python tool/check_app_icons.py` 可检查三套密度共 15 个文件的尺寸与像素是否等于源图的 Lanczos 缩放，并打印三个源素材的 SHA-256。
+该命令从保存的品牌 PNG 与小电视 SVG 构建平台资源，保留 alpha；不重新调用生成服务。历史品牌图稿的生成服务具有随机性，提示词用于追踪设计，不能保证重生成相同像素。没有新增应用运行依赖。运行 `uv run --with pillow==12.3.0 python tool/check_app_icons.py` 可检查两套尺寸、像素与 iOS 不透明格式。
 
 MSIX 的 `tool/build-release.ps1` 同样读取 `app_icon.png`，继续生成 targetsize、unplated、lightunplated 与 PRI。替换资源不等于系统已安装应用的图标缓存立即更新，也不代表 Android/macOS 设备显示已验收。
 

@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:bili_player/bili_player.dart';
 import 'package:flutter/material.dart';
 
-import '../../../domain/playback_rates.dart';
 import '../application/playback_session.dart';
 import '../domain/playback_repository.dart';
 import 'live_stream_picker.dart';
 import 'playback_snapshot_builder.dart';
 import 'player_control_labels.dart';
+import 'listening_sleep_timer_button.dart';
 
 class PlayerMoreDialog extends StatelessWidget {
   const PlayerMoreDialog({
@@ -125,6 +125,12 @@ class PlayerMoreDialog extends StatelessWidget {
     );
 
     return [
+      if (!session.isLive)
+        ListeningSleepTimerButton(
+          session: session,
+          compact: true,
+          menuItem: true,
+        ),
       if (session.error != null)
         action(
           '重新加载',
@@ -155,7 +161,7 @@ class PlayerMoreDialog extends StatelessWidget {
           title: const Text('播放速度'),
           subtitle: Text('${snapshot.rate}x'),
           children: [
-            for (final rate in PlaybackRates.values)
+            for (final rate in session.playbackRates)
               choice(
                 '${rate}x',
                 snapshot.rate == rate,

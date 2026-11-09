@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../domain/user.dart';
+import '../../features/comments/domain/comment_time.dart';
 import 'bili_icons.dart';
 import 'app_cover_image.dart';
 import 'bili_badges.dart';
@@ -67,7 +68,7 @@ final class VideoCardMenu {
 enum _VideoCardWidthTier {
   compact(10, 20, 14),
   medium(11, 24, 17),
-  regular(12, 28, 20);
+  regular(13, 28, 20);
 
   const _VideoCardWidthTier(
     this.coverFontSize,
@@ -100,6 +101,7 @@ final class VideoCard extends StatefulWidget {
     this.danmakuCountText = '',
     this.publishText = '',
     this.publishTooltip,
+    this.publishedAt,
     this.menu,
     this.feedback,
     this.showWatchLaterButton = true,
@@ -117,6 +119,9 @@ final class VideoCard extends StatefulWidget {
   final String danmakuCountText;
   final String publishText;
   final String? publishTooltip;
+  // Upstream callers pass the publication time instead of a preformatted label;
+  // it falls back into the publish text when the server text is absent.
+  final DateTime? publishedAt;
   final VideoCardMenu? menu;
   final VideoCardFeedback? feedback;
   final bool showWatchLaterButton;
@@ -150,6 +155,7 @@ final class VideoCard extends StatefulWidget {
     danmakuCountText,
     publishText,
     publishTooltip,
+    publishedAt,
     showWatchLaterButton,
     menu != null,
     menu?.busy,
@@ -461,6 +467,7 @@ final class _VideoCardState extends State<VideoCard> {
                         widget.showRecommendationReason &&
                         video.isFollowed == true,
                     publishText: widget.publishText,
+                    publishedAt: widget.publishedAt,
                     publishTooltip: widget.publishTooltip,
                   ),
                 ],
@@ -1002,6 +1009,7 @@ final class _AuthorMetadata extends StatefulWidget {
     required this.reason,
     required this.showFollowed,
     required this.publishText,
+    required this.publishedAt,
     required this.publishTooltip,
     this.merged = false,
     this.metaFontSize = 12,
@@ -1016,6 +1024,7 @@ final class _AuthorMetadata extends StatefulWidget {
   final String? reason;
   final bool showFollowed;
   final String publishText;
+  final DateTime? publishedAt;
   final String? publishTooltip;
   final bool merged;
   final double metaFontSize;
@@ -1039,12 +1048,8 @@ final class _AuthorMetadataState extends State<_AuthorMetadata>
     final video = widget.video;
     final id = video.authorId;
     final openUser = widget.onOpenUser;
-    final date = video.publishedAt?.toLocal();
-    final dateText = date == null
-        ? widget.publishText
-        : date.year == DateTime.now().year
-        ? '${date.month}-${date.day}'
-        : '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final timeLabel = commentTimeLabel(video.publishedAt ?? widget.publishedAt);
+    final dateText = timeLabel.isEmpty ? widget.publishText : timeLabel;
     final reasonText = widget.reason?.trim() ?? '';
     final labels = [
       if (reasonText.isNotEmpty) reasonText,

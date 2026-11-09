@@ -86,9 +86,11 @@ final class BiliApiClient {
   }) {
     if (!const {
       '/x/space/wbi/arc/search',
+      '/x/space/wbi/acc/info',
       '/x/web-interface/wbi/search/type',
       '/x/web-interface/wbi/search/all/v2',
       '/x/web-interface/suggest',
+      '/x/relation/followings/search',
       '/x/player/wbi/v2',
     }.contains(path)) {
       throw ArgumentError('Unsupported WBI endpoint');
@@ -415,10 +417,40 @@ final class BiliApiClient {
       '/x/v2/reply/add',
       '/x/relation/modify',
       '/x/relation/tags/addUsers',
+      '/x/relation/tag/create',
+      '/x/relation/tag/update',
+      '/x/relation/tag/del',
+      '/x/relation/tags/update_sort',
     }.contains(path)) {
       throw ArgumentError('Unsupported mutation');
     }
     return _submitForm(_api.replace(path: path), endpoint, fields, context);
+  }
+
+  /// Reports profile fields through the space site's legacy status envelope.
+  Future<void> reportMember(
+    String mid, {
+    required Set<int> contents,
+    int? reason,
+    ApiRequestContext? context,
+  }) async {
+    if (!RegExp(r'^[1-9][0-9]*$').hasMatch(mid) ||
+        contents.isEmpty ||
+        contents.any((value) => value < 1 || value > 3) ||
+        (reason != null && (reason < 1 || reason > 6))) {
+      throw ArgumentError('Invalid profile report');
+    }
+    final ordered = contents.toList()..sort();
+    await _submitForm(
+      Uri.https('space.bilibili.com', '/ajax/report/add'),
+      'profile_report',
+      {
+        'mid': mid,
+        'reason': ordered.join(','),
+        if (reason != null) 'reason_v2': '$reason',
+      },
+      context,
+    );
   }
 
   /// The live host has its own Cookie scope, Origin and mutation allowlist.
@@ -437,6 +469,27 @@ final class BiliApiClient {
     );
   }
 
+  /// Web room entry uses JSON with CSRF in the query, sent only once.
+  Future<void> reportLiveEntry(
+    String roomId, {
+    ApiRequestContext? context,
+  }) async {
+    final id = int.tryParse(roomId);
+    if (id == null || id <= 0 || !RegExp(r'^[1-9][0-9]*$').hasMatch(roomId)) {
+      throw ArgumentError.value(roomId, 'roomId');
+    }
+    await _submitForm(
+      Uri.https(
+        'api.live.bilibili.com',
+        '/xlive/web-room/v1/index/roomEntryAction',
+      ),
+      'live_history_report',
+      const {},
+      context,
+      jsonBody: {'room_id': id, 'platform': 'pc'},
+    );
+  }
+
   /// Web IM writes are single attempts and use the destination's Cookie scope.
   Future<Object?> submitMessageForm(
     String path,
@@ -447,6 +500,14 @@ final class BiliApiClient {
     if (!const {
       '/web_im/v1/web_im/send_msg',
       '/session_svr/v1/session_svr/update_ack',
+      '/session_svr/v1/session_svr/set_top',
+      '/session_svr/v1/session_svr/remove_session',
+      '/link_setting/v1/link_setting/set_msg_dnd',
+      '/link_setting/v1/link_setting/set',
+      '/link_setting/v1/link_setting/set_push_ss',
+      '/x/im/link_setting/add_block_word',
+      '/x/im/link_setting/del_block_word',
+      '/x/bplus/im/report/add',
     }.contains(path)) {
       throw ArgumentError('Unsupported message mutation');
     }
@@ -552,6 +613,7 @@ final class BiliApiClient {
   }) async {
     final live = uri.host == 'api.live.bilibili.com';
     final message = uri.host == 'api.vc.bilibili.com';
+    final space = uri.host == 'space.bilibili.com';
     final epoch = _sessionProvider?.sessionEpoch;
     void check() {
       if (context?.cancellation?.isCancelled == true ||
@@ -586,11 +648,15 @@ final class BiliApiClient {
             ? 'https://message.bilibili.com/'
             : live
             ? 'https://live.bilibili.com/'
+            : space
+            ? 'https://space.bilibili.com/${fields['mid']}/'
             : 'https://www.bilibili.com/',
         'Origin': message
             ? 'https://message.bilibili.com'
             : live
             ? 'https://live.bilibili.com'
+            : space
+            ? 'https://space.bilibili.com'
             : 'https://www.bilibili.com',
         'Cookie': cookie,
       };
@@ -640,6 +706,27 @@ final class BiliApiClient {
         endpoint,
         httpStatus: response.statusCode,
       );
+    }
+    if (space) {
+      Object? decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(response.body));
+      } on FormatException {
+        throw ApiFailure(ApiFailureCategory.protocol, endpoint);
+      }
+      final root = _map(decoded, endpoint);
+      // A code envelope may carry an authentication/risk-control rejection.
+      // A missing or false status must never become a successful report.
+      if (root.containsKey('code')) _decodeJson(response, endpoint);
+      if (root['status'] != true) {
+        throw ApiFailure(
+          root['status'] == false
+              ? ApiFailureCategory.unavailable
+              : ApiFailureCategory.protocol,
+          endpoint,
+        );
+      }
+      return null;
     }
     final result = _decodeJson(response, endpoint);
     if (live) {
@@ -884,6 +971,9 @@ final class BiliApiClient {
       avatarUrl: _commentImage(member['avatar']),
       level: _int(_commentMap(member['level_info'])['current_level']),
       verifyType: _int(_commentMap(member['official_verify'])['type']),
+      nicknameColor: _commentColor(
+        _commentMap(member['vip'])['nickname_color'],
+      ),
       vipLabel:
           _int(_commentMap(member['vip'])['vipStatus']) == 1 ||
               _int(_commentMap(member['vip'])['vip_status']) == 1
@@ -1184,6 +1274,50 @@ final class BiliApiClient {
         width <= 0 ||
         height == null ||
         height <= 0) {
+      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    return ApiCommentPicture(url, width, height, bytes.length / 1024);
+  }
+
+  /// Uploads one private-message attachment only after an explicit send action.
+  Future<ApiCommentPicture> uploadMessagePicture(
+    Uint8List bytes,
+    String mimeType, {
+    ApiRequestContext? context,
+  }) async {
+    if (bytes.isEmpty ||
+        bytes.length > 10 * 1024 * 1024 ||
+        !const {'image/jpeg', 'image/png', 'image/gif'}.contains(mimeType)) {
+      throw ArgumentError('Invalid message image');
+    }
+    const endpoint = 'message_picture_upload';
+    final data = _map(
+      await _submitForm(
+        _api.replace(path: '/x/dynamic/feed/draw/upload_bfs'),
+        endpoint,
+        {'biz': 'im'},
+        context,
+        upload: (bytes: bytes, mimeType: mimeType),
+      ),
+      endpoint,
+    );
+    final url = _uri(data['image_url']);
+    final width = _int(data['image_width']);
+    final height = _int(data['image_height']);
+    if (url == null ||
+        url.scheme != 'https' ||
+        url.userInfo.isNotEmpty ||
+        url.port != 443 ||
+        url.hasQuery ||
+        !(url.host.endsWith('.hdslb.com') ||
+            url.host.endsWith('.biliimg.com')) ||
+        width == null ||
+        height == null ||
+        width <= 0 ||
+        height <= 0 ||
+        width > 20000 ||
+        height > 20000 ||
+        width * height > 40000000) {
       throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
     }
     return ApiCommentPicture(url, width, height, bytes.length / 1024);
@@ -1710,13 +1844,31 @@ final class BiliApiClient {
     final audios = preview
         ? const <ApiMediaTrack>[]
         : dashAudioEntries(dash, 'playurl').map(_track).toList();
-    if (videos.isEmpty || !preview && audios.isEmpty) {
+    // Silent uploads explicitly declare every audio variant absent. Missing
+    // fields or empty arrays alone can also be an incomplete response.
+    final dolby = _optionalMap(dash['dolby']);
+    final silent =
+        !preview &&
+        audios.isEmpty &&
+        dash.containsKey('audio') &&
+        dash['audio'] == null &&
+        dash.containsKey('flac') &&
+        dash['flac'] == null &&
+        _int(dolby?['type']) == 0 &&
+        dolby?.containsKey('audio') == true &&
+        dolby?['audio'] == null;
+    if (videos.isEmpty || !preview && audios.isEmpty && !silent) {
       throw await _videoPlaybackFailure(readAccess, trial: trial);
     }
     // A trial must never be treated as the complete video by downloads,
     // progress reporting or automatic queue advancement.
     if (trial) {
       throw await _videoPlaybackFailure(readAccess, trial: true);
+    }
+    if (silent) {
+      // Explicit silence must not turn restricted content into full playback.
+      final failure = await _videoPlaybackFailure(readAccess);
+      if (failure.category == ApiFailureCategory.permission) throw failure;
     }
     final dashSeconds = _num(dash['duration']);
     final durationMs = dashSeconds == null
@@ -1727,6 +1879,7 @@ final class BiliApiClient {
       dashVideo: List.unmodifiable(videos),
       loudness: ApiAudioLoudness.parse(data['volume']),
       dashAudio: List.unmodifiable(audios),
+      isIntentionallySilent: silent,
       acceptQuality: List.unmodifiable(
         (_list(
           data['accept_quality'],
@@ -2214,14 +2367,23 @@ final class BiliApiClient {
     if (context?.sessionEpoch != null && context!.sessionEpoch != epoch) {
       throw ApiFailure(ApiFailureCategory.cancelled, endpoint);
     }
+    final spaceDetails =
+        endpoint == 'profile_details' &&
+        uri.host == 'api.bilibili.com' &&
+        uri.path == '/x/space/wbi/acc/info';
     final headers = <String, String>{
       'Accept': endpoint == 'danmaku_segment'
           ? 'application/octet-stream'
           : 'application/json',
-      'User-Agent': endpoint == 'video_storyboard'
+      'User-Agent': spaceDetails
+          ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+          : endpoint == 'video_storyboard'
           ? 'Mozilla/5.0'
           : 'BiliSail/0.1',
-      'Referer': referer,
+      'Referer': spaceDetails
+          ? 'https://space.bilibili.com/${uri.queryParameters['mid']}/dynamic'
+          : referer,
+      if (spaceDetails) 'Origin': 'https://space.bilibili.com',
     };
     final cookie = cookieJar.headerFor(uri, now: _clock());
     if (cookie != null) headers['Cookie'] = cookie;

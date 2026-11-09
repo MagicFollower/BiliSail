@@ -1,7 +1,4 @@
 import 'package:flutter/material.dart';
-
-import '../../../shared/ui/liquid_pull_refresh.dart';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -266,7 +263,7 @@ class _PopularPaneState extends ConsumerState<_PopularPane> {
             },
             onRefresh: controller.refresh,
             refreshTooltip: '刷新视频',
-            builder: (scrollController) => LiquidPullRefresh(
+            builder: (scrollController) => RefreshIndicator(
               onRefresh: controller.refresh,
               child: CustomScrollView(
                 key: PageStorageKey(

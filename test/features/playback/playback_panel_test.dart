@@ -6,6 +6,7 @@ import 'package:bilisail/app/workspace_playback_window.dart';
 import 'package:bilisail/core/platform/detached_playback_window.dart';
 import 'package:bilisail/core/presentation/workspace_activity.dart';
 import 'package:bilisail/core/presentation/input_scope.dart';
+import 'package:bilisail/core/presentation/android_system_ui.dart';
 import 'package:bilisail/core/input/input_stroke.dart';
 import 'package:bilisail/core/input/shortcut_dispatcher.dart';
 
@@ -17,6 +18,7 @@ import 'package:bilisail/features/playback/presentation/live_stream_picker.dart'
 import 'dart:ui' show PointerDeviceKind, Tristate, ImageByteFormat;
 
 import 'package:bili_danmaku/bili_danmaku.dart';
+import 'package:bilisail/features/playback/application/listening_sleep_timer.dart';
 import 'package:bilisail/app/router.dart';
 import 'package:bilisail/app/theme.dart';
 import 'package:bilisail/shared/ui/app_notice.dart';
@@ -41,6 +43,7 @@ import 'package:bilisail/features/playback/domain/playback_repository.dart';
 import 'package:bilisail/features/playback/domain/content_playback.dart';
 import 'package:bilisail/features/playback/presentation/playback_panel.dart';
 import 'package:bilisail/features/playback/presentation/player_seek_controls.dart';
+import 'package:bilisail/features/playback/presentation/player_picture_controls.dart';
 import 'package:bilisail/features/playback/presentation/playback_timeline_bar.dart';
 import 'package:bilisail/features/settings/domain/app_settings.dart';
 import 'package:bilisail/features/settings/application/settings_controller.dart';
@@ -50,6 +53,7 @@ import 'package:bilisail/features/video/application/video_controller.dart';
 import 'package:bilisail/features/video/application/video_extras_controller.dart';
 import 'package:bilisail/features/video/presentation/video_screen.dart';
 import 'package:bili_player/bili_player.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/gestures.dart';
@@ -60,6 +64,363 @@ import 'package:flutter_test/flutter_test.dart';
 final _composerScopeProvider = Provider<String>((ref) => 'root');
 
 void main() {
+  testWidgets(
+    'hiding a page while native mini enter is pending restores its window',
+    (tester) async {
+      const channel = MethodChannel('bilisail/desktop_window');
+      final entering = Completer<void>();
+      final transitions = <bool>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'setMiniPlayer') {
+          final enabled =
+              (call.arguments as Map<Object?, Object?>)['enabled'] as bool;
+          transitions.add(enabled);
+          if (enabled) await entering.future;
+        }
+        return null;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final engine = _FakeEngine();
+      final session = _session(engine);
+      addTearDown(session.close);
+      final window = WindowService.forView(
+        viewId: 42,
+        setFullScreen: (_) async {},
+        activate: () async {},
+      );
+      final settings = AppSettings();
+      await tester.pumpWidget(_app(session, window, settings));
+      await _pumpFrames(tester);
+      window.onMiniPlayerRequested?.call();
+      await _pumpFrames(tester);
+      expect(transitions, [true]);
+      await tester.pumpWidget(_app(session, window, settings, active: false));
+      await tester.pump();
+      entering.complete();
+      await _pumpFrames(tester);
+      expect(transitions, [true, false]);
+      expect(window.miniPlayer.value, isFalse);
+      expect(find.byKey(const ValueKey('mini-player')), findsNothing);
+      expect(engine.maxSurfaces, 1);
+    },
+  );
+
+  for (final desktop in [true, false]) {
+    testWidgets(
+      'mini player preserves session, pause intent and one surface desktop=$desktop',
+      (tester) async {
+        final engine = _FakeEngine();
+        final session = _session(engine);
+        final window = _MiniWindowService(desktop: desktop);
+        addTearDown(session.close);
+        await tester.pumpWidget(_app(session, window, AppSettings()));
+        await _pumpFrames(tester);
+        await session.seek(const Duration(seconds: 7));
+        await session.pause();
+        final opens = engine.opens;
+        window.onMiniPlayerRequested?.call();
+        await _pumpFrames(tester);
+        expect(find.byKey(const ValueKey('mini-player')), findsOneWidget);
+        expect(engine.opens, opens);
+        expect(engine.maxSurfaces, 1);
+        expect(engine.activeSurfaces, 1);
+        expect(session.snapshots.value.desiredPlaying, isFalse);
+        expect(session.snapshots.value.position, const Duration(seconds: 7));
+        final seeks = engine.seeks;
+        await tester.drag(find.byType(Slider), const Offset(40, 0));
+        await _pumpFrames(tester);
+        expect(engine.seeks, seeks + 1);
+        expect(session.snapshots.value.desiredPlaying, isFalse);
+        if (desktop) {
+          expect(window.miniPlayer.value, isTrue);
+          await tester.tap(find.byTooltip('取消置顶'));
+          await tester.pump();
+          expect(window.alwaysOnTop.value, isFalse);
+        }
+        await tester.tap(find.byTooltip('还原播放页'));
+        await _pumpFrames(tester);
+        expect(find.byKey(const ValueKey('mini-player')), findsNothing);
+        expect(engine.opens, opens);
+        expect(engine.maxSurfaces, 1);
+        expect(engine.activeSurfaces, 1);
+        expect(session.snapshots.value.desiredPlaying, isFalse);
+        expect(window.miniPlayer.value, isFalse);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final compact in [false, true]) {
+    testWidgets(
+      'custom rate menu and keyboard steps share options compact=$compact',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = Size(compact ? 390 : 1400, 900);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final engine = _FakeEngine();
+        final session = _session(engine);
+        addTearDown(session.close);
+        await tester.pumpWidget(
+          _app(
+            session,
+            _FakeWindowService(),
+            AppSettings(playbackRates: [1.75, 4]),
+            width: compact ? 360 : 1200,
+          ),
+        );
+        await _pumpFrames(tester);
+        await session.pause();
+        await _showControls(tester);
+        if (compact) {
+          await tester.tap(find.byTooltip('更多播放选项'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.widgetWithText(ExpansionTile, '播放速度'));
+        } else {
+          await tester.tap(find.byTooltip('播放速度'));
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('1.25x'), findsNothing);
+        final custom = compact
+            ? find.widgetWithText(ListTile, '1.75x')
+            : find.widgetWithText(PopupMenuItem<double>, '1.75x');
+        await tester.ensureVisible(custom);
+        await tester.tap(custom);
+        await tester.pumpAndSettle();
+        expect(engine.currentSnapshot.rate, 1.75);
+        if (compact) {
+          await tester.tapAt(const Offset(1, 1));
+          await tester.pumpAndSettle();
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.f2);
+        await _pumpFrames(tester);
+        expect(engine.currentSnapshot.rate, 2);
+        await tester.sendKeyEvent(LogicalKeyboardKey.f2);
+        await _pumpFrames(tester);
+        expect(engine.currentSnapshot.rate, 4);
+        await tester.sendKeyEvent(LogicalKeyboardKey.f1);
+        await _pumpFrames(tester);
+        expect(engine.currentSnapshot.rate, 2);
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+      },
+    );
+  }
+
+  for (final (name, target) in <(String, ContentPlaybackTarget?)>[
+    ('video', null),
+    ('pgc', const PgcPlaybackTarget('12', cid: '123')),
+    ('live', const LivePlaybackTarget('12')),
+    ('offline', const OfflinePlaybackTarget('local-task')),
+  ]) {
+    testWidgets(
+      '$name pinch and fullscreen gestures share output state without playback commands',
+      (tester) async {
+        final engine = _FakeEngine()..interactiveSurface = true;
+        final session = _session(engine);
+        final window = _FakeWindowService();
+        addTearDown(session.close);
+        await tester.pumpWidget(
+          _app(session, window, const AppSettings.defaults(), target: target),
+        );
+        await _pumpFrames(tester);
+        await session.pause();
+        await session.setVolume(50);
+        await _pumpFrames(tester);
+        await _showControls(tester);
+        final before = engine.currentSnapshot;
+        final opens = engine.opens;
+        final seeks = engine.seeks;
+        final picture = tester
+            .widget<PlayerPicture>(find.byType(PlayerPicture))
+            .controller;
+        await _pinchPicture(tester);
+        expect(picture.value.scale, closeTo(1.5, .001));
+        expect(
+          find.byKey(const ValueKey('player-restore-picture')).hitTestable(),
+          findsOneWidget,
+        );
+        final transformed = picture.value;
+        var surface = tester.getRect(
+          find.byKey(const ValueKey('player-surface-tap-target')),
+        );
+        await tester.dragFrom(surface.center, const Offset(0, -65));
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isTrue);
+        expect(
+          tester.widget<PlayerPicture>(find.byType(PlayerPicture)).controller,
+          same(picture),
+        );
+        expect(picture.value, transformed);
+        await _pinchPicture(tester);
+        expect(picture.value.scale, 2);
+        surface = tester.getRect(
+          find.byKey(const ValueKey('player-surface-tap-target')),
+        );
+        await tester.dragFrom(surface.center, const Offset(0, 65));
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isFalse);
+        expect(picture.value.scale, 2);
+        await _showControls(tester);
+        await tester.tap(find.byKey(const ValueKey('player-restore-picture')));
+        expect(picture.value, PlayerPictureController.identity);
+        expect(engine.currentSnapshot.volume, before.volume);
+        expect(engine.currentSnapshot.rate, before.rate);
+        expect(engine.currentSnapshot.position, before.position);
+        expect(engine.currentSnapshot.desiredPlaying, before.desiredPlaying);
+        expect(engine.opens, opens);
+        expect(engine.seeks, seeks);
+        expect(engine.surfaceGestures, 0);
+        expect(engine.maxSurfaces, 1);
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+  for (final firstAction in ['seek', 'volume', 'hold']) {
+    testWidgets(
+      'a second finger cancels $firstAction before manipulating picture',
+      (tester) async {
+        final engine = _FakeEngine();
+        final session = _session(engine);
+        final window = _FakeWindowService();
+        addTearDown(session.close);
+        await tester.pumpWidget(
+          _app(session, window, const AppSettings.defaults()),
+        );
+        await _pumpFrames(tester);
+        await session.pause();
+        await session.setVolume(50);
+        await _pumpFrames(tester);
+        final surface = tester.getRect(
+          find.byKey(const ValueKey('player-surface-tap-target')),
+        );
+        final a = await tester.startGesture(
+          surface.topLeft + Offset(surface.width * .75, surface.height * .4),
+          pointer: 1,
+        );
+        if (firstAction == 'seek') {
+          await a.moveBy(const Offset(30, 0));
+        } else if (firstAction == 'volume') {
+          await a.moveBy(const Offset(0, -30));
+        } else {
+          await tester.pump(const Duration(milliseconds: 501));
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.rate, 2);
+        }
+        await tester.pump();
+        final volume = engine.currentSnapshot.volume;
+        final seeks = engine.seeks;
+        final b = await tester.startGesture(
+          surface.topLeft + Offset(surface.width * .3, surface.height * .4),
+          pointer: 2,
+        );
+        await b.moveBy(const Offset(-30, 20));
+        await _pumpFrames(tester);
+        expect(engine.currentSnapshot.rate, 1);
+        expect(engine.currentSnapshot.volume, volume);
+        expect(
+          find.byKey(const ValueKey('player-swipe-seek-preview')),
+          findsNothing,
+        );
+        final controller = tester
+            .widget<PlayerPicture>(find.byType(PlayerPicture))
+            .controller;
+        expect(controller.value.scale, greaterThan(1));
+        await a.up();
+        final transform = controller.value;
+        await b.moveBy(const Offset(50, -80));
+        await b.up();
+        await _pumpFrames(tester);
+        expect(controller.value, transform);
+        expect(engine.seeks, seeks);
+        expect(engine.currentSnapshot.desiredPlaying, isFalse);
+        expect(window.fullScreen, isFalse);
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+      },
+    );
+  }
+  testWidgets('picture resets on source changes and audio-only transitions', (
+    tester,
+  ) async {
+    final engine = _FakeEngine();
+    final session = _session(engine);
+    final window = _FakeWindowService();
+    addTearDown(session.close);
+    await tester.pumpWidget(
+      _app(session, window, const AppSettings.defaults()),
+    );
+    await _pumpFrames(tester);
+    await _pinchPicture(tester);
+    final controller = tester
+        .widget<PlayerPicture>(find.byType(PlayerPicture))
+        .controller;
+    expect(controller.value.scale, greaterThan(1));
+    await session.retry();
+    await _pumpFrames(tester);
+    expect(controller.value, PlayerPictureController.identity);
+    await _pinchPicture(tester);
+    await session.setAudioOnly(true);
+    await _pumpFrames(tester);
+    expect(controller.value, PlayerPictureController.identity);
+    await tester.pumpWidget(const SizedBox());
+    await _pumpFrames(tester);
+  });
+  for (final reverse in [false, true]) {
+    testWidgets(
+      'fullscreen gesture reverse=$reverse works with side swipes disabled',
+      (tester) async {
+        final engine = _FakeEngine();
+        final session = _session(engine);
+        final window = _FakeWindowService();
+        addTearDown(session.close);
+        final settings = AppSettings(
+          fullscreenSwipeControls: false,
+          playerFullscreenGestureReverse: reverse,
+        );
+        await tester.pumpWidget(_app(session, window, settings));
+        await _pumpFrames(tester);
+        var center = tester.getCenter(
+          find.byKey(const ValueKey('player-surface-tap-target')),
+        );
+        await tester.dragFrom(center, Offset(0, reverse ? -65 : 65));
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isFalse);
+        await tester.dragFrom(center, Offset(0, reverse ? 65 : -65));
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isTrue);
+        center = tester.getCenter(
+          find.byKey(const ValueKey('player-surface-tap-target')),
+        );
+        await tester.dragFrom(center, Offset(0, reverse ? -65 : 65));
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isFalse);
+        await tester.pumpWidget(
+          _app(
+            session,
+            window,
+            settings.copyWith(playerFullscreenGesture: false),
+          ),
+        );
+        await _pumpFrames(tester);
+        await tester.dragFrom(center, Offset(0, reverse ? 65 : -65));
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isFalse);
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+      },
+    );
+  }
+
   testWidgets(
     'iOS listening fullscreen Back exits presentation without workspace navigation',
     (tester) async {
@@ -191,7 +552,7 @@ void main() {
         await _pumpFrames(tester);
         expect(window.fullScreen, isTrue);
         expect(back.hitTestable(), findsOneWidget);
-        expect(tester.getTopLeft(back).dx, greaterThanOrEqualTo(47));
+        expect(tester.getTopLeft(back).dx, 47);
         expect(tester.getTopLeft(back).dy, lessThan(52));
         await tester.tapAt(_surfacePoint(tester));
         await _pumpSurfaceTap(tester);
@@ -543,6 +904,8 @@ void main() {
                   .toList()
                 ..sort();
           final expectedTopButtons = [
+            '迷你小窗',
+            '置顶',
             '返回',
             '回到主页',
             if (content == 'video' || content == 'pgc') '投屏',
@@ -1567,7 +1930,7 @@ void main() {
                 index,
               );
               if (index == 0) {
-                final autoPlay = find.widgetWithText(SwitchListTile, '自动播放新视频');
+                final autoPlay = find.widgetWithText(SwitchListTile, '自动播放');
                 await tester.scrollUntilVisible(
                   autoPlay,
                   150,
@@ -1998,6 +2361,136 @@ void main() {
           expect(tester.takeException(), isNull);
         },
       );
+    }
+  }
+
+  for (final fullscreen in [false, true]) {
+    for (final playing in [false, true]) {
+      for (final firstInput in ['picture', 'timeline']) {
+        testWidgets(
+          'successive picture seeks accumulate from the latest target (fullscreen: $fullscreen, playing: $playing, first: $firstInput)',
+          (tester) async {
+            final engine = _FakeEngine();
+            final session = _session(engine);
+            addTearDown(session.close);
+            await tester.pumpWidget(
+              _app(
+                session,
+                _FakeWindowService(),
+                const AppSettings.defaults().copyWith(
+                  playerControlsMode: PlayerControlsMode.click,
+                ),
+              ),
+            );
+            await _pumpFrames(tester);
+            await _showControls(tester);
+            if (fullscreen) {
+              await tester.tap(find.byTooltip('全屏（F）'));
+              await _pumpFrames(tester);
+            }
+            if (playing != session.snapshots.value.desiredPlaying) {
+              await session.togglePlaying();
+            }
+            await session.seek(const Duration(seconds: 30));
+            await _pumpFrames(tester);
+            final picture = tester.getRect(
+              find.byKey(const ValueKey('player-surface-tap-target')),
+            );
+            final start =
+                picture.topLeft +
+                Offset(picture.width * .3, picture.height * .35);
+            final gates = List.generate(3, (_) => Completer<void>());
+            addTearDown(() {
+              for (final gate in gates) {
+                if (!gate.isCompleted) gate.complete();
+              }
+            });
+            final seeks = engine.seeks;
+            final firstTarget = Duration(
+              seconds: firstInput == 'picture' ? 54 : 90,
+            );
+            engine.nextSeek = gates[0];
+            if (firstInput == 'picture') {
+              final first = await tester.startGesture(start);
+              await first.moveBy(Offset(picture.width * .2, 0));
+              await first.up();
+            } else {
+              await tester.tapAt(
+                tester
+                    .getRect(
+                      find.byKey(const ValueKey('playback-timeline-slider')),
+                    )
+                    .center,
+              );
+            }
+            await _pumpFrames(tester);
+            expect(engine.seeks, seeks + 1);
+            expect(
+              engine.currentSnapshot.position,
+              const Duration(seconds: 30),
+            );
+
+            final second = await tester.startGesture(start);
+            await second.moveBy(Offset(picture.width * .2, 0));
+            await tester.pump();
+            final controls = tester.widget<PlayerSeekControls>(
+              find.byType(PlayerSeekControls),
+            );
+            final secondTarget = firstTarget + const Duration(seconds: 24);
+            expect(controls.preview.value, secondTarget);
+            gates[0].complete();
+            await _pumpFrames(tester);
+            expect(controls.preview.value, secondTarget);
+            engine.nextSeek = gates[1];
+            await second.up();
+            await _pumpFrames(tester);
+
+            // Cancelling an uncommitted drag must retain the session's target.
+            final cancelled = await tester.startGesture(start);
+            await cancelled.moveBy(Offset(picture.width * .1, 0));
+            await cancelled.cancel();
+            await _pumpFrames(tester);
+            expect(controls.preview.value, isNull);
+            expect(engine.seeks, seeks + 2);
+
+            final third = await tester.startGesture(start);
+            await third.moveBy(Offset(-picture.width * .1, 0));
+            await tester.pump();
+            final thirdTarget = secondTarget - const Duration(seconds: 12);
+            expect(controls.preview.value, thirdTarget);
+            engine.nextSeek = gates[2];
+            await third.up();
+            gates[1].complete();
+            await _pumpFrames(tester);
+            expect(controls.preview.value, thirdTarget);
+            gates[2].complete();
+            await _pumpFrames(tester);
+            expect(controls.preview.value, isNull);
+            expect(engine.currentSnapshot.position, thirdTarget);
+
+            // Once confirmed, a new gesture follows the advancing real clock.
+            engine._emit(
+              engine.currentSnapshot.copyWith(
+                position: thirdTarget + const Duration(seconds: 1),
+              ),
+            );
+            final fourth = await tester.startGesture(start);
+            await fourth.moveBy(Offset(picture.width * .1, 0));
+            await fourth.up();
+            await _pumpFrames(tester);
+            expect(
+              engine.currentSnapshot.position,
+              thirdTarget + const Duration(seconds: 13),
+            );
+            expect(engine.seeks, seeks + 4);
+            expect(engine.opens, 1);
+            expect(engine.currentSnapshot.desiredPlaying, playing);
+            await tester.pumpWidget(const SizedBox());
+            await _pumpFrames(tester);
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
     }
   }
 
@@ -2542,7 +3035,7 @@ void main() {
           lessThan(tester.getTopLeft(top).dy + 52),
         );
       }
-      expect(tester.getTopLeft(back).dx, tester.getTopLeft(top).dx + 6);
+      expect(tester.getTopLeft(back).dx, tester.getTopLeft(top).dx);
       expect(tester.getTopLeft(home).dx, tester.getTopRight(back).dx);
       final opens = engine.opens;
       await tester.tap(back);
@@ -4304,6 +4797,299 @@ void main() {
     );
   }
 
+  for (final dark in [false, true]) {
+    testWidgets(
+      'mobile fullscreen paints black before rotating and keeps hidden bar style dark=$dark',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.display.size = const Size(390, 844);
+        tester.view.padding = const FakeViewPadding(top: 24, bottom: 24);
+        tester.view.viewPadding = const FakeViewPadding(top: 24, bottom: 24);
+        addTearDown(tester.view.reset);
+        addTearDown(tester.view.display.resetSize);
+        final engine = _FakeEngine();
+        final session = _session(engine);
+        final boundary = GlobalKey();
+        var enteredAfterPaint = false;
+        final window = _DelayedWindow(
+          desktop: false,
+          onEnter: () {
+            expect(find.byType(Dialog), findsOneWidget);
+            final render = boundary.currentContext!.findRenderObject()!;
+            expect(render.debugNeedsPaint, isFalse);
+            enteredAfterPaint = true;
+          },
+        );
+        addTearDown(() async {
+          if (!window.gate.isCompleted) window.gate.complete();
+          await session.close();
+        });
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: boundary,
+            child: AndroidSystemUi(
+              child: _app(
+                session,
+                window,
+                const AppSettings.defaults(),
+                theme: dark ? BiliTheme.dark() : BiliTheme.light(),
+              ),
+            ),
+          ),
+        );
+        await _pumpFrames(tester);
+        await _showControls(tester);
+        await session.pause();
+        final opens = engine.opens;
+        final generation = session.sourceGeneration;
+
+        Future<void> expectBlackStatusBar() async {
+          final render =
+              boundary.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          final image = (await tester.runAsync(() => render.toImage()))!;
+          try {
+            final pixels = (await tester.runAsync(
+              () => image.toByteData(format: ImageByteFormat.rawRgba),
+            ))!;
+            final offset = (12 * image.width + image.width ~/ 2) * 4;
+            expect(pixels.getUint32(offset), 0x000000ff);
+          } finally {
+            image.dispose();
+          }
+          final style = tester.binding.renderViews.single.debugLayer!
+              .find<SystemUiOverlayStyle>(
+                Offset(tester.view.physicalSize.width / 2, 0),
+              );
+          expect(style?.statusBarIconBrightness, Brightness.light);
+          expect(style?.statusBarBrightness, Brightness.dark);
+        }
+
+        await tester.tap(find.byTooltip('全屏（F）'));
+        // Late dimensions must not issue a native rotation before the route's
+        // first paint, even while the explicit entry waits for endOfFrame.
+        engine._emit(
+          engine.currentSnapshot.copyWith(
+            videoDimensions: const VideoDimensions(1920, 1080),
+          ),
+        );
+        await _pumpFrames(tester);
+        // The platform request is still pending; the fullscreen route must
+        // already cover the browsing page before it can rotate or hide bars.
+        expect(window.fullScreen, isFalse);
+        expect(enteredAfterPaint, isTrue);
+        expect(find.byType(Dialog), findsOneWidget);
+        await expectBlackStatusBar();
+        tester.view.physicalSize = const Size(844, 390);
+        tester.view.display.size = const Size(844, 390);
+        tester.view.padding = const FakeViewPadding();
+        tester.view.viewPadding = const FakeViewPadding();
+        await _pumpFrames(tester);
+        await expectBlackStatusBar();
+        window.gate.complete();
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isTrue);
+        // Transient system bars also retain the black area and white icons.
+        tester.view.padding = const FakeViewPadding(top: 24, bottom: 24);
+        tester.view.viewPadding = const FakeViewPadding(top: 24, bottom: 24);
+        await _pumpFrames(tester);
+        await expectBlackStatusBar();
+        await tester.binding.handlePopRoute();
+        await _pumpFrames(tester);
+        expect(window.fullScreen, isFalse);
+        expect(engine.opens, opens);
+        expect(session.sourceGeneration, generation);
+        expect(engine.currentSnapshot.desiredPlaying, isFalse);
+        expect(engine.maxSurfaces, 1);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.android,
+        TargetPlatform.iOS,
+      }),
+    );
+  }
+
+  for (final action in ['button', 'back', 'escape', 'swipe']) {
+    for (final dark in [false, true]) {
+      testWidgets(
+        'mobile fullscreen exit waits for portrait insets action=$action dark=$dark',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = const Size(390, 844);
+          tester.view.display.size = const Size(390, 844);
+          tester.view.padding = const FakeViewPadding(top: 24);
+          tester.view.viewPadding = const FakeViewPadding(top: 24);
+          addTearDown(tester.view.reset);
+          addTearDown(tester.view.display.resetSize);
+          final engine = _FakeEngine()..surfaceColor = Colors.white;
+          final session = _session(engine);
+          final exitGate = Completer<void>();
+          final window = _DelayedWindow(
+            desktop: false,
+            keepPortrait: true,
+            exitGate: exitGate,
+          )..gate.complete();
+          addTearDown(() async {
+            if (!exitGate.isCompleted) exitGate.complete();
+            await session.close();
+          });
+          final boundary = GlobalKey();
+          Future<void> expectBlackFrame() async {
+            final render =
+                boundary.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final image = (await tester.runAsync(() => render.toImage()))!;
+            try {
+              final pixels = (await tester.runAsync(
+                () => image.toByteData(format: ImageByteFormat.rawRgba),
+              ))!;
+              final offset = (12 * image.width + image.width ~/ 2) * 4;
+              expect(pixels.getUint32(offset), 0x000000ff);
+            } finally {
+              image.dispose();
+            }
+          }
+
+          await tester.pumpWidget(
+            RepaintBoundary(
+              key: boundary,
+              child: _app(
+                session,
+                window,
+                const AppSettings.defaults(),
+                theme: dark ? BiliTheme.dark() : BiliTheme.light(),
+              ),
+            ),
+          );
+          await _pumpFrames(tester);
+          await _showControls(tester);
+          await session.pause();
+          engine._emit(
+            engine.currentSnapshot.copyWith(
+              videoDimensions: const VideoDimensions(1920, 1080),
+            ),
+          );
+          final opens = engine.opens;
+          final generation = session.sourceGeneration;
+          await tester.tap(find.byTooltip('全屏（F）'));
+          await _pumpFrames(tester);
+          tester.view.physicalSize = const Size(844, 390);
+          tester.view.display.size = const Size(844, 390);
+          tester.view.padding = const FakeViewPadding();
+          tester.view.viewPadding = const FakeViewPadding();
+          await _pumpFrames(tester);
+          switch (action) {
+            case 'button':
+              await tester.tap(find.byTooltip('退出全屏（Esc）'));
+            case 'back':
+              await tester.binding.handlePopRoute();
+            case 'escape':
+              await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+            case 'swipe':
+              await tester.dragFrom(
+                tester.getCenter(
+                  find.byKey(const ValueKey('player-surface-tap-target')),
+                ),
+                const Offset(0, 65),
+              );
+          }
+          await _pumpFrames(tester);
+          expect(window.exitCalls, 1);
+          expect(window.fullScreen, isTrue);
+          expect(find.byType(Dialog), findsOneWidget);
+          await expectBlackFrame();
+          // A second Back cannot remove the cover or enqueue another restore.
+          await tester.binding.handlePopRoute();
+          await _pumpFrames(tester);
+          expect(window.exitCalls, 1);
+          exitGate.complete();
+          await _pumpFrames(tester);
+          expect(window.fullScreen, isFalse);
+          expect(find.byType(Dialog), findsOneWidget);
+          // Native method completion, portrait metrics and status-bar insets
+          // arrive separately. Every intermediate frame must stay covered.
+          tester.view.physicalSize = const Size(390, 844);
+          tester.view.display.size = const Size(390, 844);
+          await _pumpFrames(tester);
+          expect(find.byType(Dialog), findsOneWidget);
+          var portraitPainted = false;
+          tester.binding.addPostFrameCallback((_) {
+            expect(find.byType(Dialog), findsOneWidget);
+            portraitPainted = true;
+          });
+          tester.view.padding = const FakeViewPadding(top: 24);
+          tester.view.viewPadding = const FakeViewPadding(top: 24);
+          await tester.pump();
+          expect(portraitPainted, isTrue);
+          await expectBlackFrame();
+          await _pumpFrames(tester);
+          expect(find.byType(Dialog), findsNothing);
+          expect(window.exitCalls, 1);
+          expect(engine.opens, opens);
+          expect(session.sourceGeneration, generation);
+          expect(engine.currentSnapshot.desiredPlaying, isFalse);
+          expect(engine.maxSurfaces, 1);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox());
+          await _pumpFrames(tester);
+        },
+        variant: TargetPlatformVariant({
+          TargetPlatform.android,
+          TargetPlatform.iOS,
+        }),
+      );
+    }
+  }
+
+  for (final finish in ['timeout', 'hidden', 'disposed']) {
+    testWidgets('mobile fullscreen exit releases layout wait when $finish', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(844, 390);
+      tester.view.display.size = const Size(844, 390);
+      addTearDown(tester.view.reset);
+      addTearDown(tester.view.display.resetSize);
+      final engine = _FakeEngine();
+      final session = _session(engine);
+      final window = _DelayedWindow(desktop: false, keepPortrait: true)
+        ..gate.complete();
+      addTearDown(session.close);
+      await tester.pumpWidget(
+        _app(session, window, const AppSettings.defaults()),
+      );
+      await _pumpFrames(tester);
+      await _showControls(tester);
+      await tester.tap(find.byTooltip('全屏（F）'));
+      await _pumpFrames(tester);
+      await tester.binding.handlePopRoute();
+      await _pumpFrames(tester);
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(window.fullScreen, isFalse);
+      switch (finish) {
+        case 'timeout':
+          await tester.pump(const Duration(seconds: 2));
+        case 'hidden':
+          await tester.pumpWidget(
+            _app(session, window, const AppSettings.defaults(), active: false),
+          );
+        case 'disposed':
+          await tester.pumpWidget(const SizedBox());
+      }
+      await _pumpFrames(tester);
+      expect(find.byType(Dialog), findsNothing);
+      expect(window.exitCalls, 1);
+      expect(engine.maxSurfaces, 1);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await _pumpFrames(tester);
+    });
+  }
+
   testWidgets('cancelled mobile fullscreen drops queued orientation updates', (
     tester,
   ) async {
@@ -4386,8 +5172,8 @@ void main() {
         addTearDown(tester.view.resetDevicePixelRatio);
         final sessions = <PlaybackSession>[];
         final manager = PlaybackManager(
-          createSession: () {
-            final session = _session(_FakeEngine());
+          createSession: (sleepTimer) {
+            final session = _session(_FakeEngine(), sleepTimer: sleepTimer);
             sessions.add(session);
             return session;
           },
@@ -4983,9 +5769,74 @@ void main() {
     ('live', const LivePlaybackTarget('12')),
     ('offline', const OfflinePlaybackTarget('local-task')),
   ]) {
-    testWidgets('$content player wheel adjusts volume inline and fullscreen', (
-      tester,
-    ) async {
+    testWidgets(
+      '$content player wheel adjusts volume inline and fullscreen',
+      (tester) async {
+        final engine = _FakeEngine()..interactiveSurface = true;
+        final session = _session(engine);
+        addTearDown(session.close);
+        await tester.pumpWidget(
+          _app(
+            session,
+            _FakeWindowService(),
+            AppSettings(shortcuts: ShortcutSettings(enabled: false)),
+            target: target,
+          ),
+        );
+        await _pumpFrames(tester);
+        await _showControls(tester);
+        await session.pause();
+        final generation = engine.currentSnapshot.generation;
+        final position = engine.currentSnapshot.position;
+        final wheelDistance = defaultTargetPlatform == TargetPlatform.macOS
+            ? 40.0
+            : 120.0;
+        for (final fullscreen in [false, true]) {
+          if (fullscreen) {
+            await tester.tap(find.byTooltip('全屏'));
+            await _pumpFrames(tester);
+          }
+          final point = tester.getCenter(
+            find.byKey(const ValueKey('player-surface-tap-target')),
+          );
+          await session.setVolume(50);
+          _wheel(tester, point, Offset(0, -wheelDistance));
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.volume, 55);
+          expect(find.text('音量 55%'), findsOneWidget);
+          _wheel(tester, point, Offset(0, wheelDistance));
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.volume, 50);
+          await session.setVolume(98);
+          _wheel(tester, point, Offset(0, -wheelDistance));
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.volume, 100);
+          await session.setVolume(2);
+          _wheel(tester, point, Offset(0, wheelDistance));
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.volume, 0);
+          expect(engine.currentSnapshot.position, position);
+          expect(engine.currentSnapshot.desiredPlaying, isFalse);
+          expect(engine.currentSnapshot.generation, generation);
+          expect(engine.surfaceGestures, 0);
+          expect(engine.opens, 1);
+          expect(engine.maxSurfaces, 1);
+        }
+        await tester.tap(find.byTooltip('退出全屏'));
+        await _pumpFrames(tester);
+        await tester.pumpWidget(const SizedBox());
+        await _pumpFrames(tester);
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.macOS,
+        TargetPlatform.windows,
+      }),
+    );
+  }
+
+  testWidgets(
+    'macOS player wheel preserves distance across split events inline and fullscreen',
+    (tester) async {
       final engine = _FakeEngine()..interactiveSurface = true;
       final session = _session(engine);
       addTearDown(session.close);
@@ -4994,7 +5845,6 @@ void main() {
           session,
           _FakeWindowService(),
           AppSettings(shortcuts: ShortcutSettings(enabled: false)),
-          target: target,
         ),
       );
       await _pumpFrames(tester);
@@ -5004,41 +5854,80 @@ void main() {
       final position = engine.currentSnapshot.position;
       for (final fullscreen in [false, true]) {
         if (fullscreen) {
+          await _showControls(tester);
           await tester.tap(find.byTooltip('全屏'));
           await _pumpFrames(tester);
         }
         final point = tester.getCenter(
           find.byKey(const ValueKey('player-surface-tap-target')),
         );
-        await session.setVolume(50);
-        _wheel(tester, point, const Offset(0, -120));
-        await _pumpFrames(tester);
-        expect(engine.currentSnapshot.volume, 55);
-        expect(find.text('音量 55%'), findsOneWidget);
-        _wheel(tester, point, const Offset(0, 120));
-        await _pumpFrames(tester);
-        expect(engine.currentSnapshot.volume, 50);
-        await session.setVolume(98);
-        _wheel(tester, point, const Offset(0, -120));
-        await _pumpFrames(tester);
-        expect(engine.currentSnapshot.volume, 100);
-        await session.setVolume(2);
-        _wheel(tester, point, const Offset(0, 120));
-        await _pumpFrames(tester);
-        expect(engine.currentSnapshot.volume, 0);
-        expect(engine.currentSnapshot.position, position);
-        expect(engine.currentSnapshot.desiredPlaying, isFalse);
-        expect(engine.currentSnapshot.generation, generation);
-        expect(engine.surfaceGestures, 0);
-        expect(engine.opens, 1);
-        expect(engine.maxSurfaces, 1);
+        for (final (count, dy, expected) in <(int, double, double)>[
+          (1, -40, 55),
+          (20, -2, 55),
+          (1, -120, 65),
+          (20, -6, 65),
+          (1, 120, 35),
+          (20, 6, 35),
+          (10, -.01, 50.0125),
+          (10, .01, 49.9875),
+          (1, -400, 100),
+          (1, 400, 0),
+        ]) {
+          await session.setVolume(50);
+          for (var i = 0; i < count; i++) {
+            _wheel(tester, point, Offset(0, dy));
+          }
+          expect(session.commandVolume, closeTo(expected, .000001));
+          await _pumpFrames(tester);
+          expect(engine.currentSnapshot.volume, closeTo(expected, .000001));
+          expect(engine.currentSnapshot.position, position);
+          expect(engine.currentSnapshot.desiredPlaying, isFalse);
+          expect(engine.currentSnapshot.generation, generation);
+          expect(engine.surfaceGestures, 0);
+          expect(engine.opens, 1);
+          expect(engine.maxSurfaces, 1);
+        }
       }
+      await _showControls(tester);
       await tester.tap(find.byTooltip('退出全屏'));
       await _pumpFrames(tester);
       await tester.pumpWidget(const SizedBox());
       await _pumpFrames(tester);
-    });
-  }
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  testWidgets(
+    'macOS player wheel accumulates split distances before engine confirmation',
+    (tester) async {
+      final engine = _FakeEngine();
+      final session = _session(engine);
+      addTearDown(session.close);
+      await tester.pumpWidget(
+        _app(session, _FakeWindowService(), const AppSettings.defaults()),
+      );
+      await _pumpFrames(tester);
+      await session.pause();
+      await session.setVolume(50);
+      final gate = Completer<void>();
+      engine.nextVolume = gate;
+      final point = tester.getCenter(
+        find.byKey(const ValueKey('player-surface-tap-target')),
+      );
+      for (var i = 0; i < 20; i++) {
+        _wheel(tester, point, const Offset(0, -2));
+      }
+      expect(session.commandVolume, 55);
+      expect(engine.currentSnapshot.volume, 50);
+      gate.complete();
+      await _pumpFrames(tester);
+      expect(engine.currentSnapshot.volume, 55);
+      expect(find.text('音量 55%'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await _pumpFrames(tester);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
 
   testWidgets('player wheel consumes scrolling only inside the picture', (
     tester,
@@ -9199,13 +10088,26 @@ void main() {
             );
           }
 
+          final surfaceBeforeSeek = tester.state(find.byType(VideoSurface));
+          engine._emit(engine.currentSnapshot.copyWith(isSeeking: true));
+          await tester.pump();
+          expect(find.text('正在准备音视频…'), findsNothing);
+          expect(find.byType(CircularProgressIndicator), findsNothing);
+          expect(
+            tester.state(find.byType(VideoSurface)),
+            same(surfaceBeforeSeek),
+          );
           engine._emit(
             engine.currentSnapshot.copyWith(
+              isSeeking: false,
               phase: PlaybackPhase.buffering,
               isBuffering: true,
+              desiredPlaying: true,
             ),
           );
           await tester.pump();
+          expect(find.text('网络缓冲中…'), findsNothing);
+          await tester.pump(const Duration(milliseconds: 300));
           expectLoading(buffering: true);
           engine._emit(
             engine.currentSnapshot.copyWith(
@@ -9345,9 +10247,11 @@ void main() {
         engine.currentSnapshot.copyWith(
           phase: PlaybackPhase.buffering,
           isBuffering: true,
+          desiredPlaying: true,
         ),
       );
       await _pumpFrames(tester);
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('网络缓冲中…'), findsOneWidget);
 
       // Completion takes precedence even if a backend retains its last flag.
@@ -9376,6 +10280,7 @@ void main() {
         ),
       );
       await _pumpFrames(tester);
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('网络缓冲中…'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -9800,7 +10705,9 @@ PlaybackSession _session(
   PlaybackRepository? repository,
   ContentPlaybackRepository? contentRepository,
   Duration Function()? danmakuNow,
+  ListeningSleepTimer? sleepTimer,
 }) => PlaybackSession(
+  sleepTimer: sleepTimer,
   engine: engine,
   repository: repository ?? _FakePlaybackRepository(),
   contentRepository: contentRepository ?? _FakeContentPlaybackRepository(),
@@ -9827,7 +10734,20 @@ const _detail = VideoDetail(
   parts: [_part],
 );
 
-final class _FakeWindowService extends WindowService {
+final class _MiniWindowService extends _FakeWindowService {
+  _MiniWindowService({required super.desktop});
+  @override
+  Future<void> setMiniPlayer(bool enabled) async {
+    miniPlayer.value = enabled;
+    alwaysOnTop.value = enabled;
+  }
+
+  @override
+  Future<void> setAlwaysOnTop(bool enabled) async =>
+      alwaysOnTop.value = enabled;
+}
+
+class _FakeWindowService extends WindowService {
   _FakeWindowService({
     this.desktop = true,
     this.phoneRotation = true,
@@ -9931,6 +10851,7 @@ final class _RecordingComposition implements VideoCompositionAdapter {
 }
 
 final class _FakeEngine implements PlayerEngine, VideoOutputSource {
+  Color surfaceColor = Colors.black;
   bool interactiveSurface = false;
   int surfaceGestures = 0;
   final _snapshots = StreamController<PlaybackSnapshot>.broadcast(sync: true);
@@ -10088,7 +11009,7 @@ final class _FakeSurfaceState extends State<_FakeSurface> {
             child: const ColoredBox(color: Colors.black),
           ),
         )
-      : const ColoredBox(color: Colors.black);
+      : ColoredBox(color: widget.engine.surfaceColor);
 }
 
 final class _FakePlaybackRepository implements PlaybackRepository {
@@ -10265,19 +11186,36 @@ final class _FakeProgressStore implements PlaybackProgressStore {
 }
 
 final class _DelayedWindow extends WindowService {
-  _DelayedWindow({this.desktop = true});
+  _DelayedWindow({
+    this.desktop = true,
+    this.onEnter,
+    this.keepPortrait = false,
+    this.exitGate,
+  });
   final bool desktop;
+  final VoidCallback? onEnter;
+  final bool keepPortrait;
+  final Completer<void>? exitGate;
   final gate = Completer<void>();
+  int exitCalls = 0;
   bool fullScreen = false;
   final orientations = <FullScreenOrientation?>[];
   @override
   bool get hasDesktopWindow => desktop;
   @override
+  bool get keepsBrowsePortrait => keepPortrait;
+  @override
   Future<void> setFullScreen(
     bool value, {
     FullScreenOrientation? orientation,
   }) async {
-    if (value) await gate.future;
+    if (value) {
+      onEnter?.call();
+      await gate.future;
+    } else {
+      exitCalls++;
+      await exitGate?.future;
+    }
     fullScreen = value;
     orientations.add(value ? orientation : null);
   }
@@ -10385,4 +11323,24 @@ class _ViewerRepository implements PlaybackViewerRepository {
     reads.add(cid);
     return '92';
   }
+}
+
+Future<void> _pinchPicture(WidgetTester tester) async {
+  final surface = tester.getRect(
+    find.byKey(const ValueKey('player-surface-tap-target')),
+  );
+  final a = await tester.startGesture(
+    surface.topLeft + Offset(surface.width * .4, surface.height * .4),
+    pointer: 1,
+  );
+  final b = await tester.startGesture(
+    surface.topLeft + Offset(surface.width * .6, surface.height * .4),
+    pointer: 2,
+  );
+  await a.moveBy(Offset(-surface.width * .05, 0));
+  await b.moveBy(Offset(surface.width * .05, 0));
+  await tester.pump();
+  await a.up();
+  await b.up();
+  await _pumpFrames(tester);
 }

@@ -6,7 +6,7 @@
 
 - [AppInputHost](../../lib/core/presentation/app_input_host.dart) 位于根 Navigator 外层，拥有唯一业务键盘提前监听和鼠标全局路由。InputNormalizer 共用录制／执行键名表，Quote／quoteSingle 统一，修饰键精确匹配；未知逻辑标识可回退到两个标点物理位置，合法其他 Unicode 布局不会强行解释为 US 标点。
 - 2026-10-29 补充 Flutter 控件手势的窗口边界清理：沿用同一 pointer route 跟踪本 view 未结束的鼠标指针，失焦／失活、迁移、设备移除及销毁时调用 `cancelPointer`。业务快捷键序列取消和控件 tap／drag 取消分别完成，避免丢失 Up 后只有曾按下的侧栏按钮持续失效；迟到 Up 不执行动作。模拟 Command+W 关闭双窗口后的失败复现、修复及 macOS 实机验证边界见[侧栏记录](../validation/wide-sidebar.md#多标签按钮统一与关闭播放后侧栏交互2026-10-29)。
-- [ShortcutDispatcher](../../lib/core/input/shortcut_dispatcher.dart) 为纯 Dart 泛型内核；[命令目录](../../lib/domain/shortcut_command.dart) 提供 22 个动作和平台默认别名；[组合根](../../lib/app/shortcut_coordinator.dart) 编译设置、目录归属及图片绑定。输入只选择一个目标；重复注册返回 duplicateTarget，边界／忙碌仍消费已认领序列。
+- [ShortcutDispatcher](../../lib/core/input/shortcut_dispatcher.dart) 为纯 Dart 泛型内核；[命令目录](../../lib/domain/shortcut_command.dart) 提供 23 个动作和平台默认别名；[组合根](../../lib/app/shortcut_coordinator.dart) 编译设置、目录归属及图片绑定。输入只选择一个目标；重复注册返回 duplicateTarget，边界／忙碌仍消费已认领序列。
 - [InputScope 与目标注册](../../lib/core/presentation/input_scope.dart) 提供可释放句柄、source revision、编辑／控件保护和非 Route 弹层屏障。根／Shell Navigator observer 共用路由账本，包括 requestFocus:false 的弹窗。普通弹窗隔离底层；全屏属于呈现，保留所属页的工作区／页面／媒体命令。
 - [PlaybackShortcutController](../../lib/features/playback/application/playback_shortcut_controller.dart) 由 PlaybackPanel owner 持有，普通／全屏视图共享；视图只保留绘制和控件行为。长按达到阈值即标记正在加速，异步 begin 未完成时释放也不会变成短按 seek；失焦、弹层、切页、换源、设置修改、呈现交接均可取消。
 - PlaybackSession 保存待确认音量／永久倍速目标；[MediaCommandPump](../../lib/features/playback/application/media_command_pump.dart) 将原生调用限制为一个进行中与一个最新目标。快速离散调速从目标值推进；失败清除本代次待处理动作，不自动重放。临时开始／恢复与永久调速共享协调规则，临时倍速不写共享记忆。
@@ -20,7 +20,7 @@
 - 真实按下冻结物理身份、目标句柄及媒体代次；修饰键先释放不影响对应 KeyUp。无有效 Down 的 Repeat／Up 不创建动作，合成事件只清理。已消费序列的尾部不落入新标签或下一层弹窗。
 - 鼠标按 view／device 的按钮变化识别侧键边沿，支持与普通按钮同时按及 Move 中新增按钮位；双侧键同时新增不任选其一。初始 Move 同步状态，按住跨页面重建只执行一次；失焦／Cancel／移除清理状态。此范围为 Flutter 客户区。
 - 输入时仅明确绑定的侧键或 Ctrl／Meta 关闭组合，以及侧键或含 Ctrl／Alt／Meta 的标签切换组合可越过编辑保护；普通 W／F8 绑定仍保留输入。控件的 Enter／Space 激活和未绑定／禁用按键交回 Flutter。
-- 总开关控制 22 个可配置动作，包含上一／下一标签；图片查看器操作独立。图片命令通过顶部局部作用域执行，Esc 一次只关闭图片层，保留翻页／缩放重复和局部 Ctrl+滚轮／拖动。
+- 总开关控制 23 个可配置动作，包含上一／下一标签和收起／展开侧边栏；图片查看器操作独立。图片命令通过顶部局部作用域执行，Esc 一次只关闭图片层，保留翻页／缩放重复和局部 Ctrl+滚轮／拖动。
 - 录制使用同一入口，整个 Flutter 客户区捕获侧键；Escape 可录制，取消使用按钮。候选按键释放后才退出独占，Ctrl+W／Ctrl+Tab 不执行底层命令。保存失败保留编辑草稿与旧生效配置，成功后统一替换编译表并取消旧长按。
 - 保留 preferences.v1 快捷键 JSON 的动作 name、bindings 数组、disabled、enabled 和播放参数；没有新增依赖、偏好版本或 SQLite migration。空列表仍为解除绑定；合法旧设置 round-trip 不变。损坏项局部停用，冲突键从双方移除，设置列出待修复项；用户未确认快捷键设置前仍保留原快照供后续修复。
 - 设置提供默认关闭、只在当前进程内存在的诊断，最多 256 条，关闭／离开该设置页清空。记录相对时间、设备／view、phase、逻辑／物理标识或按钮位、归一化匹配方式、命令、作用域、目标注册代次及分发／完成原因；编辑器和普通模态区屏蔽具体键值及按钮位，没有字符／文本／凭据日志或上传。播放器提示从当前设置读取首个有效绑定。
@@ -62,13 +62,23 @@ Apple 标签循环采用 [Safari 的 Command+Shift+方括号约定](https://supp
 
 ## 播放画面滚轮音量（2026-10-09）
 
-播放画面内的鼠标纵向滚轮固定调整音量：上滚增加 5 个百分点，下滚减少 5 个百分点，限制在 0–100%，沿用现有音量百分比提示。普通窗口与全屏、视频／影视／直播／离线播放共用 PlaybackShortcutController 和会话的有界音量命令队列；快速连续滚动从待确认目标累加，不改变播放位置、暂停状态或媒体源。
+播放画面内的鼠标纵向滚轮调整音量：Windows 等平台上滚增加 5 个百分点，下滚减少 5 个百分点；macOS 按下述逻辑像素距离换算。音量限制在 0–100%，沿用现有音量百分比提示。普通窗口与全屏、视频／影视／直播／离线播放共用 PlaybackShortcutController 和会话的有界音量命令队列；快速连续滚动从待确认目标累加，不改变播放位置、暂停状态或媒体源。
 
 该操作无需配置，不加入设置页面或持久化快捷键目录，也不受可配置快捷键总开关影响。只在活动播放视图中认领鼠标纵向滚轮，阻止同一次事件滚动外层页面；画面外继续正常滚动，横向滚动和触控板事件不调整音量。普通弹窗、输入屏障、应用失活和隐藏页面保留隔离。
 
 [播放器回归](../../test/features/playback/playback_panel_test.dart)覆盖上述四类内容的普通／全屏音量方向、边界和提示、快捷键关闭时的固定行为、外层页面滚动、弹窗／生命周期／隐藏页面以及延迟引擎下的连续累加。自动注入鼠标事件不替代 Windows／macOS 实际鼠标或 Android 外接鼠标验收。
 
 本次 `tool/check.ps1 -SkipPub` 完整通过：根应用与四个包的格式、静态分析及 1,974 项测试通过（根应用 1,539、bili_api 336、bili_player 32、bili_danmaku 65、bili_mux 2）。bili_mux 的 7 项原生合流测试因未配置 `BILI_MUX_LIBRARY` 按既有规则跳过。本次未构建应用或进行实际鼠标／设备验收。
+
+### macOS 精细滚轮归一化（2026-11-06）
+
+旧实现对每个非零鼠标滚轮事件固定加减 5；一次滚动被拆成多个小事件时，音量按事件数量被放大。macOS 现在按距离比例调整，每 40 逻辑像素对应 5 个百分点，保留小数并从会话待确认目标继续累加。40 的基准来自项目固定的 [Flutter 3.47.6 macOS 滚轮映射](https://github.com/flutter/flutter/blob/3.47.6/engine/src/flutter/shell/platform/darwin/macos/framework/Source/FlutterViewController.mm#L733-L760)：非精细滚动的一行映射为 40 逻辑像素，精细事件直接提供像素距离。相同方向、相同总距离的小事件与单个大事件得到相同音量变化，不添加计时器或另一个待处理队列。
+
+例如从 50 开始，20 个 `dy=-2` 的事件原先会到 100，现在与一个 `dy=-40` 一样到 55；总距离为 120 时调节 15 个百分点。Windows 等其他平台保留既有事件步进。鼠标类型过滤、事件认领、模态／隐藏／失活隔离和 0–100 边界沿用现有逻辑，触控板 PanZoom 不转换为音量。
+
+新增回归先在旧实现上复现音量达到 100，再验证普通／全屏的小事件拆分等价、双向／微小距离、上下界和延迟引擎的待确认目标；四类内容的普通／全屏音量测试同时覆盖 macOS 与 Windows 平台变体。13 项滚轮定向测试通过，日志：`build/validation/macos-wheel-volume-targeted.log`。这些是离线事件注入；本机为 Windows，未采集 macOS 真实鼠标／驱动事件或验收实际手感。
+
+本轮 `tool/check.ps1 -SkipPub` 完整通过：格式、静态分析、打包边界检查，以及根应用 4,423、bili_api 659、bili_player 148、bili_danmaku 161、bili_mux 5 项，共 **5,396 项离线测试通过**。13 项 Windows 符号链接权限用例和 10 项未配置 `BILI_MUX_LIBRARY` 的 mux 原生用例跳过，不计作原生通过；日志：`build/validation/macos-wheel-volume-check.log`。文档相对链接和 `git diff --check` 通过。本轮未构建应用或进行设备／性能验收；已尝试热重载，但没有可连接的 DTD／运行中调试实例。
 
 ## Windows 修饰键失焦恢复（2026-10-08）
 
@@ -242,3 +252,12 @@ smoke 时，记录 keyWindow/view、active、responder 类型／所属关系、�
 窗口标题、URL、账号或凭据。原生受控事件测试仍不是用户设备上的物理按键验收。
 
 - 原生烟测前置条件：CI 直接启动二进制会保持后台（924a63c 的脱敏轨迹为 active=0/key=0/view=null）。烟测先激活主窗口并核实原生焦点，再创建播放窗口；不会重新激活播放窗口来绕过首次焦点缺失。生产快照继续拒绝非活动应用。
+
+## 收起／展开侧边栏快捷键（2026-11-07）
+
+- 设置的“标签页与页面”增加“收起 / 展开侧边栏”，Windows／Android／Linux 默认 `Ctrl+B`，macOS／iOS 默认 `Meta+B`（界面显示 Command+B）。支持录制、修改、解除绑定、单独停用和恢复默认；侧栏按钮提示随有效绑定更新。
+- 沿用工作区输入分发器，只有活动页面的侧栏布局注册有效目标；底栏、隐藏页、编辑焦点和普通模态弹窗不触发。一次按压只切换一次，长按重复／抬起不再次切换；收起后仍可用同一快捷键展开。
+- 快捷键和侧栏按钮共用收起状态入口，沿用设置保存、重启恢复与保存失败回退。不修改 SQLite schema 或偏好版本；新增默认键被旧显式绑定占用时保留原动作，不抢占旧键位。
+- 78 项定向回归通过，覆盖平台默认、旧设置兼容、录制／恢复默认、三种导航模式、Windows／macOS／iOS／Android 平台模拟、按键重复、页面保留、重绑／禁用、输入／弹窗／隐藏页／底栏隔离、持久化成功与失败回退。日志为 `build/sidebar-shortcut-targeted-final.log`。
+- 基于包含同期改动的共同工作区运行 `tool/check.ps1 -SkipPub`，格式与打包边界通过，全仓静态分析被同期另一后端源码与测试的两处 `unnecessary_import` 提示（对应实现已随后端清理移除）阻塞；未修改这些其他任务文件。本次 11 个源码／测试文件定向分析与 Linux 适配器静态分析通过，见 `build/sidebar-shortcut-analyze.log`。继续按 `RootTests`／`PackageTests` 阶段执行，根应用 4,635 项、四包 1,120 项全部通过，见 `build/sidebar-shortcut-root-tests.log`、`build/sidebar-shortcut-package-tests.log`；根应用另有 13 项因 Windows 符号链接权限跳过，10 项 mux 原生用例因未配置 `BILI_MUX_LIBRARY` 跳过，不计为原生通过。完整入口不能记为全通过。
+- 按用户要求未构建或操作设备，物理键盘和实机验收由用户后续完成。未发现运行中的 Flutter／DTD 实例，热重载因无连接未执行成功。

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,7 +14,7 @@ import '../../../shared/ui/danmaku_settings_controls.dart';
 import '../../../shared/ui/player_controls_mode_setting.dart';
 import '../../../shared/ui/app_notice.dart';
 import '../../../shared/ui/app_dialog.dart';
-import '../../../domain/playback_rates.dart';
+import '../../../shared/ui/playback_rate_options_setting.dart';
 import '../application/settings_controller.dart';
 import '../application/app_update_controller.dart';
 import '../domain/app_update.dart';
@@ -23,6 +24,7 @@ import 'shortcut_settings_section.dart';
 import 'app_icon_settings.dart';
 import 'recommendation_settings_section.dart';
 import 'cdn_settings_tile.dart';
+import 'log_export_button.dart';
 
 const _usageNotice = <Widget>[
   Text('本应用是哔哩哔哩第三方客户端，视频、影视、直播及相关内容均来自哔哩哔哩，与官方无隶属关系。'),
@@ -110,31 +112,52 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-          child: OverflowBar(
-            alignment: MainAxisAlignment.spaceBetween,
-            overflowAlignment: OverflowBarAlignment.start,
-            spacing: 12,
-            overflowSpacing: 4,
-            children: [
-              Text(
-                '设置',
-                key: const ValueKey('settings-page-title'),
-                style: Theme.of(context).textTheme.titleLarge,
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+            final compact = constraints.maxWidth < 600 * textScale;
+            final resetEnabled =
+                !_resetting && ref.watch(settingsControllerProvider).hasValue;
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+              // Keep the button elements mounted when resizing during export.
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '设置',
+                      key: const ValueKey('settings-page-title'),
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(height: 20 / 16),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  if (compact)
+                    IconButton(
+                      key: const ValueKey('reset-settings'),
+                      tooltip: '恢复默认设置',
+                      constraints: const BoxConstraints(
+                        minWidth: 48,
+                        minHeight: 48,
+                      ),
+                      onPressed: resetEnabled ? _resetSettings : null,
+                      icon: const Icon(Icons.restore),
+                    )
+                  else
+                    TextButton.icon(
+                      key: const ValueKey('reset-settings'),
+                      onPressed: resetEnabled ? _resetSettings : null,
+                      icon: const Icon(Icons.restore),
+                      label: const Text('恢复默认设置'),
+                    ),
+                  const SizedBox(width: 8),
+                  LogExportButton(compact: compact),
+                ],
               ),
-              TextButton.icon(
-                key: const ValueKey('reset-settings'),
-                onPressed:
-                    _resetting ||
-                        !ref.watch(settingsControllerProvider).hasValue
-                    ? null
-                    : _resetSettings,
-                icon: const Icon(Icons.restore),
-                label: const Text('恢复默认设置'),
-              ),
-            ],
-          ),
+            );
+          },
         ),
         SizedBox(
           height: PageTabStyle.barHeight,
@@ -150,7 +173,7 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 progress: _progress,
                 itemKey: (category) =>
                     ValueKey('settings-category-${category.name}'),
-                buttonStyle: PageTabStyle.buttonStyle(context),
+                buttonStyle: PageTabStyle.buttonStyle(context, fontSize: 14),
                 labelBuilder: (context, category) =>
                     PageTabStyle.label(category.label),
                 onSelected: _selectCategory,
@@ -216,8 +239,9 @@ final class _SettingsCategoryPageState
     String title,
     T value,
     Map<T, String> choices,
-    Future<void> Function(T) save,
-  ) => Padding(
+    Future<void> Function(T) save, {
+    bool enabled = true,
+  }) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -232,7 +256,9 @@ final class _SettingsCategoryPageState
               ChoiceChip(
                 label: Text(entry.value),
                 selected: value == entry.key,
-                onSelected: (_) => _save(() => save(entry.key)),
+                onSelected: enabled
+                    ? (_) => _save(() => save(entry.key))
+                    : null,
               ),
           ],
         ),
@@ -271,7 +297,14 @@ final class _SettingsCategoryPageState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                height: 1.25,
+              ),
+            ),
             const SizedBox(height: 12),
             ...children,
           ],
@@ -425,10 +458,35 @@ final class _SettingsCategoryPageState
                       if (widget.category == SettingsCategory.playback)
                         _section('播放', [
                           _toggle(
+                            '双指缩小视频',
+                            s.playerShrinkVideo,
+                            (v) => controller.update(
+                              (c) => c.copyWith(playerShrinkVideo: v),
+                            ),
+                            '双指缩放和移动画面，允许缩小至 0.75 倍，最大放大至 2 倍',
+                          ),
+                          _toggle(
+                            '中部滑动切换全屏',
+                            s.playerFullscreenGesture,
+                            (v) => controller.update(
+                              (c) => c.copyWith(playerFullscreenGesture: v),
+                            ),
+                            '触摸视频中间三分之一区域，上滑进入全屏，下滑退出',
+                          ),
+                          _toggle(
+                            '全屏手势反向',
+                            s.playerFullscreenGestureReverse,
+                            (v) => controller.update(
+                              (c) =>
+                                  c.copyWith(playerFullscreenGestureReverse: v),
+                            ),
+                            '开启后中部下滑进入全屏，上滑退出',
+                          ),
+                          _toggle(
                             '滑动调节亮度和音量',
                             s.fullscreenSwipeControls,
                             controller.setFullscreenSwipeControls,
-                            '普通和全屏画面均可用，触摸左侧上下滑动调亮度，右侧调音量',
+                            '普通和全屏画面均可用，触摸左侧三分之一调亮度，右侧三分之一调音量',
                           ),
                           PlayerControlsModeSetting(
                             value: s.playerControlsMode,
@@ -468,17 +526,37 @@ final class _SettingsCategoryPageState
                             controller.setHighEnergyProgressEnabled,
                             '显示视频热度曲线；有章节时优先显示章节',
                           ),
-                          _toggle(
-                            '连续播放',
-                            s.continuousPlayback,
-                            controller.setContinuousPlayback,
-                            '播放完毕后自动播放下一 P、合集中下一个视频或影视下一集；到末尾停止',
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('播放模式'),
+                            subtitle: const Text(
+                              '列表循环按分 P、播放队列、合集或当前影视分组的原始顺序播放',
+                            ),
+                            trailing: DropdownButton<PlaybackMode>(
+                              value: s.playbackMode,
+                              items: [
+                                for (final mode in PlaybackMode.values)
+                                  DropdownMenuItem(
+                                    value: mode,
+                                    child: Text(mode.label),
+                                  ),
+                              ],
+                              onChanged: (mode) {
+                                if (mode != null) {
+                                  unawaited(
+                                    _save(
+                                      () => controller.setPlaybackMode(mode),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
                           ),
                           _toggle(
                             '连续播放相关视频',
                             s.continuousRelatedPlayback,
                             controller.setContinuousRelatedPlayback,
-                            '当前视频的分 P／合集播完后继续播放相关视频；稍后再看、播放队列和影视仍在末尾停止',
+                            '连续播放模式下，分 P／合集播完后继续播放相关视频；播放队列和影视仍在末尾停止',
                           ),
                           _toggle(
                             '允许多个标签页同时播放',
@@ -532,8 +610,12 @@ final class _SettingsCategoryPageState
                             '用于新打开的直播间；自动由服务端选择清晰度，权限和直播源限制仍适用。当前直播间的手动选择保持不变。',
                             style: TextStyle(fontSize: 12),
                           ),
+                          PlaybackRateOptionsSetting(
+                            rates: s.playbackRates,
+                            onChanged: controller.setPlaybackRates,
+                          ),
                           _choices('默认播放倍速', s.defaultPlaybackRate, {
-                            for (final rate in PlaybackRates.values)
+                            for (final rate in s.playbackRates)
                               rate: '${rate}x',
                           }, controller.setDefaultPlaybackRate),
                           const Text(
@@ -581,6 +663,48 @@ final class _SettingsCategoryPageState
                         ]),
                       if (widget.category == SettingsCategory.playback)
                         _section('视频编解码', [
+                          _choices('视频解码方式', s.videoDecoding, const {
+                            VideoDecodingPreference.software: '软件解码',
+                            VideoDecodingPreference.automatic: '硬件解码（优先）',
+                          }, controller.setVideoDecoding),
+                          Text(
+                            s.videoDecoding == VideoDecodingPreference.automatic
+                                ? '优先使用硬件解码，不支持当前编码时回退软件解码。'
+                                : '使用所选后端进行软件解码，可能增加 CPU 占用和耗电。',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          _choices('播放后端', s.playbackBackend, const {
+                            PlaybackBackendPreference.mediaKit: 'media_kit（默认）',
+                            PlaybackBackendPreference.fvp: 'fvp（实验性）',
+                          }, controller.setPlaybackBackend),
+                          if (defaultTargetPlatform ==
+                              TargetPlatform.android) ...[
+                            _choices(
+                              'Android 视频输出',
+                              s.androidVideoOutput,
+                              const {
+                                AndroidVideoOutputPreference.renderedTexture:
+                                    '兼容渲染（默认）',
+                                AndroidVideoOutputPreference.directTexture:
+                                    '解码直出纹理（实验）',
+                              },
+                              controller.setAndroidVideoOutput,
+                              enabled:
+                                  s.videoDecoding ==
+                                  VideoDecodingPreference.automatic,
+                            ),
+                            Text(
+                              s.videoDecoding ==
+                                      VideoDecodingPreference.software
+                                  ? '软件解码使用兼容渲染；切回硬件解码后恢复已保存的输出偏好。'
+                                  : 'media_kit 和 fvp 均保留弹幕、字幕和控件。解码直出需要设备硬解支持；画面异常时切回兼容渲染。',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ],
+                          const Text(
+                            '解码设置适用于视频、影视、直播、离线播放和悬停预览，下次打开或重新加载播放源时生效。',
+                            style: TextStyle(fontSize: 12),
+                          ),
                           _choices('优先视频编码', s.preferredVideoCodec, const {
                             VideoCodecPreference.h264: 'H.264 / AVC（默认）',
                             VideoCodecPreference.hevc: 'H.265 / HEVC',
@@ -591,16 +715,6 @@ final class _SettingsCategoryPageState
                             '用于视频和影视：先选择可用清晰度，再选择编码。直播在播放页独立选择协议、格式与编码；杜比实际显示效果取决于设备和输出。',
                             style: TextStyle(fontSize: 12),
                           ),
-                          _choices('视频解码方式', s.videoDecoding, const {
-                            VideoDecodingPreference.automatic: '自动（优先硬解）',
-                            VideoDecodingPreference.software: '软件解码',
-                          }, controller.setVideoDecoding),
-                          const Text(
-                            '自动模式在设备支持时使用硬件解码，不可用时使用软件解码。软件解码可能增加 CPU 占用和耗电。解码方式适用于视频、影视和直播。',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text('下次打开或重新加载播放源时生效。'),
                           _choices('优先音质', s.preferredAudioQuality, {
                             for (final quality in AudioQualityPreference.values)
                               quality: quality.label,

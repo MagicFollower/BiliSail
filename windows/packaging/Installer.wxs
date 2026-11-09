@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- Keep UpgradeCode and directory/component identities stable across releases. -->
+  <Package Name="BiliSail" Manufacturer="BiliSail" Version="$(MsiVersion)"
+           UpgradeCode="BA1B4BF9-F727-42A7-A69C-0FCFD1FDA365" Scope="perMachine"
+           Language="1033" Codepage="936">
+    <!-- Keep the old ProductLanguage so older installers also detect this product.
+         The UI resources are independently compiled with -culture zh-CN. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="这台电脑已安装更新版本的 BiliSail 哔帆。" />
+    <!-- MSI compatibility properties can report Windows 8.1 on newer systems. -->
+    <Property Id="BILISAIL_WINDOWS_BUILD">
+      <RegistrySearch Id="WindowsBuildNumber" Root="HKLM"
+                      Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentBuildNumber" Type="raw" Bitness="always64" />
+    </Property>
+    <?if $(sys.BUILDARCH) = arm64 ?>
+    <Launch Condition="Installed OR (VersionNT64 AND BILISAIL_WINDOWS_BUILD &gt;= 22000)"
+            Message="BiliSail 哔帆需要 Windows 11 或更高版本（ARM64）。" />
+    <?else?>
+    <Launch Condition="Installed OR (VersionNT64 AND BILISAIL_WINDOWS_BUILD &gt;= 17763)"
+            Message="BiliSail 哔帆需要 Windows 10 1809 或更高版本（x64）。" />
+    <?endif?>
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon Id="AppIcon" SourceFile="$(AppIcon)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/CKopoer/BiliSail" />
+    <Property Id="ARPCOMMENTS" Value="BiliSail $(DisplayVersion)" />
+    <!-- Public/secure so the chosen directory survives MSI's elevation boundary. -->
+    <Property Id="INSTALLFOLDER" Secure="yes" />
+    <Property Id="BILISAIL_PREVIOUS_INSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallFolder" Root="HKLM" Key="Software\BiliSail\Installer"
+                      Name="InstallFolder" Type="raw" Bitness="always64" />
+    </Property>
+    <!-- An explicit UI/Burn/command-line choice takes priority over the old location. -->
+    <SetProperty Id="INSTALLFOLDER" Value="[BILISAIL_PREVIOUS_INSTALLFOLDER]"
+                 Before="CostFinalize" Sequence="both"
+                 Condition="NOT INSTALLFOLDER AND BILISAIL_PREVIOUS_INSTALLFOLDER" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]"
+                 After="CostFinalize" Sequence="both" />
+
+    <UIRef Id="BiliSailUI" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="BiliSail" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="BiliSail">
+        <Component Id="StartMenuShortcut" Guid="9B17D46F-69B5-4E9C-9019-1A874099C504">
+          <Shortcut Id="AppShortcut" Name="BiliSail" Target="[INSTALLFOLDER]bilisail.exe"
+                    WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+          <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKLM" Key="Software\BiliSail\Installer" Name="StartMenuShortcut"
+                         Type="integer" Value="1" KeyPath="yes" />
+          <RegistryValue Root="HKLM" Key="Software\BiliSail\Installer" Name="InstallFolder"
+                         Type="string" Value="[INSTALLFOLDER]" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <ComponentGroup Id="AppPayload" Directory="INSTALLFOLDER">
+      <Files Include="$(PayloadDirectory)\**" />
+    </ComponentGroup>
+    <Feature Id="Application" Title="BiliSail" Level="1">
+      <ComponentGroupRef Id="AppPayload" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

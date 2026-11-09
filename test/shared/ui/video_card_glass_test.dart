@@ -14,7 +14,7 @@ void main() {
   const longTitle = '这是一个需要两行才放得下的视频标题';
   const shortTitle = '短标题';
   const authorName = '测试UP';
-  const dateLabel = '3-5';
+  const dateLabel = '03-05';
 
   // The merged meta line is fitted by measured width, and the default test font
   // draws every glyph one em wide, which would not describe the real fit.

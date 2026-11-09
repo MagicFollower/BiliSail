@@ -151,6 +151,8 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(continuousRelatedPlayback: value));
   Future<void> setContinuousPlayback(bool value) =>
       update((current) => current.copyWith(continuousPlayback: value));
+  Future<void> setPlaybackMode(PlaybackMode value) =>
+      update((current) => current.copyWith(playbackMode: value));
   Future<void> setResumePlayback(bool value) =>
       update((current) => current.copyWith(resumePlayback: value));
   Future<void> setPreferredQuality(int value) =>
@@ -167,8 +169,20 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(mediaCdn: value));
   Future<void> setVideoDecoding(VideoDecodingPreference value) =>
       update((current) => current.copyWith(videoDecoding: value));
+  Future<void> setPlaybackBackend(PlaybackBackendPreference value) =>
+      update((current) => current.copyWith(playbackBackend: value));
+  Future<void> setAndroidVideoOutput(AndroidVideoOutputPreference value) =>
+      update((current) => current.copyWith(androidVideoOutput: value));
   Future<void> setDefaultPlaybackRate(double value) =>
       update((current) => current.copyWith(defaultPlaybackRate: value));
+  Future<void> setPlaybackRates(List<double> values) => update(
+    (current) => current.copyWith(
+      playbackRates: values,
+      defaultPlaybackRate: values.contains(current.defaultPlaybackRate)
+          ? current.defaultPlaybackRate
+          : 1.0,
+    ),
+  );
   Future<void> setRememberPlaybackRate(bool value) =>
       update((current) => current.copyWith(rememberPlaybackRate: value));
   Future<void> setDefaultVolume(double value) =>

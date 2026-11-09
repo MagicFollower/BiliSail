@@ -1,5 +1,23 @@
 # 参考项目、证据与采用边界
 
+2026-11-08 Android fvp 音频定位修复继续只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的 `lib/plugin/pl_player/controller.dart`，借鉴原生同步／缓存和薄控制器职责，独立处理 MDK 暂停音频 seek 的平台限制。Windows 对照、实际 SDK 产物偏差、GPLv3／SDK 范围及回归见[音频定位记录](validation/android-fvp-seek-audio-2026-11-08.md)。
+
+2026-11-08 后续跳转／准备流程继续只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的播放器控制器、视图和缓存设置，独立实现两后端共用的一次目标确认、直接继续和实际缓冲提示。许可、源码范围、原生差异及本次验证见[专项记录](validation/piliplus-seek-flow-2026-11-08.md)。
+
+2026-11-08 播放进度／缓存／跳转简化只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的 `lib/plugin/pl_player/controller.dart`、`lib/utils/storage_pref.dart` 以及实际 overrides／锁文件。借鉴原生缓存、事件订阅与统一 seek 职责，独立实现，未复制 GPLv3 应用源码／资源、修改相邻仓库或更换媒体依赖。具体采用范围、撤回代理续读的行为变化和未构建／实机边界见[专项记录](validation/player-control-simplification-2026-11-08.md)。
+
+2026-11-08 直播聊天只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的牌子协议、点亮标记、颜色和昵称前展示职责，独立实现牌子／等级及正文选择。未复制 GPLv3 应用源码或资源，未修改相邻仓库；精确路径、旧版字段参考及验证边界见[专项记录](validation/live-chat-medals-selection-2026-11-08.md)。
+
+2026-11-08 关注／粉丝卡片和我的关注管理只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的关注、分组、搜索与黑名单交互和 Web 协议；精确路径、独立实现范围及离线验证见[专项记录](validation/profile-relations-2026-11-08.md)。未复制 GPLv3 源码或资源，未修改相邻仓库或引入依赖。
+
+2026-11-05 UP 主主页应用内举报只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的 `lib/common/widgets/dialog/report_member.dart`、`lib/http/member.dart` 与 `lib/http/api.dart`。仅采用多选内容/可选单选理由的交互职责，以及空间 Web Cookie/CSRF 端点、字段和布尔 `status` 响应；独立实现本项目代码，未复制 GPLv3 应用源码或资源、未修改相邻仓库或增加依赖。编码、单次写入与未验收边界见[应用内举报](validation/profile-report-2026-11-05.md)。
+
+2026-11-05 空间与消息反馈修复继续只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8`。空间核对头图、装扮、徽章、隐私与用户操作；消息核对会话排列、助手入口及通知子页职责。具体源码、当前公开脚本和采用范围分别记录在[空间修复](validation/profile-fixes-2026-11-05.md)、[私信修复](validation/private-message-fixes-2026-11-05.md)及[通知布局](validation/message-notification-layout-2026-11-05.md)。独立实现本项目代码，未复制 GPLv3 应用源码或资源，未修改相邻仓库；离线测试及未验收边界见[汇总记录](validation/profile-message-fixes-2026-11-05.md)。
+
+2026-11-05 主页重构只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的 `lib/pages/member/view.dart`、`member/widget/user_info_card.dart`、`member_home/view.dart`、`member_video_web/season_series/controller.dart`、`member_season_series/controller.dart`、`http/member.dart` 及对应空间模型。仅采用头图/头像/统计的信息层级、原图预览、资料/主页操作和合集/追番浏览职责，以及 Web 请求参数和响应字段；独立编写 Flutter/Riverpod 与纯 Dart 模型，未复制 GPLv3 应用源码、资源或 schema，未修改相邻仓库或增加依赖。方案与验证边界见[主页重构方案](ui-redesign/profile-redesign-2026-11-05.md)。
+
+2026-11-05 消息重构只读参考 PiliPlus `3565a2031fbdca180d03fad9999e48b4b0f7a4b5` 的消息首页、会话行、富消息展示及 Web 管理端点。仅采用交互职责和协议字段，独立实现 Flutter/Riverpod 页面及纯 Dart 模型，未复制 GPLv3 应用源码、资源或 gRPC schema；具体路径、当前官方脚本核对及验证边界见[消息中心重构](validation/messages-redesign-2026-11-05.md)。
+
 2026-11-01 只读核对相邻 PiliPlus `936072449e82e3d90c28c728c0087bf5136fa441` 的 pubspec 与锁文件，按用户要求直接采用其锁定的 MIT 播放器和弹幕依赖。没有复制 GPLv3 的应用源码；完整来源、许可及适配见[依赖切换](validation/piliplus-dependencies-2026-11-01.md)。
 
 检查日期：2026-10-05。两个参考项目只读查看，未修改它们。设计阶段未调用真实接口；随后实现首版时已进行游客公开 API 和 Windows 媒体烟测，结果见 [实测记录](validation/m0-results.md)。以下路径按三个仓库在同一父目录下给出；在其他机器上可按仓库名、提交和相对路径定位。
@@ -197,3 +215,7 @@
 6. 参考实现/schema 的具体采用许可、项目最终许可证、native binary notices。
 
 这些事项已有 M0/M4 的决策出口。Windows 的已测子项见实测记录；其余仍不应被描述成已验证事实。
+
+## 直播观看与历史类型（2026-11-07）
+
+只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的进房上报、关注分页和历史类型身份；仅借鉴端点、字段与交互职责，独立实现本项目领域端口、Riverpod 控制器与共享风格卡片，未复制 GPLv3 应用源码／资源，未修改相邻仓库或增加依赖。精确源码路径、采用范围和验证边界见[专项记录](validation/live-history-types-2026-11-07.md)。

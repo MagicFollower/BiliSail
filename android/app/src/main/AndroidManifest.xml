@@ -14,6 +14,7 @@
         android:icon="@mipmap/ic_launcher" android:allowBackup="false">
         <activity
             android:name=".MainActivity"
+            android:supportsPictureInPicture="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
@@ -76,6 +77,11 @@
             android:authorities="${applicationId}.image_clipboard"
             android:exported="false"
             android:grantUriPermissions="true" />
+        <service
+            android:name=".FvpPlaybackService"
+            android:process=":fvp_player"
+            android:exported="false"
+            android:stopWithTask="true" />
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"

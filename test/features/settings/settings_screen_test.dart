@@ -13,6 +13,127 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final player in [false, true]) {
+    testWidgets(
+      'custom rates are editable from settings entry player=$player',
+      (tester) async {
+        final repository = _SettingsRepository();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              settingsRepositoryProvider.overrideWithValue(repository),
+            ],
+            child: MaterialApp(
+              home: Scaffold(
+                body: player
+                    ? Builder(
+                        builder: (context) => TextButton(
+                          onPressed: () => showPlayerSettings(context),
+                          child: const Text('打开配置'),
+                        ),
+                      )
+                    : const SettingsScreen(category: SettingsCategory.playback),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (player) {
+          await tester.tap(find.text('打开配置'));
+          await tester.pumpAndSettle();
+        }
+        final add = find.text('添加倍速');
+        if (player) {
+          await tester.scrollUntilVisible(
+            add,
+            250,
+            scrollable: find
+                .descendant(
+                  of: find.byType(ListView).first,
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+          );
+        }
+        await tester.ensureVisible(add);
+        await tester.pumpAndSettle();
+        await tester.tap(add);
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextFormField), '1.75');
+        await tester.tap(find.text('添加'));
+        await tester.pumpAndSettle();
+        expect(repository.settings.playbackRates, contains(1.75));
+        if (player) {
+          final dropdown = find.byType(DropdownButton<double>);
+          await tester.ensureVisible(dropdown);
+          await tester.pumpAndSettle();
+          await tester.tap(dropdown);
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('1.75x').last);
+        } else {
+          final choice = find.widgetWithText(ChoiceChip, '1.75x');
+          await tester.ensureVisible(choice);
+          await tester.pumpAndSettle();
+          await tester.tap(choice);
+        }
+        await tester.pumpAndSettle();
+        expect(repository.settings.defaultPlaybackRate, 1.75);
+        final remove = find.byTooltip('删除 1.75x');
+        await tester.ensureVisible(remove);
+        await tester.pumpAndSettle();
+        await tester.tap(remove);
+        await tester.pumpAndSettle();
+        expect(repository.settings.defaultPlaybackRate, 1);
+        expect(repository.settings.playbackRates, isNot(contains(1.75)));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final failSave in [false, true]) {
+    testWidgets(
+      'player configuration saves playback mode or rolls back: $failSave',
+      (tester) async {
+        final repository = _SettingsRepository()..failSave = failSave;
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              settingsRepositoryProvider.overrideWithValue(repository),
+            ],
+            child: MaterialApp(
+              home: Scaffold(
+                body: Builder(
+                  builder: (context) => TextButton(
+                    onPressed: () => showPlayerSettings(context),
+                    child: const Text('播放配置'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('播放配置'));
+        await tester.pumpAndSettle();
+        final dropdown = find.byType(DropdownButton<PlaybackMode>);
+        await tester.ensureVisible(dropdown);
+        await tester.pumpAndSettle();
+        await tester.tap(dropdown);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('列表循环').last);
+        await tester.pumpAndSettle();
+        expect(
+          repository.settings.playbackMode,
+          failSave ? PlaybackMode.pause : PlaybackMode.listLoop,
+        );
+        expect(
+          tester.widget<DropdownButton<PlaybackMode>>(dropdown).value,
+          repository.settings.playbackMode,
+        );
+        if (failSave) expect(find.text('设置保存失败，请重试'), findsOneWidget);
+      },
+    );
+  }
   for (final failSave in [false, true]) {
     testWidgets('default dynamic tab saves or rolls back: $failSave', (
       tester,
@@ -221,6 +342,16 @@ void main() {
             SwitchListTile,
             player ? '滑动调节亮度和音量（左侧亮度，右侧音量）' : '滑动调节亮度和音量',
           );
+          await tester.scrollUntilVisible(
+            toggle,
+            120,
+            scrollable: find
+                .descendant(
+                  of: find.byType(ListView).first,
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+          );
           await tester.ensureVisible(toggle);
           await tester.tap(toggle);
           await tester.pumpAndSettle();
@@ -358,14 +489,34 @@ void main() {
     final title = find.byKey(const ValueKey('settings-page-title'));
     final strip = find.byKey(const ValueKey('settings-category-strip'));
     final content = find.byKey(const PageStorageKey('settings-shortcuts'));
-    for (final width in [320.0, 600.0, 1280.0]) {
+    final reset = find.byKey(const ValueKey('reset-settings'));
+    final export = find.byKey(const ValueKey('export-logs'));
+    for (final width in [320.0, 375.0, 599.0, 600.0, 1280.0, 320.0]) {
       tester.view.physicalSize = Size(width, 800);
       await tester.pumpAndSettle();
       expect(find.text('设置'), findsOneWidget);
       expect(tester.getTopLeft(title).dx, 20);
+      final resetRect = tester.getRect(reset);
+      final exportRect = tester.getRect(export);
+      expect(reset.hitTestable(), findsOneWidget);
+      expect(export.hitTestable(), findsOneWidget);
+      expect(resetRect.center.dy, exportRect.center.dy);
+      expect(exportRect.left - resetRect.right, closeTo(8, .01));
+      expect(exportRect.right, width - 20);
+      expect(resetRect.center.dy, tester.getCenter(title).dy);
+      expect(resetRect.left, greaterThan(tester.getRect(title).right));
+      if (width < 600) {
+        expect(find.byTooltip('恢复默认设置'), findsOneWidget);
+        expect(find.byTooltip('导出日志'), findsOneWidget);
+        expect(resetRect.size, const Size(48, 48));
+        expect(exportRect.size, const Size(48, 48));
+      } else {
+        expect(find.text('恢复默认设置'), findsOneWidget);
+        expect(find.text('导出日志'), findsOneWidget);
+      }
       expect(
         tester.getTopLeft(strip).dy,
-        greaterThan(tester.getBottomLeft(title).dy),
+        greaterThanOrEqualTo(exportRect.bottom),
       );
       expect(
         tester.getTopLeft(content).dy,
@@ -386,6 +537,13 @@ void main() {
       expect(tester.getRect(strip), stripRect);
       expect(tester.takeException(), isNull);
     }
+    await tester.tap(reset);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(reset).onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -613,6 +771,16 @@ void main() {
       if (inPlayer) {
         await tester.tap(find.text('播放配置'));
         await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('视频默认清晰度'),
+          120,
+          scrollable: find
+              .descendant(
+                of: find.byType(ListView).first,
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
       }
       expect(find.text('视频默认清晰度'), findsOneWidget);
       if (inPlayer) {
@@ -734,9 +902,7 @@ void main() {
     );
   }
 
-  testWidgets('continuous playback toggle saves and reloads independently', (
-    tester,
-  ) async {
+  testWidgets('playback mode saves and reloads independently', (tester) async {
     final repository = _SettingsRepository();
     await tester.pumpWidget(
       ProviderScope(
@@ -749,18 +915,25 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final toggle = find.widgetWithText(SwitchListTile, '连续播放');
-    expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+    final toggle = find.byType(DropdownButton<PlaybackMode>);
+    expect(
+      tester.widget<DropdownButton<PlaybackMode>>(toggle).value,
+      PlaybackMode.pause,
+    );
     await tester.ensureVisible(toggle);
     await tester.pumpAndSettle();
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-    expect(repository.settings.continuousPlayback, isTrue);
-    expect(repository.settings.autoPlay, isTrue);
-    ProviderScope.containerOf(tester.element(toggle))
-        .invalidate(settingsControllerProvider);
-    await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    for (final mode in PlaybackMode.values) {
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(mode.label).last);
+      await tester.pumpAndSettle();
+      expect(repository.settings.playbackMode, mode);
+      expect(repository.settings.autoPlay, isTrue);
+      ProviderScope.containerOf(tester.element(toggle))
+          .invalidate(settingsControllerProvider);
+      await tester.pumpAndSettle();
+      expect(tester.widget<DropdownButton<PlaybackMode>>(toggle).value, mode);
+    }
   });
   for (final failSave in [false, true]) {
     testWidgets(
@@ -1299,6 +1472,29 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    for (final width in [320.0, 600.0, 1280.0, 400.0]) {
+      tester.view.physicalSize = Size(width, 900);
+      await tester.pumpAndSettle();
+      final reset = find.byKey(const ValueKey('reset-settings'));
+      final export = find.byKey(const ValueKey('export-logs'));
+      final strip = find.byKey(const ValueKey('settings-category-strip'));
+      for (final button in [reset, export]) {
+        final rect = tester.getRect(button);
+        expect(button.hitTestable(), findsOneWidget);
+        expect(rect.left, greaterThanOrEqualTo(20));
+        expect(rect.right, lessThanOrEqualTo(width - 20));
+        expect(rect.bottom, lessThanOrEqualTo(tester.getTopLeft(strip).dy));
+      }
+      expect(tester.getRect(reset).overlaps(tester.getRect(export)), isFalse);
+      final title = find.byKey(const ValueKey('settings-page-title'));
+      expect(tester.getCenter(reset).dy, tester.getCenter(title).dy);
+      expect(tester.getCenter(export).dy, tester.getCenter(title).dy);
+      if (width < 1200) {
+        expect(find.byTooltip('恢复默认设置'), findsOneWidget);
+        expect(find.byTooltip('导出日志'), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    }
     final darkChoice = find.widgetWithText(ChoiceChip, '深色');
     await tester.ensureVisible(darkChoice);
     await tester.pumpAndSettle();

@@ -55,6 +55,7 @@ final class SearchCategoryBar extends ConsumerWidget {
                         textStyle: theme.textTheme.labelLarge?.copyWith(
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
+                          height: 20 / 14,
                         ),
                       ),
                       child: Column(

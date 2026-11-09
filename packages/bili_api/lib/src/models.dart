@@ -173,6 +173,7 @@ final class ApiVideoComment {
     this.level,
     this.verifyType,
     this.vipLabel,
+    this.nicknameColor,
     this.medalName,
     this.medalLevel,
     this.decorationImageUrl,
@@ -192,6 +193,8 @@ final class ApiVideoComment {
   final String? submissionMessage;
   final int? level, verifyType, medalLevel;
   final String? vipLabel, medalName;
+  // Optional 24-bit RGB nickname color supplied by the response.
+  final int? nicknameColor;
   final Uri? decorationImageUrl;
   final String? decorationName, decorationFanNumber;
 
@@ -331,6 +334,7 @@ final class ApiPlayInfo {
     required this.dashVideo,
     required this.dashAudio,
     required this.acceptQuality,
+    this.isIntentionallySilent = false,
     this.isPreview = false,
     this.voices = const [],
     this.currentLanguage = '',
@@ -342,6 +346,9 @@ final class ApiPlayInfo {
   final List<ApiMediaTrack> dashAudio;
   final ApiAudioLoudness? loudness;
   final List<int> acceptQuality;
+
+  /// Whether all DASH audio variants were explicitly absent in the response.
+  final bool isIntentionallySilent;
 
   /// The server supplied only a preview clip, not a complete episode.
   final bool isPreview;

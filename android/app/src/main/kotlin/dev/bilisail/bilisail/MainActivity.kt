@@ -9,9 +9,13 @@ import io.flutter.util.ViewUtils
 class MainActivity : AudioServiceActivity() {
     private var downloadStorage: DownloadStorageHandler? = null
     private var imageExport: ImageExportHandler? = null
+    private var logExport: LogExportHandler? = null
+    private var fvpProcess: FvpProcessHandler? = null
+    private var surfaceBenchmarks: SurfaceBenchmarkViews? = null
     private var windowBrightness: WindowBrightnessHandler? = null
     private var mobileWindow: MobileWindowHandler? = null
     private var appIcon: AppIconHandler? = null
+    private var pictureInPicture: PictureInPictureHandler? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -19,8 +23,14 @@ class MainActivity : AudioServiceActivity() {
         appIcon = AppIconHandler(this, flutterEngine.dartExecutor.binaryMessenger)
         downloadStorage = DownloadStorageHandler(this, flutterEngine.dartExecutor.binaryMessenger)
         imageExport = ImageExportHandler(this, flutterEngine.dartExecutor.binaryMessenger)
+        logExport = LogExportHandler(this, flutterEngine.dartExecutor.binaryMessenger)
+        fvpProcess = FvpProcessHandler.attach(this, flutterEngine)
+        if (applicationContext.packageName.endsWith(".test")) {
+            surfaceBenchmarks = SurfaceBenchmarkViews(flutterEngine) { fvpProcess }
+        }
         windowBrightness = WindowBrightnessHandler(this, flutterEngine.dartExecutor.binaryMessenger)
         mobileWindow = MobileWindowHandler(this, flutterEngine.dartExecutor.binaryMessenger)
+        pictureInPicture = PictureInPictureHandler(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun onResume() {
@@ -38,6 +48,11 @@ class MainActivity : AudioServiceActivity() {
         super.onConfigurationChanged(newConfig)
         updateDisplayMetrics(flutterEngine)
         mobileWindow?.reapplyFullScreen()
+    }
+
+    override fun onPictureInPictureModeChanged(active: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(active, newConfig)
+        pictureInPicture?.changed(active)
     }
 
     private fun updateDisplayMetrics(engine: FlutterEngine?) {
@@ -59,10 +74,16 @@ class MainActivity : AudioServiceActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         imageExport?.onPermissionResult(requestCode, grantResults)
+        logExport?.onPermissionResult(requestCode, grantResults)
         downloadStorage?.onPermissionResult(requestCode)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        fvpProcess = null
+        surfaceBenchmarks?.close()
+        surfaceBenchmarks = null
+        pictureInPicture?.close()
+        pictureInPicture = null
         appIcon?.close()
         appIcon = null
         mobileWindow?.close()
@@ -73,6 +94,8 @@ class MainActivity : AudioServiceActivity() {
         downloadStorage = null
         imageExport?.close()
         imageExport = null
+        logExport?.close()
+        logExport = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 }

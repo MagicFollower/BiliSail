@@ -13,6 +13,12 @@ final class LiveClient {
   final BiliApiClient api;
   Future<String>? _deviceInFlight;
 
+  /// Entering a room records history once; uncertain writes are never replayed.
+  Future<void> reportEntry(String roomId, {ApiRequestContext? context}) async {
+    _validateId(roomId);
+    await api.reportLiveEntry(roomId, context: context);
+  }
+
   /// The room audience is separate from room `online`/heartbeat popularity.
   /// The Web rank snapshot exposes an integer even when WS display text is capped.
   Future<int> getViewerCount(
@@ -420,17 +426,22 @@ final class LiveClient {
       final text = rawText.substring(0, rawText.length.clamp(0, 300));
       final name = _text(entry['nickname']) ?? '';
       final timeline = _text(entry['timeline']);
+      final user = _mapOrEmpty(entry['user']);
       messages.add(
         ApiLiveChatMessage(
           userName: name.substring(0, name.length.clamp(0, 100)),
-          userId:
-              _optionalId(_mapOrEmpty(entry['user'])['uid']) ??
-              _optionalId(entry['uid']),
+          userId: _optionalId(user['uid']) ?? _optionalId(entry['uid']),
           text: text,
           timestamp: _historyTimestamp(timeline),
           id: _optionalId(entry['id_str'] ?? entry['id']),
           emotes: liveChatEmotes(entry['emots'], text),
           sticker: liveChatImage(entry['emoticon']),
+          medal: liveChatMedal(
+            user.containsKey('medal')
+                ? user['medal']
+                : entry['medal'] ?? entry['medal_info'],
+          ),
+          userLevel: liveChatUserLevel(entry['user_level']),
         ),
       );
     }

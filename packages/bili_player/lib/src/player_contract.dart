@@ -47,11 +47,15 @@ final class DashPairSource extends ResolvedMediaSource {
     required this.video,
     required this.audio,
     this.isIntentionallySilent = false,
+    this.duration,
   });
 
   final MediaTrack video;
   final MediaTrack? audio;
   final bool isIntentionallySilent;
+
+  /// Resolver duration for backends that synthesize an in-memory DASH manifest.
+  final Duration? duration;
 }
 
 /// A video representation with audio deliberately omitted for a muted preview.
@@ -71,8 +75,11 @@ final class ManifestSource extends ResolvedMediaSource {
 /// Automatic uses the platform decoder preference with a safe fallback.
 enum VideoDecodingMode { automatic, software }
 
+/// Android decoder output; foreground widgets keep using Flutter composition.
+enum AndroidVideoOutputMode { renderedTexture, directTexture }
+
 final class OpenOptions {
-  static const maximumBufferAhead = Duration(minutes: 5);
+  static const maximumBufferAhead = Duration(minutes: 2);
 
   const OpenOptions({
     this.startPosition = Duration.zero,
@@ -81,8 +88,10 @@ final class OpenOptions {
     this.volume = 100,
     this.audioGainDb = 0,
     this.videoDecoding = VideoDecodingMode.automatic,
+    this.androidVideoOutput = AndroidVideoOutputMode.renderedTexture,
     this.openTimeout = const Duration(seconds: 35),
     this.maxBufferAhead = maximumBufferAhead,
+    this.retainPresentation = false,
   });
   final Duration startPosition;
   final bool play;
@@ -92,12 +101,17 @@ final class OpenOptions {
   /// Source normalization gain, independent of the user's volume percentage.
   final double audioGainDb;
   final VideoDecodingMode videoDecoding;
+  final AndroidVideoOutputMode androidVideoOutput;
   final Duration openTimeout;
 
-  /// Rolling forward demuxer window in media time, at most five minutes.
+  /// Rolling forward demuxer window in media time, at most two minutes.
   /// Must be positive. Memory capacity may stop buffering earlier, and
   /// packet/I/O boundaries may slightly overshoot the time window.
   final Duration maxBufferAhead;
+
+  /// Reopening the same content after interruption keeps its last frame and
+  /// timeline until both replacement tracks are ready. Never use for new media.
+  final bool retainPresentation;
 }
 
 enum PlaybackPhase {
@@ -148,6 +162,11 @@ final class PlaybackSnapshot {
   final int generation;
   final Duration position;
   final Duration duration;
+
+  /// The native demuxer's absolute media-time buffer endpoint.
+  ///
+  /// Bounded by [position] and known [duration]. Decoding and presentation
+  /// readiness are confirmed separately.
   final Duration buffered;
   final bool desiredPlaying;
   final bool isBuffering;
@@ -222,6 +241,7 @@ enum PlayerFailureKind {
   unsupportedHeaders,
   unsupportedVideoColor,
   nativePlayback,
+  nativeProcessExited,
   videoInterrupted,
   disposed,
 }
