@@ -1,33 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
 
 import '../../core/presentation/public_image_variant.dart';
 import '../../domain/dynamic_post.dart';
 import '../../domain/user.dart';
 import '../../domain/video.dart';
+import '../../features/dynamic/domain/dynamic_link.dart';
 import 'image_viewer.dart';
+import 'dynamic_content_card.dart';
+import 'dynamic_post_text.dart';
+export 'dynamic_post_text.dart' show DynamicPostExpansionState;
 import 'network_avatar.dart';
 import 'bili_icons.dart';
 import 'video_card.dart';
 import 'app_network_image.dart';
-
-/// Expansion belongs to the retained list, rather than to an evictable row.
-class DynamicPostExpansionState {
-  final _expanded = <String>{};
-
-  bool isExpanded(String id) => _expanded.contains(id);
-
-  void setExpanded(String id, bool expanded) {
-    if (expanded) {
-      _expanded.add(id);
-    } else {
-      _expanded.remove(id);
-    }
-  }
-
-  void retain(Set<String> ids) =>
-      _expanded.removeWhere((id) => !ids.contains(id));
-}
 
 /// Dynamic content; navigation and account actions belong to the owning feature.
 class DynamicPostCard extends StatelessWidget {
@@ -37,6 +22,7 @@ class DynamicPostCard extends StatelessWidget {
     this.onOpenUser,
     this.onOpenVideo,
     this.onOpenLink,
+    this.onOpenDetail,
     this.onShare,
     this.onComment,
     this.onLike,
@@ -45,6 +31,7 @@ class DynamicPostCard extends StatelessWidget {
     this.repostCount,
     this.busy = false,
     this.expansionState,
+    this.inDetail = false,
   }) : _layoutOnly = false;
 
   /// Uses the same layout without image requests or account state subscriptions.
@@ -55,8 +42,10 @@ class DynamicPostCard extends StatelessWidget {
     this.onOpenLink,
     this.expansionState,
   }) : _layoutOnly = true,
+       inDetail = false,
        onOpenUser = null,
        onOpenVideo = null,
+       onOpenDetail = null,
        onShare = null,
        onComment = null,
        onLike = null,
@@ -66,11 +55,13 @@ class DynamicPostCard extends StatelessWidget {
        busy = false;
 
   final bool _layoutOnly;
+  final bool inDetail;
   final DynamicPostExpansionState? expansionState;
   final DynamicPost post;
   final ValueChanged<UserId>? onOpenUser;
   final ValueChanged<VideoSummary>? onOpenVideo;
   final ValueChanged<Uri>? onOpenLink;
+  final VoidCallback? onOpenDetail;
   final VoidCallback? onShare, onComment, onLike;
   final bool? liked;
   final int? likeCount, repostCount;
@@ -79,25 +70,31 @@ class DynamicPostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Material(
     color: Theme.of(context).colorScheme.surfaceContainerLow,
-    borderRadius: BorderRadius.circular(8),
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: _PostBody(
-        post: post,
-        layoutOnly: _layoutOnly,
-        expansionState: expansionState,
-        onOpenUser: onOpenUser,
-        onOpenVideo: onOpenVideo,
-        onOpenLink: onOpenLink,
-        actions: _DynamicActions(
+    borderRadius: BorderRadius.circular(12),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: onOpenDetail,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _PostBody(
           post: post,
-          onShare: onShare,
-          onComment: onComment,
-          onLike: onLike,
-          liked: liked ?? post.liked,
-          likeCount: likeCount ?? post.likeCount,
-          repostCount: repostCount ?? post.repostCount,
-          busy: busy,
+          inDetail: inDetail,
+          onOpenDetail: onOpenDetail,
+          layoutOnly: _layoutOnly,
+          expansionState: expansionState,
+          onOpenUser: onOpenUser,
+          onOpenVideo: onOpenVideo,
+          onOpenLink: onOpenLink,
+          actions: _DynamicActions(
+            post: post,
+            onShare: onShare,
+            onComment: onComment,
+            onLike: onLike,
+            liked: liked ?? post.liked,
+            likeCount: likeCount ?? post.likeCount,
+            repostCount: repostCount ?? post.repostCount,
+            busy: busy,
+          ),
         ),
       ),
     ),
@@ -110,18 +107,21 @@ class _PostBody extends StatelessWidget {
     this.onOpenUser,
     this.onOpenVideo,
     this.onOpenLink,
+    this.onOpenDetail,
     this.depth = 0,
     this.actions,
     this.layoutOnly = false,
+    this.inDetail = false,
     this.expansionState,
   });
   final DynamicPost post;
   final ValueChanged<UserId>? onOpenUser;
   final ValueChanged<VideoSummary>? onOpenVideo;
   final ValueChanged<Uri>? onOpenLink;
+  final VoidCallback? onOpenDetail;
   final int depth;
   final Widget? actions;
-  final bool layoutOnly;
+  final bool layoutOnly, inDetail;
   final DynamicPostExpansionState? expansionState;
 
   @override
@@ -130,6 +130,14 @@ class _PostBody extends StatelessWidget {
     final userId = post.authorId;
     final video = post.video;
     final original = post.original;
+    final topic = post.topic;
+    final topicTarget = topic == null
+        ? null
+        : dynamicTopicDestination(
+            id: topic.id,
+            name: topic.name,
+            url: topic.url,
+          );
     final time = post.publishText.isNotEmpty
         ? post.publishText
         : post.publishedAt?.toLocal().toString().split('.').first ?? '';
@@ -180,23 +188,74 @@ class _PostBody extends StatelessWidget {
                 ),
               ),
             ),
-            if (onOpenLink != null)
+            if (depth == 0 && !inDetail)
               IconButton(
-                tooltip: depth == 0 ? '在浏览器打开动态' : '在浏览器打开原动态',
-                onPressed: () =>
-                    onOpenLink!(Uri.https('t.bilibili.com', '/${post.id}')),
-                icon: const Icon(Icons.open_in_new, size: 18),
+                tooltip: '查看动态详情',
+                onPressed: onOpenDetail,
+                icon: const Icon(Icons.chevron_right, size: 20),
               ),
           ],
         ),
+        if (topic != null) ...[
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Semantics(
+              label: '查看话题 ${topic.name}',
+              button: true,
+              // RawChip's Ink decoration requires a mounted render tree.
+              // Keep this pill safe for the detached list extent measurement.
+              child: Material(
+                color: scheme.primaryContainer,
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  onTap: topicTarget == null || onOpenLink == null
+                      ? null
+                      : () => onOpenLink!(topicTarget),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.tag, size: 18, color: scheme.primary),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            topic.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: scheme.primary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (post.badge.isNotEmpty || post.typeLabel.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            [post.badge, post.typeLabel].where((s) => s.isNotEmpty).join(' · '),
+            style: Theme.of(context).textTheme.labelMedium
+                ?.copyWith(color: scheme.primary),
+          ),
+        ],
         if (post.title.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text(post.title, style: Theme.of(context).textTheme.titleSmall),
         ],
         if (post.text.isNotEmpty || post.spans.isNotEmpty) ...[
           const SizedBox(height: 12),
-          _DynamicText(
+          DynamicPostText(
             post: post,
+            inDetail: inDetail,
             layoutOnly: layoutOnly,
             expansionState: expansionState,
             onOpenUser: onOpenUser,
@@ -210,75 +269,75 @@ class _PostBody extends StatelessWidget {
           ),
         if (video != null) ...[
           const SizedBox(height: 12),
-          InkWell(
-            onTap: onOpenVideo == null ? null : () => onOpenVideo!(video),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final coverWidth = constraints.maxWidth < 360 ? 112.0 : 160.0;
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: coverWidth,
-                      child: AspectRatio(
-                        aspectRatio: 16 / 9,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            _image(
-                              Uri.tryParse(video.coverUrl),
-                              layoutOnly: layoutOnly,
-                              fit: BoxFit.cover,
-                              decodeWidth: 480,
-                            ),
-                            Positioned(
-                              right: 4,
-                              bottom: 4,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: .7),
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 2,
-                                  ),
-                                  child: Text(
-                                    durationLabel(video.duration),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ),
+          Material(
+            color: scheme.surfaceContainerHighest.withValues(alpha: .55),
+            borderRadius: BorderRadius.circular(10),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onOpenVideo == null ? null : () => onOpenVideo!(video),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _image(
+                          Uri.tryParse(video.coverUrl),
+                          layoutOnly: layoutOnly,
+                          fit: BoxFit.cover,
+                          decodeWidth: 960,
+                        ),
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Colors.transparent, Colors.black87],
                               ),
                             ),
-                          ],
+                            child: Wrap(
+                              alignment: WrapAlignment.spaceBetween,
+                              spacing: 8,
+                              children: [
+                                Text(
+                                  '${compactCount(video.playCount)}播放 · ${compactCount(video.danmakuCount)}弹幕',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  durationLabel(video.duration),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            video.title,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${compactCount(video.playCount)}播放 · ${compactCount(video.danmakuCount)}弹幕',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      video.title,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
-                  ],
-                );
-              },
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -349,7 +408,23 @@ class _PostBody extends StatelessWidget {
               },
             ),
         ],
-        if (post.linkTitle.isNotEmpty) ...[
+        for (final card in post.contentCards) ...[
+          const SizedBox(height: 10),
+          DynamicContentCardView(
+            card: card,
+            onOpenLink: onOpenLink,
+            layoutOnly: layoutOnly,
+          ),
+        ],
+        if (post.notice.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            post.notice,
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+        if (post.contentCards.isEmpty && post.linkTitle.isNotEmpty) ...[
           const SizedBox(height: 12),
           InkWell(
             onTap: post.linkUrl != null && onOpenLink != null
@@ -417,6 +492,7 @@ class _PostBody extends StatelessWidget {
             ),
             child: _PostBody(
               post: original,
+              inDetail: inDetail,
               layoutOnly: layoutOnly,
               expansionState: expansionState,
               onOpenUser: onOpenUser,
@@ -558,162 +634,3 @@ Widget _picture(
     ),
   ),
 );
-
-class _DynamicText extends StatefulWidget {
-  const _DynamicText({
-    required this.post,
-    this.onOpenUser,
-    this.onOpenLink,
-    this.layoutOnly = false,
-    this.expansionState,
-  });
-  final DynamicPost post;
-  final ValueChanged<UserId>? onOpenUser;
-  final ValueChanged<Uri>? onOpenLink;
-  final bool layoutOnly;
-  final DynamicPostExpansionState? expansionState;
-  @override
-  State<_DynamicText> createState() => _DynamicTextState();
-}
-
-class _DynamicTextState extends State<_DynamicText> {
-  bool _locallyExpanded = false;
-  bool get _expanded =>
-      widget.expansionState?.isExpanded(widget.post.id) ?? _locallyExpanded;
-  final _recognizers = <TapGestureRecognizer>[];
-  void _disposeRecognizers() {
-    for (final recognizer in _recognizers) {
-      recognizer.dispose();
-    }
-    _recognizers.clear();
-  }
-
-  @override
-  void dispose() {
-    _disposeRecognizers();
-    super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(_DynamicText oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.post.id != widget.post.id) _locallyExpanded = false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.bodyMedium
-        ?.copyWith(fontSize: 15, height: 22 / 15);
-    _disposeRecognizers();
-    final parts = widget.post.spans;
-    final length = parts.isEmpty
-        ? widget.post.text.length
-        : parts.fold<int>(0, (sum, span) => sum + span.text.length);
-    final canExpand = length > 300 || widget.post.text.contains('\n');
-    // Even expanded text remains bounded for malformed upstream payloads.
-    var remaining = _expanded ? 12000 : 1000;
-    final children = <InlineSpan>[];
-    for (final part in parts) {
-      if (remaining <= 0) break;
-      final text = part.text.length > remaining
-          ? '${part.text.substring(0, remaining)}…'
-          : part.text;
-      remaining -= part.text.length;
-      final image = part.imageUrl;
-      if (part.kind == DynamicTextKind.emoji &&
-          image != null &&
-          ['http', 'https'].contains(image.scheme)) {
-        final size =
-            MediaQuery.textScalerOf(context).scale(24) *
-            part.emojiSize.clamp(1, 2);
-        children.add(
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: Semantics(
-              label: part.text,
-              image: true,
-              child: SizedBox.square(
-                dimension: size,
-                child: widget.layoutOnly
-                    ? const SizedBox.expand()
-                    : AppNetworkImage(
-                        url: image.toString(),
-                        width: size,
-                        height: size,
-                        cacheWidth: (size * 3).ceil(),
-                        errorBuilder: (_, _, _) =>
-                            Text(part.text, style: style),
-                      ),
-              ),
-            ),
-          ),
-        );
-      } else if ((part.userId != null && widget.onOpenUser != null) ||
-          (part.linkUrl != null && widget.onOpenLink != null)) {
-        final recognizer = TapGestureRecognizer()
-          ..onTap = () {
-            final userId = part.userId;
-            final link = part.linkUrl;
-            if (userId != null && widget.onOpenUser != null) {
-              widget.onOpenUser!(userId);
-            } else if (link != null) {
-              widget.onOpenLink?.call(link);
-            }
-          };
-        _recognizers.add(recognizer);
-        children.add(
-          TextSpan(
-            text: text,
-            recognizer: recognizer,
-            style: TextStyle(color: Theme.of(context).colorScheme.primary),
-          ),
-        );
-      } else {
-        children.add(
-          TextSpan(
-            text: text,
-            style: part.kind == DynamicTextKind.plain
-                ? null
-                : TextStyle(color: Theme.of(context).colorScheme.primary),
-          ),
-        );
-      }
-    }
-    final plain = widget.post.text;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text.rich(
-          TextSpan(
-            children: parts.isEmpty
-                ? [
-                    TextSpan(
-                      text: plain.length > remaining
-                          ? '${plain.substring(0, remaining)}…'
-                          : plain,
-                    ),
-                  ]
-                : children,
-          ),
-          style: style,
-          maxLines: canExpand && !_expanded ? 8 : null,
-          softWrap: true,
-          overflow: canExpand && !_expanded
-              ? TextOverflow.ellipsis
-              : TextOverflow.clip,
-        ),
-        if (canExpand)
-          TextButton(
-            onPressed: () {
-              setState(() {
-                final expanded = !_expanded;
-                widget.expansionState?.setExpanded(widget.post.id, expanded);
-                _locallyExpanded = expanded;
-              });
-            },
-            child: Text(_expanded ? '收起' : '展开全文'),
-          ),
-      ],
-    );
-  }
-}

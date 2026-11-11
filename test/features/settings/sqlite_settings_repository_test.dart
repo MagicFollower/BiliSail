@@ -88,8 +88,8 @@ void main() {
     expect(
       (jsonDecode((await database.readSetting('preferences.v1'))!)
           as Map)['schemaVersion'],
-      // The merged snapshot carries upstream's keys plus this branch's own at 44.
-      44,
+      // The merged snapshot carries upstream's keys plus this branch's own at 45.
+      45,
     );
     await repository.save(const AppSettings.defaults());
     settings = await repository.load();
@@ -247,7 +247,7 @@ void main() {
         final snapshot = jsonDecode(
           (await database.readSetting('preferences.v1'))!,
         );
-        expect(snapshot['schemaVersion'], 44);
+        expect(snapshot['schemaVersion'], 45);
         expect(snapshot['liveStreamPreference'], preference.toJson());
       }
       await repository.save(const AppSettings.defaults());

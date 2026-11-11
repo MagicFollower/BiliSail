@@ -1,7 +1,7 @@
 name: bilisail
 description: BiliSail, a cross-platform third-party Bilibili client focused on the viewing experience, built with Flutter.
 publish_to: none
-version: 1.2.9+0
+version: 1.2.9+1
 
 environment:
   sdk: '>=3.13.0 <4.0.0'
@@ -43,9 +43,17 @@ dependencies:
   bili_mux:
     path: packages/bili_mux
   flutter_inappwebview: 6.2.0-beta.3
-  # Local sibling repo providing the liquid glass dock; kept from this branch.
+  # ── 合并取舍（并入 upstream/master a6194dc0）─────────────────────────
+  # 本分支与上游在同一位置各自新增了一个依赖，职责不同、互不冲突，故两者都保留：
+  #   1) liquid_dock_navi —— 本分支独有的「液态玻璃 dock」组件，来自同级独立仓库
+  #      ../liquid_dock_navi（path 依赖）。它是本分支 UI 身份的核心，上游没有此包，
+  #      必须保留，否则壳层 dock 无法编译。
+  #   2) image_picker —— 上游本轮「动态发布」新增的依赖，用于 composing 时打开系统
+  #      相册选图（上游提交 0cdd0eef）。采纳上游动态发布功能即需要它。
+  # 一个服务本地 dock、一个服务上游动态发图，合并后共存，不互相替代。
   liquid_dock_navi:
     path: ../liquid_dock_navi
+  image_picker: 1.2.4
 
 # Keep core, video output and native library manifests on one reviewed fork commit.
 dependency_overrides:

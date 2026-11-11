@@ -13,7 +13,7 @@ import '../core/presentation/workspace_activity.dart';
 import '../core/presentation/mobile_playback_status_bar.dart';
 import '../core/presentation/page_back_scope.dart';
 import '../core/presentation/predictive_back_region.dart';
-import '../core/presentation/trackpad_back_region.dart';
+import '../core/presentation/history_back_region.dart';
 import 'workspace_tabs.dart';
 import 'workspace_navigation.dart';
 import 'workspace_back_presentation.dart';
@@ -207,6 +207,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
 
   bool _frameShowsBack(BuildContext context) {
     final tab = _frameTab(context);
+    if (tab.isTopic) return false;
     return (_dualTabs || _singlePage) &&
         _canGoBack &&
         (!(tab.pinned && tab.isRoot) ||
@@ -259,7 +260,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
 
   bool _goBackWithinPage() => _pageBack[_displayTab.id]?.goBack() ?? false;
 
-  bool get _canTrackpadBack => !_dualTabs && !_singlePage
+  bool get _canGestureBack => !_dualTabs && !_singlePage
       ? (_pageBack[_displayTab.id]?.canGoBack ?? false) || !_displayTab.pinned
       : _canGoBack;
 
@@ -267,7 +268,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
     if (!_goBackWithinPage()) _closeTab(_workspace.activeId);
   }
 
-  void _trackpadBack() {
+  void _gestureBack() {
     // Separate tabs close just like the close command; visit history can
     // otherwise select an old player while retaining the page being left.
     if (!_dualTabs && !_singlePage) {
@@ -725,8 +726,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
       ),
     );
     final windowBuilder = widget.playbackWindowBuilder;
-    final presented = TrackpadBackRegion(
-      enabled: _canTrackpadBack,
+    final presented = HistoryBackRegion(
+      enabled: _canGestureBack,
       identity: (
         _backIdentity(_displayTab),
         _desktopDual
@@ -734,7 +735,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
             : _workspace.backDestination()?.location,
         _pageBack[_displayTab.id]?.canGoBack ?? false,
       ),
-      onBack: _trackpadBack,
+      onBack: _gestureBack,
       child: _withBackPreview(context, main),
     );
     if (windowBuilder == null) return presented;
@@ -750,7 +751,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
           playback != null && _pageKeys[playback.id]?.currentContext != null,
       playback: playback == null
           ? null
-          : TrackpadBackRegion(
+          : HistoryBackRegion(
               enabled: true,
               identity: (
                 _backIdentity(playback),
@@ -784,7 +785,11 @@ final class _BiliAppShellState extends State<BiliAppShell>
               MediaQuery.sizeOf(context).width -
                   MediaQuery.paddingOf(context).horizontal,
             ) &&
-            !(_frameTab(context).isPlayback || _frameTab(context).isProfile);
+            // 合并冲突解决：保留本分支液态 dock 判定，并并入上游 isTopic 排除。
+            // 话题页是全屏详情，上游不显示底部导航，本分支 dock 同理隐藏。
+            !(_frameTab(context).isPlayback ||
+                _frameTab(context).isProfile ||
+                _frameTab(context).isTopic);
         // Only the liquid dock itself overlays content. The unselected
         // strip keeps its old "reserve space" behavior on the messages
         // page, which has no dock destination; history and downloads
@@ -831,6 +836,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
                       _dualTabs &&
                       !_desktopDual &&
                       !tab.isPlayback &&
+                      // 并入上游：话题页不显示「返回播放」悬浮按钮。
+                      !tab.isTopic &&
                       _workspace.playbackId != null &&
                       !(_gestureDestination?.id == tab.id &&
                           (_gestureSource?.isPlayback ?? false) &&
@@ -945,6 +952,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
                                                         '/search' &&
                                                     !tab.isPlayback &&
                                                     !tab.isProfile &&
+                                                    // 并入上游：话题页不显示首页工具栏。
+                                                    !tab.isTopic &&
                                                     !tab.isMessages &&
                                                     sectionForLocation(
                                                           tab.location,
@@ -960,6 +969,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
                                                         '/search' &&
                                                     !tab.isPlayback &&
                                                     !tab.isProfile &&
+                                                    // 并入上游：话题页不显示频道导航栏。
+                                                    !tab.isTopic &&
                                                     !tab.isMessages)
                                                   LayoutBuilder(
                                                     builder:
@@ -1304,6 +1315,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
                                       _desktopDual &&
                                           tab.id == _workspace.playbackId
                                       ? _playbackWindowBack
+                                      : view.isTopic
+                                      ? _gestureBack
                                       : () {
                                           _goBack();
                                         },
@@ -1783,7 +1796,10 @@ final class _BiliAppShellState extends State<BiliAppShell>
         MediaQuery.sizeOf(context).width -
             MediaQuery.paddingOf(context).horizontal,
       ) &&
-      !(_frameTab(context).isPlayback || _frameTab(context).isProfile);
+      // 并入上游：话题页不显示液态 dock，与 dockPage 判定保持一致。
+      !(_frameTab(context).isPlayback ||
+          _frameTab(context).isProfile ||
+          _frameTab(context).isTopic);
   Widget _bottomNavigation(BuildContext context) {
     final sections = [
       WorkspaceSection.home,

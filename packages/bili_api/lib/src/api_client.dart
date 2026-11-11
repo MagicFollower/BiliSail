@@ -9,6 +9,7 @@ import 'cookies.dart';
 import 'decoding/pgc_season_decoder.dart';
 import 'models.dart';
 import 'models/popular_models.dart';
+import 'models/dynamic_composer_models.dart';
 import 'models/pgc_models.dart';
 import 'mappers/video_access_parser.dart';
 import 'mappers/dash_audio_parser.dart';
@@ -136,8 +137,14 @@ final class BiliApiClient {
     if (uri.scheme != 'https' ||
         uri.userInfo.isNotEmpty ||
         uri.port != 443 ||
+        (uri.host == 'app.bilibili.com' &&
+            !const {
+              '/x/topic/web/details/top',
+              '/x/topic/pub/search',
+            }.contains(uri.path)) ||
         !const {
           'api.bilibili.com',
+          'app.bilibili.com',
           'api.live.bilibili.com',
           'api.vc.bilibili.com',
           'message.bilibili.com',
@@ -421,6 +428,9 @@ final class BiliApiClient {
       '/x/relation/tag/update',
       '/x/relation/tag/del',
       '/x/relation/tags/update_sort',
+      '/x/topic/fav/sub/add',
+      '/x/topic/fav/sub/cancel',
+      '/x/topic/report',
     }.contains(path)) {
       throw ArgumentError('Unsupported mutation');
     }
@@ -562,6 +572,8 @@ final class BiliApiClient {
     if (!const {
       '/x/dynamic/feed/dyn/thumb',
       '/x/dynamic/feed/create/dyn',
+      '/x/vote/create',
+      '/x/vote/do_vote',
     }.contains(path)) {
       throw ArgumentError('Unsupported dynamic mutation');
     }
@@ -578,6 +590,16 @@ final class BiliApiClient {
       jsonBody: body,
     );
   }
+
+  Future<Object?> createDynamicReserve(
+    Map<String, String> fields, {
+    ApiRequestContext? context,
+  }) => _submitForm(
+    _api.replace(path: '/x/new-reserve/up/reserve/create'),
+    'dynamic_reserve_create',
+    fields,
+    context,
+  );
 
   ({String cookie, String csrf}) _mutationCredentials(
     Uri uri,
@@ -686,7 +708,9 @@ final class BiliApiClient {
               uri.replace(
                 queryParameters: {...uri.queryParameters, 'csrf': csrf},
               ),
-              body: jsonBody,
+              body: uri.path == '/x/vote/do_vote'
+                  ? {...jsonBody, 'csrf': csrf, 'csrf_token': csrf}
+                  : jsonBody,
               headers: headers,
               timeout: budget,
               cancellation: context?.cancellation,
@@ -827,21 +851,11 @@ final class BiliApiClient {
       endpoint,
       context,
     );
-    final values = <Object?>[
-      if (cursor == null) ...[
-        ..._list(data['top_replies'] ?? const [], endpoint),
-        if (_optionalMap(data['upper'])?['top']
-            case final Map<String, Object?> top)
-          top,
-      ],
-      ..._list(data['replies'] ?? const [], endpoint),
-    ];
-    final items = <ApiVideoComment>[];
-    final seen = <String>{};
-    for (final value in values.take(100)) {
-      final entry = _comment(_map(value, endpoint), endpoint);
-      if (seen.add(entry.id)) items.add(entry);
-    }
+    final items = _commentPageItems(
+      data,
+      endpoint,
+      includePinned: cursor == null,
+    );
     final paging = _map(data['cursor'], endpoint);
     final isEnd = _bool(paging['is_end']);
     if (isEnd == null) {
@@ -903,19 +917,11 @@ final class BiliApiClient {
       endpoint,
       context,
     );
-    final values = <Object?>[
-      if (page == 1 &&
-          rootId == null &&
-          _optionalMap(data['upper'])?['top'] is Map)
-        _optionalMap(data['upper'])?['top'],
-      ..._list(data['replies'] ?? const [], endpoint),
-    ];
-    final seen = <String>{};
-    final items = <ApiVideoComment>[];
-    for (final value in values.take(100)) {
-      final comment = _comment(_map(value, endpoint), endpoint);
-      if (seen.add(comment.id)) items.add(comment);
-    }
+    final items = _commentPageItems(
+      data,
+      endpoint,
+      includePinned: page == 1 && rootId == null,
+    );
     final paging = _map(data['page'], endpoint);
     final count = _requiredInt(paging['count'], endpoint);
     final size = _requiredInt(paging['size'], endpoint);
@@ -936,11 +942,52 @@ final class BiliApiClient {
     );
   }
 
+  List<ApiVideoComment> _commentPageItems(
+    Map<String, Object?> data,
+    String endpoint, {
+    required bool includePinned,
+  }) {
+    final upper = _commentMap(data['upper']);
+    final upperMid = _userMid(upper['mid']);
+    final top = _commentMap(data['top']);
+    final pinned = <Object?>[
+      if (includePinned) ...[
+        ..._list(data['top_replies'] ?? const [], endpoint).take(100),
+        if (upper['top'] is Map<String, Object?>) upper['top'],
+        for (final key in ['admin', 'upper', 'vote'])
+          if (top[key] is Map<String, Object?>) top[key],
+      ],
+    ];
+    // Parse pinned copies first so de-duplication retains their marker.
+    final values = [
+      for (final value in pinned) (value, true),
+      for (final value in _list(
+        data['replies'] ?? const [],
+        endpoint,
+      ).take(100))
+        (value, false),
+    ];
+    final seen = <String>{};
+    final items = <ApiVideoComment>[];
+    for (final (value, isPinned) in values.take(100)) {
+      final comment = _comment(
+        _map(value, endpoint),
+        endpoint,
+        isPinned: isPinned,
+        upperMid: upperMid,
+      );
+      if (seen.add(comment.id)) items.add(comment);
+    }
+    return items;
+  }
+
   ApiVideoComment _comment(
     Map<String, Object?> entry,
     String endpoint, {
     int depth = 0,
     String? submissionMessage,
+    bool isPinned = false,
+    String? upperMid,
   }) {
     final member = _map(entry['member'], endpoint);
     final content = _map(entry['content'], endpoint);
@@ -957,6 +1004,9 @@ final class BiliApiClient {
     )?.trim();
     final card = _commentMap(_commentMap(member['user_sailing'])['cardbg']);
     final fan = _commentMap(card['fan']);
+    final authorMid =
+        _userMid(member['mid']) ?? _userMid(entry['mid_str'] ?? entry['mid']);
+    final upAction = _commentMap(entry['up_action']);
     String? optionalId(Object? value) =>
         value == null || value == 0 || value == '0'
         ? null
@@ -964,7 +1014,13 @@ final class BiliApiClient {
     return ApiVideoComment(
       id: _id(entry['rpid_str'] ?? entry['rpid'], endpoint),
       author: _requiredString(member['uname'], endpoint),
-      authorMid: _userMid(member['mid']),
+      authorMid: authorMid,
+      isPinned:
+          isPinned ||
+          _bool(_commentMap(entry['reply_control'])['is_up_top']) == true,
+      isUpAuthor: upperMid != null && authorMid == upperMid,
+      upLiked: _bool(upAction['like']) ?? false,
+      upReplied: _bool(upAction['reply']) ?? false,
       state: _int(entry['state']),
       invisible: _bool(entry['invisible']) ?? false,
       submissionMessage: submissionMessage,
@@ -1013,6 +1069,7 @@ final class BiliApiClient {
                       _map(value, endpoint),
                       endpoint,
                       depth: depth + 1,
+                      upperMid: upperMid,
                     ),
                   ),
             ),
@@ -1245,18 +1302,46 @@ final class BiliApiClient {
     Uint8List bytes,
     String mimeType, {
     ApiRequestContext? context,
+  }) => _uploadDailyPicture(bytes, mimeType, 'comment_picture_upload', context);
+
+  Future<ApiDynamicPicture> uploadDynamicPicture(
+    Uint8List bytes,
+    String mimeType, {
+    bool forPoll = false,
+    ApiRequestContext? context,
+  }) async {
+    final picture = await _uploadDailyPicture(
+      bytes,
+      mimeType,
+      'dynamic_picture_upload',
+      context,
+      biz: forPoll ? 'vote' : 'new_dyn',
+    );
+    return ApiDynamicPicture(
+      picture.url,
+      picture.width,
+      picture.height,
+      picture.sizeKiB,
+    );
+  }
+
+  Future<ApiCommentPicture> _uploadDailyPicture(
+    Uint8List bytes,
+    String mimeType,
+    String endpoint,
+    ApiRequestContext? context, {
+    String biz = 'new_dyn',
   }) async {
     if (bytes.isEmpty ||
         bytes.length > 10 * 1024 * 1024 ||
         !const {'image/jpeg', 'image/png', 'image/gif'}.contains(mimeType)) {
       throw ArgumentError('Invalid comment image');
     }
-    const endpoint = 'comment_picture_upload';
     final data = _map(
       await _submitForm(
         _api.replace(path: '/x/dynamic/feed/draw/upload_bfs'),
         endpoint,
-        {'category': 'daily', 'biz': 'new_dyn'},
+        {'category': 'daily', 'biz': biz},
         context,
         upload: (bytes: bytes, mimeType: mimeType),
       ),
@@ -1268,13 +1353,20 @@ final class BiliApiClient {
     if (url == null ||
         url.scheme != 'https' ||
         url.userInfo.isNotEmpty ||
+        url.port != 443 ||
         url.hasQuery ||
-        !(url.host == 'hdslb.com' || url.host.endsWith('.hdslb.com')) ||
+        url.hasFragment ||
+        !(url.host == 'hdslb.com' ||
+            url.host.endsWith('.hdslb.com') ||
+            url.host.endsWith('.biliimg.com')) ||
         width == null ||
         width <= 0 ||
         height == null ||
-        height <= 0) {
-      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+        height <= 0 ||
+        width > 20000 ||
+        height > 20000 ||
+        width * height > 40000000) {
+      throw ApiFailure(ApiFailureCategory.protocol, endpoint);
     }
     return ApiCommentPicture(url, width, height, bytes.length / 1024);
   }

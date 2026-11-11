@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart' hide SearchController;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -19,6 +20,9 @@ import '../features/messages/domain/message_target.dart';
 import '../features/messages/presentation/messages_screen.dart';
 import '../features/profile/application/profile_controller.dart';
 import '../features/profile/presentation/profile_screen.dart';
+import '../features/dynamic/application/dynamic_topic_controller.dart';
+import '../features/dynamic/domain/dynamic_link.dart';
+import '../features/dynamic/presentation/dynamic_topic_screen.dart';
 import '../core/input/input_stroke.dart';
 import '../core/input/shortcut_dispatcher.dart';
 import '../core/presentation/input_scope.dart';
@@ -186,6 +190,7 @@ GoRouter createBiliRouter({
           '/pgc/episode/:id',
           '/live/:roomId',
           '/user/:mid',
+          '/topic/:id',
           '/history',
           '/messages',
           '/settings',
@@ -260,6 +265,7 @@ final class _WorkspacePageScope extends ConsumerWidget {
         feedControllerProvider.overrideWith(FeedController.new),
         homeControllerProvider.overrideWith2(HomeController.new),
         profileControllerProvider.overrideWith2(ProfileController.new),
+        dynamicTopicProvider.overrideWith2(DynamicTopicController.new),
         liveControllerProvider.overrideWith2(LiveController.new),
         pgcControllerProvider.overrideWith2(PgcController.new),
         searchControllerProvider.overrideWith(SearchController.new),
@@ -571,6 +577,14 @@ final class _WorkspacePage extends ConsumerWidget {
       final id = UserId(uri.pathSegments.last);
       if (!id.isValid) return CommandOutcome.noOp;
       await container.read(profileControllerProvider(id).notifier).refresh();
+    } else if (tab.isTopic) {
+      await container
+          .read(dynamicTopicProvider(uri.pathSegments.last).notifier)
+          .refresh();
+      if (container.read(dynamicTopicProvider(uri.pathSegments.last)).error !=
+          null) {
+        return CommandOutcome.failed;
+      }
     } else if (tab.isLive) {
       final id = RoomId(uri.pathSegments.last);
       if (!id.isValid) return CommandOutcome.noOp;
@@ -640,6 +654,7 @@ final class _WorkspacePage extends ConsumerWidget {
               (tab.isVideo ||
                   tab.isLive ||
                   tab.isProfile ||
+                  tab.isTopic ||
                   tab.isOffline ||
                   tab.location.path == '/search'))
             ShortcutAction.refresh: (stroke) => _refresh(context, stroke),
@@ -658,6 +673,60 @@ final class _WorkspacePage extends ConsumerWidget {
                   ),
                 );
               default:
+                if (tab.isTopic) {
+                  return DynamicTopicScreen(
+                    key: PageStorageKey('topic-${tab.id}'),
+                    id: uri.pathSegments.last,
+                    onOpenUser: (user) => context.go('/user/${user.value}'),
+                    onOpenVideo: (video) =>
+                        context.go('/video/${video.id.value}'),
+                    onOpenLink: (target) async {
+                      final query = dynamicSearchQuery(target);
+                      if (query != null) {
+                        context.go(
+                          Uri(
+                            path: '/search',
+                            queryParameters: {'q': query},
+                          ).toString(),
+                        );
+                        return;
+                      }
+                      final topic = dynamicTopicId(target),
+                          video = dynamicVideo(target),
+                          room = dynamicLiveRoom(target);
+                      final pgc = dynamicPgcRoute(target);
+                      if (topic != null) {
+                        context.go('/topic/$topic');
+                        return;
+                      }
+                      if (video != null) {
+                        context.go('/video/${video.value}');
+                        return;
+                      }
+                      if (room != null) {
+                        context.go('/live/${room.value}');
+                        return;
+                      }
+                      if (pgc != null) {
+                        context.go(pgc);
+                        return;
+                      }
+                      var opened = false;
+                      try {
+                        opened = await ref.read(webLinkOpenerProvider)(target);
+                      } on PlatformException {
+                        opened = false;
+                      }
+                      if (context.mounted && !opened) {
+                        showAppNotice(context, '无法打开链接，请稍后重试');
+                      }
+                    },
+                    onLogin: () => showAppDialog<void>(
+                      context: context,
+                      builder: (_) => const AccountDialog(),
+                    ),
+                  );
+                }
                 if (tab.isOffline) {
                   return OfflineScreen(
                     key: PageStorageKey('offline-${tab.id}'),
@@ -767,6 +836,14 @@ final class _WorkspacePage extends ConsumerWidget {
                           onOpenLiveRoom: (room) =>
                               context.go('/live/${room.value}'),
                           onOpenSeason: (id) => context.go('/pgc/season/$id'),
+                          onOpenEpisode: (id) => context.go('/pgc/episode/$id'),
+                          onOpenTopic: (id) => context.go('/topic/$id'),
+                          onSearchQuery: (query) => context.go(
+                            Uri(
+                              path: '/search',
+                              queryParameters: {'q': query},
+                            ).toString(),
+                          ),
                           onLogin: () => showAppDialog<void>(
                             context: context,
                             builder: (_) => const AccountDialog(),

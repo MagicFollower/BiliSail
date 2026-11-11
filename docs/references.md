@@ -1,5 +1,19 @@
 # 参考项目、证据与采用边界
 
+2026-11-11 动态投票查看只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的投票卡片／正文、详情、模型及 HTTP 端点；核对实际 overrides／锁文件，仅采用协议事实与交互职责，独立实现。未复制 GPLv3 应用代码／资源或修改参考仓库、媒体依赖，详见[投票来源与验证](validation/dynamic-poll-viewing-2026-11-11.md)。
+
+2026-11-11 动态投稿继续只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的发布／富文本、表情、用户选择、投票及直播预约页面与HTTP协议。核对其实际overrides和锁文件，仅借鉴能力和协议事实，独立实现本项目的自适应表单与账号草稿，没有复制GPLv3应用源码／资源、修改相邻仓库或增加依赖；精确路径、采用范围及验证见[动态发布能力](validation/dynamic-publishing-parity-2026-11-11.md)。
+
+2026-11-10 独立话题页与动态发布只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的话题、发布、图片上传和话题选择职责，并核对官方话题举报 H5 的公开请求格式。独立实现应用内收藏／举报、共享草稿与发布流程，没有复制应用源码／资源或修改相邻仓库；协议、公开脚本摘要和验收边界见[独立话题页与动态发布](validation/dynamic-publishing-and-topic-page-2026-11-10.md)。
+
+2026-11-10 动态话题外跳定位只读核对 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/utils/app_scheme.dart` 中移动端 `/topic-detail` 与 app URI 分发，以及动态独立话题与富文本入口。独立实现身份优先、已知链接识别和应用内名称回退，未复制 GPLv3 应用源码／资源、修改相邻仓库或依赖。复现与验证见[动态话题外跳修复](validation/dynamic-topic-navigation-2026-11-10.md)。
+
+2026-11-09 应用内话题和动态展示修复继续只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/pages/dynamics_topic/`、`lib/http/{api,dynamics,constants}.dart`、话题 top／feed 模型、`lib/common/widgets/text_more/` 和 `lib/pages/dynamics/widgets/additional_panel.dart`。借鉴话题 GET、排序／折叠职责、实际文本溢出检测和预约的 `status == type` 规则；独立编写 API、领域、控制器、页面与排版测量，没有复制 GPLv3 应用源码或资源，没有修改相邻仓库、依赖或媒体 fork。来源、协议、行为与离线验证见[应用内话题与动态展示修复](validation/dynamic-topics-and-text-2026-11-09.md)。
+
+2026-11-09 动态内容重构只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/models/dynamics/result.dart`、`lib/pages/dynamics/widgets/{content_panel,module_panel,additional_panel,rich_node_panel,video_panel}.dart`、`lib/pages/dynamics_detail/view.dart` 及 `lib/utils/app_scheme.dart`。核对实际 overrides／锁文件后，只借鉴内容字段、信息层次和宽窄屏职责，独立实现解析与 Flutter UI；未复制 GPLv3 应用源码或资源，未修改相邻仓库或更换媒体依赖。逐类功能对照、官方目标动作边界与验证见[动态内容与详情重构](validation/dynamic-content-redesign-2026-11-09.md)。
+
+2026-11-09 fvp 恢复后停帧定位只读核对 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/plugin/pl_player/controller.dart` 及实际 overrides／锁文件。借鉴原生时钟同步、直接控制和原生缓冲事件的职责划分，独立修复本项目 MDK 桥的首次时钟接入窗口；未复制 GPLv3 应用源码／资源、修改相邻仓库或更换媒体依赖。实际日志、精确依赖与验证见[专项记录](validation/fvp-resume-clock-2026-11-09.md)。
+
 2026-11-09 番剧续播只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/utils/page_utils.dart`、`lib/models_new/pgc/pgc_info_model/{result,user_status,user_progress}.dart`、`lib/http/{search,video}.dart` 和 `lib/pages/video/controller.dart`。借鉴明确剧集／最近观看剧集／首集的选择顺序，以及 PGC 独立进度职责；独立实现本地优先、Web season 秒数读取和账号／取消边界，未复制 GPLv3 应用源码、资源或引入依赖，未修改相邻仓库。字段单位另核对本地 bili-kernel `PgcDetailResponse.cs`。精确来源和离线验证见[番剧续播修复](validation/pgc-resume-2026-11-09.md)。
 
 2026-11-08 Android fvp 音频定位修复继续只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的 `lib/plugin/pl_player/controller.dart`，借鉴原生同步／缓存和薄控制器职责，独立处理 MDK 暂停音频 seek 的平台限制。Windows 对照、实际 SDK 产物偏差、GPLv3／SDK 范围及回归见[音频定位记录](validation/android-fvp-seek-audio-2026-11-08.md)。
