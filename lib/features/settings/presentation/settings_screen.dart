@@ -405,8 +405,16 @@ final class _SettingsCategoryPageState
                             '液态玻璃底栏',
                             s.liquidGlassDock,
                             controller.setLiquidGlassDock,
-                            '窄窗口下底部的悬浮液态玻璃导航栏，额外提供历史与下载入口。关闭后改用系统样式的底栏（历史与下载改从头像菜单进入），个别无法正确合成玻璃效果的运行环境可关掉本项。',
+                            '窄窗口下底部的悬浮液态玻璃导航栏。关闭后改用系统样式的底栏，个别无法正确合成玻璃效果的运行环境可关掉本项。',
                           ),
+                          // 仅在液态玻璃底栏开启时显示：控制底栏是否动态加入历史/下载入口。
+                          if (s.liquidGlassDock)
+                            _toggle(
+                              '底部显示历史和下载',
+                              s.dockShowHistoryDownloads,
+                              controller.setDockShowHistoryDownloads,
+                              '开启后在液态玻璃底栏中动态加入「历史」与「下载」两个入口；默认关闭，底栏只保留首页／动态／直播／我的／设置，历史与下载改从头像菜单进入。',
+                            ),
                           _toggle(
                             '视频条目液态卡片',
                             s.liquidVideoCards,

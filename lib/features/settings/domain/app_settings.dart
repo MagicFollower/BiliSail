@@ -76,6 +76,7 @@ final class AppSettings {
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
     this.liquidGlassDock = true,
+    this.dockShowHistoryDownloads = false,
     this.liquidVideoCards = true,
     this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.allowConcurrentPlayback = false,
@@ -169,6 +170,7 @@ final class AppSettings {
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
     this.liquidGlassDock = true,
+    this.dockShowHistoryDownloads = false,
     this.liquidVideoCards = true,
     this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.allowConcurrentPlayback = false,
@@ -258,6 +260,11 @@ final class AppSettings {
   /// back to the Material `NavigationBar` the dock replaced, which is what a
   /// runtime that cannot composite the glass over scrolling content needs.
   final bool liquidGlassDock;
+
+  /// 液态玻璃底栏是否额外显示「历史」与「下载」两个尾部入口。默认关闭：底栏只保留
+  /// 首页／动态／直播／我的／设置，历史与下载改从头像菜单进入；开启后这两个入口动态
+  /// 加入底栏。仅在 [liquidGlassDock] 开启时有意义，Material 底栏不受此项影响。
+  final bool dockShowHistoryDownloads;
 
   /// Video items as painted glass boards: a translucent rounded surface with a
   /// lit rim, floating over the page backdrop, with the item text re-laid for
@@ -374,6 +381,7 @@ final class AppSettings {
     SidebarStyle? sidebarStyle,
     bool? sidebarCollapsed,
     bool? liquidGlassDock,
+    bool? dockShowHistoryDownloads,
     bool? liquidVideoCards,
     DynamicPageTab? defaultDynamicTab,
     bool? allowConcurrentPlayback,
@@ -457,6 +465,8 @@ final class AppSettings {
     sidebarStyle: sidebarStyle ?? this.sidebarStyle,
     sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
     liquidGlassDock: liquidGlassDock ?? this.liquidGlassDock,
+    dockShowHistoryDownloads:
+        dockShowHistoryDownloads ?? this.dockShowHistoryDownloads,
     liquidVideoCards: liquidVideoCards ?? this.liquidVideoCards,
     defaultDynamicTab: defaultDynamicTab ?? this.defaultDynamicTab,
     allowConcurrentPlayback:

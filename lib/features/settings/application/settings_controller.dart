@@ -101,6 +101,8 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(sidebarCollapsed: value));
   Future<void> setLiquidGlassDock(bool value) =>
       update((current) => current.copyWith(liquidGlassDock: value));
+  Future<void> setDockShowHistoryDownloads(bool value) =>
+      update((current) => current.copyWith(dockShowHistoryDownloads: value));
   Future<void> setLiquidVideoCards(bool value) =>
       update((current) => current.copyWith(liquidVideoCards: value));
   Future<void> setDefaultDynamicTab(DynamicPageTab value) =>

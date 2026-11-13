@@ -146,6 +146,7 @@ final class BiliAppShell extends StatefulWidget {
     this.sidebarStyle = SidebarStyle.automatic,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.liquidGlassDock = true,
+    this.dockShowHistoryDownloads = false,
     this.sidebarCollapsed,
     this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.onSidebarCollapsedChanged,
@@ -163,6 +164,7 @@ final class BiliAppShell extends StatefulWidget {
   final SidebarStyle sidebarStyle;
   final NavigationBarMode navigationBarMode;
   final bool liquidGlassDock;
+  final bool dockShowHistoryDownloads;
   final bool? sidebarCollapsed;
   final DynamicPageTab defaultDynamicTab;
   final ValueChanged<bool>? onSidebarCollapsedChanged;
@@ -1829,14 +1831,18 @@ final class _BiliAppShellState extends State<BiliAppShell>
     if (!widget.liquidGlassDock) {
       return _materialBottomNavigation(context, sections, tab, selected);
     }
-    // Only the messages page has no dock destination and falls back to
-    // the unselected strip; downloads and history live on the glass bar.
-    if (selected == WorkspaceSection.messages) {
+    // 是否在底栏动态加入「历史」「下载」两个尾部入口（设置开关，默认关闭）。
+    final showHistoryDownloads = widget.dockShowHistoryDownloads;
+    // 消息页没有底栏目的地，回退未选中扁条；关闭历史/下载入口时，下载页同样
+    // 没有目的地（下载不在 sections 中），也回退扁条，与 Material 底栏一致。
+    if (selected == WorkspaceSection.messages ||
+        (!showHistoryDownloads && selected == WorkspaceSection.downloads)) {
       return _unselectedBottomNavigation(context, sections);
     }
-    // Liquid glass dock replaces the Material navigation bar. The narrow
-    // layout has no top toolbar, so its history and downloads entries move
-    // into the dock as trailing destinations. Labels clamp their text scale
+    // Liquid glass dock replaces the Material navigation bar. When the
+    // dockShowHistoryDownloads switch is on, the narrow layout's history and
+    // downloads entries join the dock as trailing destinations (off by default,
+    // reached from the account menu instead). Labels clamp their text scale
     // like NavigationDestination did, so tall system text scales cannot
     // overflow the dock's fixed height.
     final location = _frameTab(context).location;
@@ -1849,13 +1855,14 @@ final class _BiliAppShellState extends State<BiliAppShell>
       WorkspaceSection.settings => tab.isSettings,
       _ => tab.isBrowse,
     };
-    // /history borrows the "我的" section for selection. The highlight has to
-    // compare the destination that was actually drawn as selected, not the
-    // section: comparing sections left "我的" lit while the highlight sat on
-    // "历史".
+    // /history 借用「我的」section 做选中判定。开启历史入口时，高亮落在「历史」
+    // 目的地而非「我的」，故排除 mine；关闭历史入口时底栏没有「历史」目的地，
+    // /history 像 Material 底栏那样高亮「我的」。
     bool sectionSelected(WorkspaceSection item) =>
         selected == item &&
-        !(item == WorkspaceSection.mine && location.path == '/history');
+        !(showHistoryDownloads &&
+            item == WorkspaceSection.mine &&
+            location.path == '/history');
     final destinations = <_DockDestination>[
       for (final item in sections)
         if (item != WorkspaceSection.settings)
@@ -1869,18 +1876,21 @@ final class _BiliAppShellState extends State<BiliAppShell>
               }
             },
           ),
-      _DockDestination(
-        label: '历史',
-        icon: Icons.history_rounded,
-        selected: location.path == '/history',
-        onTap: () => context.go('/history'),
-      ),
-      _DockDestination(
-        label: '下载',
-        icon: Icons.download_outlined,
-        selected: location.path == '/downloads',
-        onTap: () => context.go('/downloads'),
-      ),
+      // 仅在开关开启时动态加入历史/下载两个尾部入口；默认关闭时底栏不含它们。
+      if (showHistoryDownloads) ...[
+        _DockDestination(
+          label: '历史',
+          icon: Icons.history_rounded,
+          selected: location.path == '/history',
+          onTap: () => context.go('/history'),
+        ),
+        _DockDestination(
+          label: '下载',
+          icon: Icons.download_outlined,
+          selected: location.path == '/downloads',
+          onTap: () => context.go('/downloads'),
+        ),
+      ],
       _DockDestination(
         label: WorkspaceSection.settings.label,
         icon: _sectionIcon(WorkspaceSection.settings),

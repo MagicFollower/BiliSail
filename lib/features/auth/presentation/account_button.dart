@@ -32,7 +32,9 @@ class AccountButton extends ConsumerWidget {
         child: NetworkAvatar(
           url: auth.avatarUrl,
           name: auth.userName ?? '',
-          radius: 12,
+          // 左上角头像圆圈适当调大（半径 12→16，直径 24→32），与顶栏 34px 工具
+          // 按钮和液态玻璃界面的视觉重量匹配；仍在 IconButton 内居中，不溢出。
+          radius: 16,
         ),
       ),
       onPressed: () {

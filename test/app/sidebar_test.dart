@@ -260,7 +260,14 @@ void main() {
           );
           await tester.pumpAndSettle();
           final full = find.widgetWithText(ChoiceChip, '完整侧栏');
-          await tester.ensureVisible(full);
+          // 新增设置项使列表变高，ensureVisible 默认贴边会把芯片中心留在视口外
+          // 导致 tap 落空；居中滚动确保芯片落在可点击区域（与真实用户滚动一致）。
+          await Scrollable.ensureVisible(
+            tester.element(full),
+            alignment: 0.5,
+            duration: const Duration(milliseconds: 120),
+          );
+          await tester.pumpAndSettle();
           await tester.tap(full);
           await tester.pumpAndSettle();
           expect(tester.getSize(_region).width, failSave ? 76 : 164);

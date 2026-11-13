@@ -91,6 +91,8 @@ class SqliteSettingsRepository implements SettingsRepository {
           NavigationBarMode.automatic,
       sidebarCollapsed: boolean('sidebarCollapsed', false),
       liquidGlassDock: boolean('liquidGlassDock', true),
+      // 默认关闭：旧快照无此键时回退 false，底栏不含历史/下载入口。
+      dockShowHistoryDownloads: boolean('dockShowHistoryDownloads', false),
       liquidVideoCards: boolean('liquidVideoCards', true),
       defaultDynamicTab:
           DynamicPageTab.values
@@ -290,17 +292,18 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 合并取舍：取上游 schemaVersion 47。上游本轮新增「鼠标手势关闭标签」
-        // （closeTabOnMiddleClick/RightClick/DoubleClick）与弹幕默认字体等键，
-        // 此 payload 已是上游 47 键集与本分支 dock/liquid-card/backgroundPlayback
-        // 键的并集。reader 从不按此数字分支，它只声明 payload 所持键集（F73 口径）。
-        'schemaVersion': 47,
+        // 48 在上游 47 键集（含鼠标手势关闭标签、弹幕默认字体）与本分支
+        // dock/liquid-card/backgroundPlayback 键之外，新增本分支的
+        // dockShowHistoryDownloads（底栏是否显示历史/下载，默认 false）。
+        // reader 从不按此数字分支，它只声明 payload 所持键集（F73 口径）。
+        'schemaVersion': 48,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
         'sidebarStyle': value.sidebarStyle.name,
         'sidebarCollapsed': value.sidebarCollapsed,
         'liquidGlassDock': value.liquidGlassDock,
+        'dockShowHistoryDownloads': value.dockShowHistoryDownloads,
         'liquidVideoCards': value.liquidVideoCards,
         'defaultDynamicTab': value.defaultDynamicTab.name,
         'fullscreenSwipeControls': value.fullscreenSwipeControls,

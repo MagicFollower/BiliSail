@@ -74,6 +74,9 @@ Widget dpiBrowserApp({
     builder: builder,
     home: BiliAppShell(
       navigationMode: WorkspaceNavigationMode.dualTabs,
+      // DPI 适配校验完整底栏（含历史/下载）在各宽度与文本缩放下不溢出，
+      // 故显式开启该入口；默认关闭的行为由 dock_entries_test 单独覆盖。
+      dockShowHistoryDownloads: true,
       location: search ? '/search' : '/',
       child: search
           ? const Column(

@@ -1958,6 +1958,8 @@ void main() {
           navigationMode: mode,
           customCaption: true,
           accountBuilder: (_) => const Icon(Icons.account_circle),
+          // 本用例校验完整底栏（含历史/下载）的选中与四窄链接，需开启该入口。
+          dockShowHistoryDownloads: true,
         );
         addTearDown(router.dispose);
         await tester.pumpWidget(InputTestApp.router(routerConfig: router));
@@ -2243,6 +2245,7 @@ GoRouter _router(
   bool closeTabOnMiddleClick = false,
   bool closeTabOnRightClick = false,
   bool closeTabOnDoubleClick = false,
+  bool dockShowHistoryDownloads = false,
 }) => GoRouter(
   observers: [],
   initialLocation: initialLocation,
@@ -2256,6 +2259,7 @@ GoRouter _router(
           closeTabOnMiddleClick: closeTabOnMiddleClick,
           closeTabOnRightClick: closeTabOnRightClick,
           closeTabOnDoubleClick: closeTabOnDoubleClick,
+          dockShowHistoryDownloads: dockShowHistoryDownloads,
           location: state.uri.toString(),
           accountBuilder: accountBuilder,
           pageBuilder: (context, tab) => tab.location.path == '/search'

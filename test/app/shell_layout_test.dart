@@ -206,6 +206,8 @@ void main() {
                 home: BiliAppShell(
                   location: location,
                   navigationMode: WorkspaceNavigationMode.dualTabs,
+                  // 校验下载页与常规页底栏几何一致，需开启历史/下载入口。
+                  dockShowHistoryDownloads: true,
                   child: const SizedBox.expand(),
                 ),
               ),
@@ -344,6 +346,7 @@ void main() {
           theme: BiliTheme.light(),
           home: const BiliAppShell(
             navigationMode: WorkspaceNavigationMode.dualTabs,
+            dockShowHistoryDownloads: true,
             location: '/',
             child: SizedBox.expand(key: ValueKey('retained-content')),
           ),
@@ -772,6 +775,7 @@ void main() {
         home: BiliAppShell(
           location: '/?channel=live&section=我的关注',
           navigationMode: WorkspaceNavigationMode.multipleTabs,
+          dockShowHistoryDownloads: true,
           accountBuilder: (_) => const Icon(Icons.account_circle),
           child: const SizedBox.expand(key: ValueKey('live-content')),
         ),

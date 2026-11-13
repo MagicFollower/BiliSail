@@ -8,7 +8,11 @@ import 'package:liquid_dock_navi/liquid_dock_navi.dart';
 void main() {
   /// Mounts the narrow layout, where the setting has something to switch: the
   /// wide layout keeps its sidebar either way.
-  Future<GoRouter> mount(WidgetTester tester, {required bool glass}) async {
+  Future<GoRouter> mount(
+    WidgetTester tester, {
+    required bool glass,
+    bool showHistoryDownloads = false,
+  }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.display.size = const Size(390, 900);
     tester.view.physicalSize = const Size(390, 900);
@@ -22,6 +26,7 @@ void main() {
           builder: (context, state, child) => BiliAppShell(
             location: state.uri.toString(),
             liquidGlassDock: glass,
+            dockShowHistoryDownloads: showHistoryDownloads,
             pageBuilder: (_, tab) => SizedBox(key: ValueKey('page-${tab.id}')),
             child: child,
           ),
@@ -44,11 +49,28 @@ void main() {
     await mount(tester, glass: true);
     expect(find.byType(LiquidDockNavi), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
-    // The dock carries the two entries the narrow layout has no toolbar for.
+    // 默认关闭「底部显示历史和下载」：底栏不含这两个入口（改从头像菜单进入）。
     final bar = find.byKey(const ValueKey('workspace-bottom-navigation'));
-    expect(find.descendant(of: bar, matching: find.text('历史')), findsOneWidget);
-    expect(find.descendant(of: bar, matching: find.text('下载')), findsOneWidget);
+    expect(find.descendant(of: bar, matching: find.text('历史')), findsNothing);
+    expect(find.descendant(of: bar, matching: find.text('下载')), findsNothing);
   });
+
+  testWidgets(
+    'enabling dock entries adds history and downloads to the glass bar',
+    (tester) async {
+      await mount(tester, glass: true, showHistoryDownloads: true);
+      expect(find.byType(LiquidDockNavi), findsOneWidget);
+      final bar = find.byKey(const ValueKey('workspace-bottom-navigation'));
+      expect(
+        find.descendant(of: bar, matching: find.text('历史')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: bar, matching: find.text('下载')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('turning the setting off restores the Material bar', (
     tester,

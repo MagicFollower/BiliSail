@@ -134,6 +134,7 @@ GoRouter createBiliRouter({
             appIcon: settings.appIcon,
             navigationBarMode: settings.navigationBarMode,
             liquidGlassDock: settings.liquidGlassDock,
+            dockShowHistoryDownloads: settings.dockShowHistoryDownloads,
             sidebarStyle: settings.sidebarStyle,
             sidebarCollapsed: settings.sidebarCollapsed,
             onSidebarCollapsedChanged: (collapsed) async {

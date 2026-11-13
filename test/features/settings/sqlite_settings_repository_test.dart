@@ -31,7 +31,8 @@ void main() {
       expect(loaded.closeTabOnDoubleClick, isFalse);
       expect(loaded.theme, AppThemePreference.dark);
     }
-    expect(database.schemaVersion, 3);
+    // 上游用例断言 SQLite 表版本 3；本分支 AppDatabase 已迁移到 6。
+    expect(database.schemaVersion, 6);
   });
 
   test(
@@ -137,8 +138,8 @@ void main() {
     expect(
       (jsonDecode((await database.readSetting('preferences.v1'))!)
           as Map)['schemaVersion'],
-      // The merged snapshot carries upstream's keys plus this branch's own at 47.
-      47,
+      // The merged snapshot carries upstream's keys plus this branch's own at 48.
+      48,
     );
     await repository.save(const AppSettings.defaults());
     settings = await repository.load();
@@ -296,7 +297,7 @@ void main() {
         final snapshot = jsonDecode(
           (await database.readSetting('preferences.v1'))!,
         );
-        expect(snapshot['schemaVersion'], 47);
+        expect(snapshot['schemaVersion'], 48);
         expect(snapshot['liveStreamPreference'], preference.toJson());
       }
       await repository.save(const AppSettings.defaults());
@@ -719,7 +720,8 @@ void main() {
         expect(reloaded.sponsorBlockBottomPadding, expected);
         expect(reloaded.theme, AppThemePreference.dark);
       }
-      expect(database.schemaVersion, 3);
+      // 上游用例断言 SQLite 表版本 3；本分支 AppDatabase 已迁移到 6。
+      expect(database.schemaVersion, 6);
     },
   );
   test('wheel damping migrates and survives save and reload', () async {

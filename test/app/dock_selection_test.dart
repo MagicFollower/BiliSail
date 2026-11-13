@@ -18,6 +18,8 @@ GoRouter _router(
     ShellRoute(
       builder: (context, state, child) => BiliAppShell(
         location: state.uri.toString(),
+        // 这些用例验证历史/下载入口的选择与重按守卫，需开启该入口。
+        dockShowHistoryDownloads: true,
         pageBuilder: (context, tab) => page(tab),
         child: child,
       ),
