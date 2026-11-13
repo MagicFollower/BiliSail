@@ -51,7 +51,6 @@ enum PlayerDiagnosticKind {
   openStarted,
   openReady,
   openStageChanged,
-  nativeProcessExited,
   openTerminated,
   videoInterrupted,
   playbackStalled,
@@ -77,13 +76,7 @@ enum NativeErrorCause {
 
 enum NativeLogSeverity { warning, error, fatal }
 
-enum PlaybackStallReason {
-  playbackClock,
-  audioClock,
-  videoBuffer,
-  audioFrames,
-  videoClock,
-}
+enum PlaybackStallReason { playbackClock, audioClock, videoBuffer, videoClock }
 
 /// The bounded source-open step, without media URLs or native log text.
 enum NativeReadinessStage { tracks, externalAudio, videoDecode, videoOutput }

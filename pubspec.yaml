@@ -1,7 +1,7 @@
 name: bilisail
 description: BiliSail, a cross-platform third-party Bilibili client focused on the viewing experience, built with Flutter.
 publish_to: none
-version: 1.2.9+1
+version: 1.2.9+5
 
 environment:
   sdk: '>=3.13.0 <4.0.0'
@@ -20,6 +20,7 @@ dependencies:
   archive: 4.5.2
   crypto: 3.0.7
   xml: 6.6.1
+  pointycastle: 4.0.0
   path_provider: 2.1.6
   file_selector: 1.1.0
   flutter_secure_storage: 11.2.0
@@ -29,11 +30,6 @@ dependencies:
   package_info_plus: 10.2.2
   audio_service: 0.18.19
   audio_service_mpris: 1.0.0-beta.3
-  # Direct plugin dependency is required by Flutter's plugin registration.
-  fvp:
-    git:
-      url: https://github.com/wang-bin/fvp.git
-      ref: e81637411c58a9ae28de246ee73ad06e3418f10e
   bili_api:
     path: packages/bili_api
   bili_player:
@@ -67,42 +63,42 @@ dependency_overrides:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: media_kit
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: media_kit_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/universal/media_kit_libs_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_android_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/android/media_kit_libs_android_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_windows_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/windows/media_kit_libs_windows_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_macos_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/macos/media_kit_libs_macos_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_ios_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/ios/media_kit_libs_ios_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_linux:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/linux/media_kit_libs_linux
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
 
 dev_dependencies:
   flutter_driver:
@@ -119,11 +115,6 @@ flutter:
     enable-swift-package-manager: false
   uses-material-design: true
   assets:
-    - native/fvp/assets.lock.json
-    - native/fvp/NOTICE.md
-    - native/fvp/LICENSE-fvp.txt
-    - native/fvp/LICENSE-libass.txt
-    - native/fvp/mdk.podspec
     - packages/bili_mux/LICENSE-FFmpeg.txt
     - assets/icons/
     - assets/branding/app_icon.png

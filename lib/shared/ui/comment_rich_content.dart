@@ -10,7 +10,9 @@ import '../../features/comments/domain/comment_text.dart';
 import '../../features/comments/domain/comment_time.dart';
 import '../../features/comments/domain/comments_repository.dart';
 import 'comment_text_styles.dart';
+import 'user_decoration_image.dart';
 import 'comment_badge.dart';
+import 'network_avatar.dart';
 
 TextEditingValue insertCommentEmote(TextEditingValue value, String token) {
   final selection = value.selection;
@@ -187,30 +189,6 @@ class _CommentRichContentState extends State<CommentRichContent> {
             ),
           ),
         ),
-        if (comment.upLiked || comment.upReplied)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 4,
-              children: [
-                if (comment.upLiked)
-                  Text(
-                    'UP 主觉得很赞',
-                    style: styles.badge.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                if (comment.upReplied)
-                  Text(
-                    'UP 主回复过',
-                    style: styles.badge.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-              ],
-            ),
-          ),
         if (comment.pictures.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -252,6 +230,30 @@ class _CommentRichContentState extends State<CommentRichContent> {
               ],
             ),
           ),
+        if (comment.upLiked || comment.upReplied)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 4,
+              children: [
+                if (comment.upLiked)
+                  Text(
+                    'UP 主觉得很赞',
+                    style: styles.badge.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                if (comment.upReplied)
+                  Text(
+                    'UP 主回复过',
+                    style: styles.badge.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -266,6 +268,9 @@ class CommentAuthorHeader extends StatelessWidget {
   final CommentEntry comment;
   final ValueChanged<UserId>? onOpenUser;
 
+  // Body starts after the 30px avatar and 12px gap.
+  static const contentIndent = 42.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), c = comment;
@@ -274,6 +279,7 @@ class CommentAuthorHeader extends StatelessWidget {
     final location = c.ipLocation?.trim();
     final hasLocation = location != null && location.isNotEmpty;
     final identity = Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
@@ -337,25 +343,54 @@ class CommentAuthorHeader extends StatelessWidget {
           ),
       ],
     );
-    if (c.decorationImageUrl == null) return identity;
+    final author = Row(
+      children: [
+        InkWell(
+          onTap: c.authorId?.isValid == true && onOpenUser != null
+              ? () => onOpenUser!(c.authorId!)
+              : null,
+          child: NetworkAvatar(
+            url: c.avatarUrl,
+            pendantUrl: c.pendantUrl,
+            name: c.author,
+            radius: 15,
+          ),
+        ),
+        const SizedBox(width: contentIndent - 30),
+        Expanded(child: identity),
+      ],
+    );
+    if (c.decorationImageUrl == null) return author;
     final decoration = CommentAuthorDecoration(comment: c);
     return LayoutBuilder(
-      builder: (context, constraints) => constraints.maxWidth >= 220
-          ? Row(
-              children: [
-                Expanded(child: identity),
-                const SizedBox(width: 8),
-                decoration,
-              ],
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                identity,
-                const SizedBox(height: 2),
-                Align(alignment: Alignment.centerRight, child: decoration),
-              ],
+      builder: (context, constraints) {
+        final contentWidth = (constraints.maxWidth - contentIndent).clamp(
+          0.0,
+          double.infinity,
+        );
+        final spacing = contentWidth.clamp(0.0, 8.0);
+        final decorationWidth = ((contentWidth - spacing) * .4).clamp(
+          0.0,
+          112.0,
+        );
+        return Row(
+          children: [
+            // Keep the avatar, name and metadata on one center with the card.
+            Expanded(child: author),
+            SizedBox(width: spacing),
+            // Keep the art beside the avatar and leave most of the row for
+            // readable author metadata, scaling the art and serial together.
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: decorationWidth),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: decoration,
+              ),
             ),
+          ],
+        );
+      },
     );
   }
 }
@@ -380,48 +415,42 @@ class CommentAuthorDecoration extends StatelessWidget {
       excludeSemantics: true,
       child: SizedBox(
         width: 112,
-        height: 40,
-        child: ClipRect(
-          child: Stack(
-            children: [
-              // 装扮画布右侧带留白；平移画布并裁剪，让可见图案靠右。
+        height: 52,
+        child: Stack(
+          // Wide canvases include transparent left margins. Keep their natural
+          // width instead of shrinking the character to fit the reserved slot.
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: UserDecorationImage(url: url, height: 52),
+            ),
+            if (number != null && number.isNotEmpty)
               Positioned(
-                left: 40,
-                right: -40,
+                right: 0,
                 top: 0,
                 bottom: 0,
-                child: AppNetworkImage(
-                  url: publicImageThumbnail(
-                    url,
-                    width: 336,
-                    height: 120,
-                  ).toString(),
-                  cacheWidth: 336,
-                  cacheHeight: 120,
-                  fit: BoxFit.cover,
+                width: 92,
+                child: Align(
                   alignment: Alignment.centerRight,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                ),
-              ),
-              if (number != null && number.isNotEmpty)
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 60,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'NO.\n$number',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textScaler: TextScaler.noScaling,
-                      style: TextStyle(fontSize: 10, height: 1.1, color: color),
+                  child: Text(
+                    'NO.\n$number',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textScaler: TextScaler.noScaling,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.1,
+                      fontWeight: FontWeight.bold,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: color,
                     ),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );

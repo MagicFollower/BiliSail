@@ -59,6 +59,45 @@ Map<String, Object?> post({
 };
 void main() {
   for (final home in [true, false]) {
+    test(
+      '${home ? 'home' : 'space'} keeps direct and forwarded avatar pendants',
+      () async {
+        final item = post(id: '2');
+        final modules = item['modules'] as Map<String, Object?>;
+        item['modules'] = <String, Object?>{
+          ...modules,
+          'module_author': <String, Object?>{
+            ...modules['module_author'] as Map<String, Object?>,
+            'pendant': {
+              'image': '//i0.hdslb.com/static.png',
+              'image_enhance': '//i0.hdslb.com/animated.webp',
+            },
+          },
+        };
+        final api = BiliApiClient(
+          transport: DynamicTransport([post(id: '1', original: item), item]),
+        );
+        final posts = home
+            ? (await HomeClient(api).load(
+                channel: 'dynamic',
+                section: '全部',
+                page: 1,
+              )).items.map((e) => e.dynamicPost!).toList()
+            : (await ProfileClient(
+                api,
+              ).loadDynamics('2')).items.map((e) => e.dynamicPost!).toList();
+        expect(posts.first.authorPendantUrl, isNull);
+        expect(
+          posts.first.original?.authorPendantUrl.toString(),
+          'https://i0.hdslb.com/animated.webp',
+        );
+        expect(
+          posts.last.authorPendantUrl.toString(),
+          'https://i0.hdslb.com/animated.webp',
+        );
+      },
+    );
+
     for (final type in [
       'DYNAMIC_TYPE_LIVE',
       'DYNAMIC_TYPE_LIVE_RCMD',
@@ -403,7 +442,7 @@ void main() {
             major: {
               'draw': {
                 'items': List.generate(
-                  12,
+                  20,
                   (i) => {'src': '//i0.hdslb.com/$i.jpg'},
                 ),
               },
@@ -430,7 +469,7 @@ void main() {
         expect(p.spans[4].userId, '123');
         expect(p.spans[5].userId, isNull);
         expect(p.spans[6].linkUrl, isNull);
-        expect(p.imageUrls.length, 9);
+        expect(p.imageUrls.length, 18);
         expect(p.likeCount, isNull);
         expect(p.commentCount, 4);
         expect(() => p.imageUrls.clear(), throwsUnsupportedError);

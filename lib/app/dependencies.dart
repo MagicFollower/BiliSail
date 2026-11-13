@@ -12,6 +12,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/network/api_requests.dart';
+import '../core/network/web_device_store.dart';
 import '../domain/media_cdn.dart';
 import '../domain/audio_quality.dart';
 import '../core/logging/playback_diagnostic_log.dart';
@@ -104,6 +105,8 @@ import '../features/playback/data/api_video_preview_repository.dart';
 import '../features/playback/data/api_playback_history_repository.dart';
 import '../features/playback/data/api_content_playback_repository.dart';
 import '../features/pgc/application/pgc_controller.dart';
+import '../features/pgc/application/pgc_follow_controller.dart';
+import '../features/pgc/data/api_pgc_follow_repository.dart';
 import '../features/pgc/data/api_pgc_repository.dart';
 import '../features/pgc/data/local_pgc_resume_repository.dart';
 import '../features/pgc/application/pgc_danmaku_controller.dart';
@@ -255,7 +258,15 @@ class AppDependencies {
         },
       ),
     );
-    final api = BiliApiClient(sessionProvider: requests);
+    final webDevice = WebDeviceStore(
+      SystemCredentialStore(keyPrefix: 'bilisail.web_device.v1'),
+    );
+    final api = BiliApiClient(
+      sessionProvider: requests,
+      prepareWebRequests: true,
+      loadWebDevice: webDevice.load,
+      saveWebDevice: webDevice.save,
+    );
     late final SessionRepository session;
     late final AppDependencies dependencies;
     final library = SqliteLibraryRepository(
@@ -304,18 +315,11 @@ class AppDependencies {
             const FileAccessService().trustedDownloadDocumentsDirectory,
       ),
     );
-    PlayerEngine createPlayerEngine() => ConfigurablePlayerEngine(
-      createEngine: () async {
-        final saved = await settings.load();
-        return switch (saved.playbackBackend) {
-          PlaybackBackendPreference.mediaKit => MediaKitEngine(
-            onDiagnostic: playbackLog?.record,
-          ),
-          PlaybackBackendPreference.fvp => FvpEngine(
-            onDiagnostic: (event) => playbackLog?.record(event, backend: 'fvp'),
-          ),
-        };
-      },
+    PlayerEngine createPlayerEngine() => ConfigurablePlayerEngine.select(
+      selectEngine: () async => PlayerEngineSelection(
+        PlaybackBackendPreference.mediaKit,
+        () async => MediaKitEngine(onDiagnostic: playbackLog?.record),
+      ),
     );
     final cardPreviews = VideoCardPreviewPlayback(
       createEngine: createPlayerEngine,
@@ -406,6 +410,11 @@ class AppDependencies {
       },
     );
     session = SessionRepository(
+      loginClientFactory: () => BiliApiClient(
+        prepareWebRequests: true,
+        loadWebDevice: webDevice.load,
+        saveWebDevice: webDevice.save,
+      ),
       loadAppDevice: () => dependencies.appRecommendationIdentity.deviceId(),
       api: api,
       requests: requests,
@@ -538,6 +547,13 @@ class AppDependencies {
         }),
         pgcRepositoryProvider.overrideWithValue(
           ApiPgcRepository(
+            PgcClient(api),
+            requests,
+            accountScope: () => session.accountScope,
+          ),
+        ),
+        pgcFollowRepositoryProvider.overrideWithValue(
+          ApiPgcFollowRepository(
             PgcClient(api),
             requests,
             accountScope: () => session.accountScope,

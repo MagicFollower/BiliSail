@@ -1,6 +1,7 @@
 import 'dart:ui' show ViewFocusEvent, ViewFocusState;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
@@ -139,6 +140,9 @@ final class BiliAppShell extends StatefulWidget {
     this.shortcuts = const ShortcutSettings.defaults(),
     this.appIcon = AppIconPreference.bilisail,
     this.navigationMode,
+    this.closeTabOnMiddleClick = false,
+    this.closeTabOnRightClick = false,
+    this.closeTabOnDoubleClick = false,
     this.sidebarStyle = SidebarStyle.automatic,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.liquidGlassDock = true,
@@ -153,6 +157,9 @@ final class BiliAppShell extends StatefulWidget {
   final ShortcutSettings shortcuts;
   final AppIconPreference appIcon;
   final WorkspaceNavigationMode? navigationMode;
+  final bool closeTabOnMiddleClick;
+  final bool closeTabOnRightClick;
+  final bool closeTabOnDoubleClick;
   final SidebarStyle sidebarStyle;
   final NavigationBarMode navigationBarMode;
   final bool liquidGlassDock;
@@ -417,7 +424,13 @@ final class _BiliAppShellState extends State<BiliAppShell>
         return controller;
       });
   void _restoreSearch() {
-    _searchFor(_displayTab).text = _searchDrafts[_displayTab.id] ?? '';
+    final tab = _displayTab;
+    final query =
+        _searchDrafts[tab.id] ??
+        (tab.location.path == '/search'
+            ? tab.location.queryParameters['q'] ?? ''
+            : '');
+    _searchFor(tab).text = query;
   }
 
   @override
@@ -2156,6 +2169,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
 
   Widget _tab(BuildContext context, WorkspaceTab tab) {
     final selected = tab.id == _frameTab(context).id;
+    final canCloseWithMouse = !_singlePage && !_dualTabs && !tab.pinned;
     final colors = Theme.of(context).colorScheme;
     return Padding(
       key: _tabKeys.putIfAbsent((
@@ -2164,49 +2178,61 @@ final class _BiliAppShellState extends State<BiliAppShell>
         tab.id,
       ), GlobalKey.new),
       padding: const EdgeInsets.only(left: 3, top: 4),
-      child: Material(
-        color: selected ? colors.surface : Colors.transparent,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-        child: InkWell(
-          key: ValueKey('workspace-tab-${tab.id}'),
-          onTap: () => _selectTab(tab.id),
+      child: GestureDetector(
+        supportedDevices: const {PointerDeviceKind.mouse},
+        onTertiaryTapUp: canCloseWithMouse && widget.closeTabOnMiddleClick
+            ? (_) => _closeTab(tab.id)
+            : null,
+        onSecondaryTapUp: canCloseWithMouse && widget.closeTabOnRightClick
+            ? (_) => _closeTab(tab.id)
+            : null,
+        onDoubleTap: canCloseWithMouse && widget.closeTabOnDoubleClick
+            ? () => _closeTab(tab.id)
+            : null,
+        child: Material(
+          color: selected ? colors.surface : Colors.transparent,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-          child: Semantics(
-            selected: selected,
-            button: true,
-            child: SizedBox(
-              width: tab.pinned ? 116 : 176,
-              height: 38,
-              child: Row(
-                children: [
-                  const SizedBox(width: 12),
-                  Icon(_tabIcon(tab), size: 15),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _dualTabs && !tab.isPlayback
-                          ? '浏览 · ${tab.title}'
-                          : tab.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  if (!tab.pinned && (!_dualTabs || tab.isPlayback))
-                    IconButton(
-                      key: ValueKey('close-workspace-tab-${tab.id}'),
-                      tooltip: '关闭${tab.title}',
-                      onPressed: () => _closeTab(tab.id),
-                      constraints: const BoxConstraints.tightFor(
-                        width: 30,
-                        height: 30,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.close, size: 13),
-                    )
-                  else
+          child: InkWell(
+            key: ValueKey('workspace-tab-${tab.id}'),
+            onTap: () => _selectTab(tab.id),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+            child: Semantics(
+              selected: selected,
+              button: true,
+              child: SizedBox(
+                width: tab.pinned ? 116 : 176,
+                height: 38,
+                child: Row(
+                  children: [
                     const SizedBox(width: 12),
-                ],
+                    Icon(_tabIcon(tab), size: 15),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _dualTabs && !tab.isPlayback
+                            ? '浏览 · ${tab.title}'
+                            : tab.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    if (!tab.pinned && (!_dualTabs || tab.isPlayback))
+                      IconButton(
+                        key: ValueKey('close-workspace-tab-${tab.id}'),
+                        tooltip: '关闭${tab.title}',
+                        onPressed: () => _closeTab(tab.id),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 30,
+                          height: 30,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.close, size: 13),
+                      )
+                    else
+                      const SizedBox(width: 12),
+                  ],
+                ),
               ),
             ),
           ),

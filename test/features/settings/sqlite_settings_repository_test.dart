@@ -12,6 +12,55 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   late AppDatabase database;
   late SqliteSettingsRepository repository;
+  test('tab close mouse options migrate with safe defaults', () async {
+    for (final legacy in [
+      <String, Object?>{},
+      {
+        'closeTabOnMiddleClick': 'true',
+        'closeTabOnRightClick': 1,
+        'closeTabOnDoubleClick': null,
+      },
+    ]) {
+      await database.writeSetting(
+        'preferences.v1',
+        jsonEncode({'schemaVersion': 46, 'theme': 'dark', ...legacy}),
+      );
+      final loaded = await repository.load();
+      expect(loaded.closeTabOnMiddleClick, isFalse);
+      expect(loaded.closeTabOnRightClick, isFalse);
+      expect(loaded.closeTabOnDoubleClick, isFalse);
+      expect(loaded.theme, AppThemePreference.dark);
+    }
+    expect(database.schemaVersion, 3);
+  });
+
+  test(
+    'tab close mouse options persist every independent combination',
+    () async {
+      for (var mask = 0; mask < 8; mask++) {
+        await repository.save(
+          AppSettings(
+            closeTabOnMiddleClick: (mask & 1) != 0,
+            closeTabOnRightClick: (mask & 2) != 0,
+            closeTabOnDoubleClick: (mask & 4) != 0,
+          ).copyWith(cacheImages: false).normalized(),
+        );
+        for (final mode in WorkspaceNavigationMode.values) {
+          final settings = (await repository.load()).copyWith(
+            navigationMode: mode,
+          );
+          await repository.save(settings);
+          final restored = await repository.load();
+          expect(restored.closeTabOnMiddleClick, (mask & 1) != 0);
+          expect(restored.closeTabOnRightClick, (mask & 2) != 0);
+          expect(restored.closeTabOnDoubleClick, (mask & 4) != 0);
+          expect(restored.cacheImages, isFalse);
+          expect(restored.navigationMode, mode);
+        }
+      }
+    },
+  );
+
   test(
     'picture gesture preferences migrate, validate, persist and reset',
     () async {
@@ -88,8 +137,8 @@ void main() {
     expect(
       (jsonDecode((await database.readSetting('preferences.v1'))!)
           as Map)['schemaVersion'],
-      // The merged snapshot carries upstream's keys plus this branch's own at 45.
-      45,
+      // The merged snapshot carries upstream's keys plus this branch's own at 47.
+      47,
     );
     await repository.save(const AppSettings.defaults());
     settings = await repository.load();
@@ -247,7 +296,7 @@ void main() {
         final snapshot = jsonDecode(
           (await database.readSetting('preferences.v1'))!,
         );
-        expect(snapshot['schemaVersion'], 45);
+        expect(snapshot['schemaVersion'], 47);
         expect(snapshot['liveStreamPreference'], preference.toJson());
       }
       await repository.save(const AppSettings.defaults());
@@ -637,6 +686,40 @@ void main() {
         fallback.sponsorBlockCategories,
         AppSettings.supportedSponsorCategories,
       );
+    },
+  );
+  test(
+    'sponsor button distance migrates, normalizes and survives reload',
+    () async {
+      expect((await repository.load()).sponsorBlockBottomPadding, 120);
+      for (final invalid in ['null', '"invalid"', 'true', '1e999']) {
+        await database.writeSetting(
+          'preferences.v1',
+          '{"theme":"dark","sponsorBlockBottomPadding":$invalid}',
+        );
+        final loaded = await repository.load();
+        expect(loaded.sponsorBlockBottomPadding, 120);
+        expect(loaded.theme, AppThemePreference.dark);
+      }
+      await database.writeSetting('preferences.v1', '{"theme":"dark"}');
+      expect((await repository.load()).sponsorBlockBottomPadding, 120);
+      for (final (chosen, expected) in [
+        (-1.0, 0.0),
+        (0.0, 0.0),
+        (80.0, 80.0),
+        (120.0, 120.0),
+        (240.0, 240.0),
+        (999.0, 240.0),
+        (double.nan, 120.0),
+      ]) {
+        await repository.save(
+          (await repository.load()).copyWith(sponsorBlockBottomPadding: chosen),
+        );
+        final reloaded = await SqliteSettingsRepository(database).load();
+        expect(reloaded.sponsorBlockBottomPadding, expected);
+        expect(reloaded.theme, AppThemePreference.dark);
+      }
+      expect(database.schemaVersion, 3);
     },
   );
   test('wheel damping migrates and survives save and reload', () async {
@@ -1031,6 +1114,8 @@ void main() {
       expect(settings.danmakuEnabled, isFalse);
       expect(settings.danmakuOpacity, .7);
       expect(settings.danmakuFontScale, 1.2);
+      expect(settings.danmakuFont, DanmakuFontPreference.harmonyOsSans);
+      expect(settings.danmakuFontFamily, 'HarmonyOS Sans');
       expect(settings.danmakuTopMargin, 0);
       expect(settings.danmakuLineSpacing, 5);
       expect(settings.autoPlay, isTrue);
@@ -1134,6 +1219,12 @@ void main() {
           loaded.copyWith(font: AppFontPreference.system).fontFamily,
           isNull,
         );
+        await repository.save(
+          loaded.copyWith(danmakuFont: DanmakuFontPreference.system),
+        );
+        final systemFont = await repository.load();
+        expect(systemFont.danmakuFont, DanmakuFontPreference.system);
+        expect(systemFont.danmakuFontFamily, isNull);
       }
     },
   );
@@ -1156,8 +1247,8 @@ void main() {
       final loaded = await repository.load();
       expect(loaded.font, AppFontPreference.harmonyOsSans);
       expect(loaded.fontFamily, 'HarmonyOS Sans');
-      expect(loaded.danmakuFont, DanmakuFontPreference.system);
-      expect(loaded.danmakuFontFamily, isNull);
+      expect(loaded.danmakuFont, DanmakuFontPreference.harmonyOsSans);
+      expect(loaded.danmakuFontFamily, 'HarmonyOS Sans');
       expect(loaded.systemFontFamily, 'Microsoft YaHei');
       expect(loaded.danmakuSystemFontFamily, 'Segoe UI');
       expect(loaded.theme, AppThemePreference.dark);
@@ -1168,7 +1259,7 @@ void main() {
         (await database.readSetting('preferences.v1')) ?? '{}',
       ) as Map<String, Object?>;
       expect(snapshot['font'], 'harmonyOsSans');
-      expect(snapshot['danmakuFont'], 'system');
+      expect(snapshot['danmakuFont'], 'harmonyOsSans');
       final reloaded = await repository.load();
       expect(reloaded.font, loaded.font);
       expect(reloaded.danmakuFont, loaded.danmakuFont);
@@ -1319,7 +1410,7 @@ void main() {
     expect(s.danmakuTopMargin, 0);
     expect(s.danmakuLineSpacing, 5);
     expect(s.danmakuMaxPerSecond, 0);
-    expect(s.danmakuFont, DanmakuFontPreference.system);
+    expect(s.danmakuFont, DanmakuFontPreference.harmonyOsSans);
     expect(s.danmakuBold, isFalse);
     expect(s.danmakuStyle, DanmakuStylePreference.shadow);
     expect(s.danmakuMinimumWeight, 10);

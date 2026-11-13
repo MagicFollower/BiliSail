@@ -342,6 +342,52 @@ final class _SettingsCategoryPageState
                             WorkspaceNavigationMode.dualTabs: '双标签页',
                             WorkspaceNavigationMode.multipleTabs: '多标签页',
                           }, controller.setNavigationMode),
+                          if (s.navigationMode ==
+                              WorkspaceNavigationMode.multipleTabs)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('关闭标签页（可多选）'),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (final (label, selected, save) in [
+                                        (
+                                          '鼠标中键',
+                                          s.closeTabOnMiddleClick,
+                                          controller.setCloseTabOnMiddleClick,
+                                        ),
+                                        (
+                                          '鼠标右键',
+                                          s.closeTabOnRightClick,
+                                          controller.setCloseTabOnRightClick,
+                                        ),
+                                        (
+                                          '鼠标双击',
+                                          s.closeTabOnDoubleClick,
+                                          controller.setCloseTabOnDoubleClick,
+                                        ),
+                                      ])
+                                        FilterChip(
+                                          label: Text(label),
+                                          selected: selected,
+                                          onSelected: (value) =>
+                                              _save(() => save(value)),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    '使用所选方式点击顶部标签页即可关闭该页；固定标签页无法关闭。',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
                           const Text(
                             'Android 默认单标签页，按访问顺序返回；从播放页进入 UP 主空间等页面后，返回原播放页并保留状态。其他平台默认双标签页：Windows 和 macOS 使用独立播放窗口；Android 在应用内切换浏览与播放页面。多标签页可分别保留多个页面。切换模式保留未关闭页面。macOS 切换到双标签页模式后，需要重启应用。',
                             style: TextStyle(fontSize: 12),
@@ -676,13 +722,9 @@ final class _SettingsCategoryPageState
                           Text(
                             s.videoDecoding == VideoDecodingPreference.automatic
                                 ? '优先使用硬件解码，不支持当前编码时回退软件解码。'
-                                : '使用所选后端进行软件解码，可能增加 CPU 占用和耗电。',
+                                : '使用 media_kit 进行软件解码，可能增加 CPU 占用和耗电。',
                             style: const TextStyle(fontSize: 12),
                           ),
-                          _choices('播放后端', s.playbackBackend, const {
-                            PlaybackBackendPreference.mediaKit: 'media_kit（默认）',
-                            PlaybackBackendPreference.fvp: 'fvp（实验性）',
-                          }, controller.setPlaybackBackend),
                           if (defaultTargetPlatform ==
                               TargetPlatform.android) ...[
                             _choices(
@@ -703,7 +745,7 @@ final class _SettingsCategoryPageState
                               s.videoDecoding ==
                                       VideoDecodingPreference.software
                                   ? '软件解码使用兼容渲染；切回硬件解码后恢复已保存的输出偏好。'
-                                  : 'media_kit 和 fvp 均保留弹幕、字幕和控件。解码直出需要设备硬解支持；画面异常时切回兼容渲染。',
+                                  : 'media_kit 保留弹幕、字幕和控件。解码直出需要设备硬解支持；画面异常时切回兼容渲染。',
                               style: const TextStyle(fontSize: 12),
                             ),
                           ],
@@ -780,6 +822,14 @@ final class _SettingsCategoryPageState
                             SponsorBlockMode.manual: '手动提示',
                             SponsorBlockMode.automatic: '自动跳过',
                           }, controller.setSponsorBlockMode),
+                          _slider(
+                            '跳过按钮底部距离',
+                            s.sponsorBlockBottomPadding,
+                            0,
+                            240,
+                            controller.setSponsorBlockBottomPadding,
+                            ' px',
+                          ),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,

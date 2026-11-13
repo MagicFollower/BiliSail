@@ -1,213 +1,223 @@
 import 'dart:async';
 
-import 'package:bili_player/src/native_readiness.dart';
 import 'package:bili_player/src/native_rate_audio.dart';
+import 'package:bili_player/src/native_readiness.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+const _original = {
+  'audio-buffer': '0.200000',
+  'af': '',
+  'autosync': '0',
+  'video-sync': 'display-resample',
+};
+const _responsive = {
+  'audio-buffer': '0.05',
+  'af': 'scaletempo2',
+  'autosync': '30',
+  'video-sync': 'audio',
+};
 
 void main() {
   test(
-    'prepares responsive rate audio without changing network buffer or gain',
+    'prepares both rate directions while preserving network and gain',
     () async {
-      final properties = <String, String>{
+      final values = {
+        ..._original,
+        'cache-secs': '120',
         'volume': '35',
         'replaygain-fallback': '3',
-        'cache-secs': '300',
-        'cache-pause-wait': '2',
       };
-      final operations = <String>[];
-      await configureNativeRateAudio(
-        write: (key, value) async {
-          operations.add('write:$key=$value');
-          properties[key] = value;
-        },
-        read: (key) async {
-          operations.add('read:$key');
-          return properties[key] ?? '';
-        },
+      final policy = NativeRateAudio(
+        write: (key, value) async => values[key] = value,
+        read: (key) async => values[key] ?? '',
+      );
+      await policy.configure(
+        enabled: true,
         isCurrent: () => true,
         timeout: const Duration(seconds: 2),
       );
-      expect(operations, [
-        'write:audio-buffer=0.05',
-        'read:audio-buffer',
-        'write:af=scaletempo2',
-        'read:af',
-        'write:autosync=30',
-        'read:autosync',
-        'write:video-sync=audio',
-        'read:video-sync',
-      ]);
-      expect(properties['volume'], '35');
-      expect(properties['replaygain-fallback'], '3');
-      expect(properties['cache-secs'], '300');
-      expect(properties['cache-pause-wait'], '2');
-      expect(
-        properties.keys,
-        unorderedEquals([
-          'volume',
-          'replaygain-fallback',
-          'cache-secs',
-          'cache-pause-wait',
-          'audio-buffer',
-          'af',
-          'autosync',
-          'video-sync',
-        ]),
+      expect(values, {
+        ..._responsive,
+        'cache-secs': '120',
+        'volume': '35',
+        'replaygain-fallback': '3',
+      });
+      // A second VOD must not capture the first VOD's policy as its defaults.
+      await policy.configure(
+        enabled: true,
+        isCurrent: () => true,
+        timeout: const Duration(seconds: 2),
+      );
+      for (var cycle = 0; cycle < 2; cycle++) {
+        await policy.configure(
+          enabled: false,
+          isCurrent: () => true,
+          timeout: const Duration(seconds: 2),
+        );
+        expect(values, {
+          ..._original,
+          'cache-secs': '120',
+          'volume': '35',
+          'replaygain-fallback': '3',
+        });
+        await policy.configure(
+          enabled: true,
+          isCurrent: () => true,
+          timeout: const Duration(seconds: 2),
+        );
+        expect(values['autosync'], '30');
+        expect(values['af'], 'scaletempo2');
+      }
+    },
+  );
+
+  test(
+    'live and silent sources on a fresh player keep native defaults',
+    () async {
+      final policy = NativeRateAudio(
+        write: (_, _) async => fail('Unexpected write'),
+        read: (_) async => throw StateError('Unexpected read'),
+      );
+      await policy.configure(
+        enabled: false,
+        isCurrent: () => true,
+        timeout: const Duration(seconds: 2),
       );
     },
   );
 
-  test('accepts normalized output buffer readback', () async {
-    await configureNativeRateAudio(
-      write: (_, _) async {},
-      read: (key) async => switch (key) {
-        'audio-buffer' => '0.050000',
-        'af' => 'scaletempo2',
-        'autosync' => '30',
-        'video-sync' => 'audio',
-        _ => throw StateError('Unexpected property: $key'),
+  test(
+    'validation autosync override is verified and restored on reuse',
+    () async {
+      final values = {..._original};
+      final policy = NativeRateAudio(
+        write: (key, value) async => values[key] = value,
+        read: (key) async => values[key] ?? '',
+      );
+      await policy.configure(
+        enabled: true,
+        isCurrent: () => true,
+        timeout: const Duration(seconds: 2),
+        experimentalAutosync: 0,
+      );
+      expect(values, {..._responsive, 'autosync': '0'});
+      await policy.configure(
+        enabled: false,
+        isCurrent: () => true,
+        timeout: const Duration(seconds: 2),
+      );
+      expect(values, _original);
+    },
+  );
+
+  for (final restore in [false, true]) {
+    for (final rejected in _responsive.keys) {
+      test(
+        'rejects ignored $rejected writes when restoring=$restore',
+        () async {
+          final values = {..._original};
+          var reject = !restore;
+          final policy = NativeRateAudio(
+            write: (key, value) async {
+              if (reject && key == rejected) return;
+              values[key] = value;
+            },
+            read: (key) async => values[key] ?? '',
+          );
+          if (restore) {
+            await policy.configure(
+              enabled: true,
+              isCurrent: () => true,
+              timeout: const Duration(seconds: 2),
+            );
+            reject = true;
+          }
+          await expectLater(
+            policy.configure(
+              enabled: !restore,
+              isCurrent: () => true,
+              timeout: const Duration(seconds: 2),
+            ),
+            throwsStateError,
+          );
+        },
+      );
+    }
+  }
+
+  test('accepts normalized numeric readback', () async {
+    final values = {..._original};
+    final policy = NativeRateAudio(
+      write: (key, value) async => values[key] = value,
+      read: (key) async {
+        final value = values[key] ?? '';
+        return double.tryParse(value)?.toStringAsFixed(6) ?? value;
       },
+    );
+    await policy.configure(
+      enabled: true,
       isCurrent: () => true,
       timeout: const Duration(seconds: 2),
     );
   });
 
-  for (final applied in ['', '0.2', '0', 'NaN', 'invalid']) {
-    test(
-      'rejects an unapplied output buffer before installing filters: $applied',
-      () async {
-        final writes = <String>[];
-        await expectLater(
-          configureNativeRateAudio(
-            write: (key, _) async => writes.add(key),
-            read: (_) async => applied,
-            isCurrent: () => true,
-            timeout: const Duration(seconds: 2),
-          ),
-          throwsStateError,
-        );
-        expect(writes, ['audio-buffer']);
-      },
-    );
-  }
-
-  for (final applied in ['', 'scaletempo', 'other']) {
-    test('rejects an unapplied tempo filter: $applied', () async {
+  // Four original reads plus four write/read pairs, including the final read.
+  for (var supersedeAfter = 0; supersedeAfter <= 12; supersedeAfter++) {
+    test('cancellation stops after operation $supersedeAfter', () async {
+      final values = {..._original};
+      var operations = 0;
+      final policy = NativeRateAudio(
+        write: (key, value) async {
+          operations++;
+          values[key] = value;
+        },
+        read: (key) async {
+          operations++;
+          return values[key] ?? '';
+        },
+      );
       await expectLater(
-        configureNativeRateAudio(
-          write: (_, _) async {},
-          read: (key) async => key == 'audio-buffer' ? '0.050000' : applied,
-          isCurrent: () => true,
+        policy.configure(
+          enabled: true,
+          isCurrent: () => operations < supersedeAfter,
           timeout: const Duration(seconds: 2),
         ),
-        throwsStateError,
+        throwsA(isA<SourceSuperseded>()),
       );
+      expect(operations, supersedeAfter);
     });
   }
 
-  for (final applied in ['', '0', '1', 'NaN', 'invalid']) {
-    test('rejects unapplied audio clock smoothing: $applied', () async {
-      final writes = <String>[];
-      await expectLater(
-        configureNativeRateAudio(
-          write: (key, _) async => writes.add(key),
-          read: (key) async => switch (key) {
-            'audio-buffer' => '0.05',
-            'af' => 'scaletempo2',
-            _ => applied,
-          },
-          isCurrent: () => true,
-          timeout: const Duration(seconds: 2),
-        ),
-        throwsStateError,
-      );
-      expect(writes, ['audio-buffer', 'af', 'autosync']);
-    });
-  }
-
-  for (var supersedeAfter = 0; supersedeAfter <= 6; supersedeAfter++) {
-    test(
-      'source replacement stops rate preparation after operation $supersedeAfter',
-      () async {
-        var current = supersedeAfter != 0;
-        final operations = <String>[];
-        void record(String operation) {
-          operations.add(operation);
-          if (operations.length == supersedeAfter) current = false;
-        }
-
-        await expectLater(
-          configureNativeRateAudio(
-            write: (key, _) async {
-              record('write:$key');
-            },
-            read: (key) async {
-              record('read:$key');
-              return switch (key) {
-                'audio-buffer' => '0.05',
-                'af' => 'scaletempo2',
-                'autosync' => '30',
-                _ => throw StateError('Unexpected property: $key'),
-              };
-            },
-            isCurrent: () => current,
-            timeout: const Duration(seconds: 2),
-          ),
-          throwsA(isA<SourceSuperseded>()),
-        );
-        expect(operations.length, supersedeAfter);
-      },
-    );
-  }
-
-  testWidgets('a timed out preparation cannot continue after a late write', (
+  testWidgets('late write after timeout cannot continue configuration', (
     tester,
   ) async {
     final gate = Completer<void>();
     var reads = 0;
+    var writes = 0;
+    final policy = NativeRateAudio(
+      write: (_, _) {
+        writes++;
+        return gate.future;
+      },
+      read: (key) async {
+        reads++;
+        return _original[key] ?? '';
+      },
+    );
     final checked = expectLater(
-      configureNativeRateAudio(
-        write: (_, _) => gate.future,
-        read: (_) async {
-          reads++;
-          return 'scaletempo2';
-        },
+      policy.configure(
+        enabled: true,
         isCurrent: () => true,
         timeout: const Duration(seconds: 2),
       ),
       throwsA(isA<TimeoutException>()),
     );
+    await tester.pump();
     await tester.pump(const Duration(seconds: 2));
     await checked;
     gate.complete();
     await tester.pump();
-    expect(reads, 0);
-  });
-
-  test('rate audio preparation shares one deadline', () async {
-    final operations = <String>[];
-    await expectLater(
-      configureNativeRateAudio(
-        write: (key, _) async {
-          operations.add('write:$key');
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-        },
-        read: (key) async {
-          operations.add('read:$key');
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-          return key == 'audio-buffer' ? '0.05' : 'scaletempo2';
-        },
-        isCurrent: () => true,
-        timeout: const Duration(milliseconds: 500),
-      ),
-      throwsA(isA<TimeoutException>()),
-    );
-    expect(
-      operations,
-      anyOf(
-        equals(['write:audio-buffer']),
-        equals(['write:audio-buffer', 'read:audio-buffer']),
-      ),
-    );
+    expect(reads, 4);
+    expect(writes, 1);
   });
 }

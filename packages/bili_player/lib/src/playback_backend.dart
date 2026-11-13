@@ -89,12 +89,6 @@ final class PreparedTracks {
 
 enum BackendEventKind { sample, buffering, playing, ended, warning, failure }
 
-/// A numeric SDK seek result, safe to include in local diagnostics.
-final class NativeSeekFailure implements Exception {
-  const NativeSeekFailure(this.code);
-  final int code;
-}
-
 /// Evidence from the current native pipeline, never a product playback state.
 final class BackendEvent {
   const BackendEvent(
@@ -115,26 +109,15 @@ final class BackendEvent {
   final PlaybackStallReason? stallReason;
 }
 
-final class BackendHealth {
-  const BackendHealth({
-    this.position,
-    this.buffered,
-    this.displayBuffered,
-    this.audioPosition,
-    this.audioFrames,
-    this.videoFrames,
-    this.videoStarved,
-    this.comparePairedClocks = false,
-  });
-  final Duration? position, buffered, audioPosition;
-  // Optional SDK-specific display correction; health retains the raw endpoint.
-  final Duration? displayBuffered;
-  final int? audioFrames, videoFrames;
-  final bool? videoStarved;
-  final bool comparePairedClocks;
+/// A backend may retain its native player after a fully settled source.
+/// resetForNextSource must stop/unload and drain callbacks before returning.
+/// Failed, cancelled and configuration-incompatible opens use full disposal.
+abstract interface class ReusablePlaybackBackend {
+  bool canReuse(ValidatedSource plan);
+  Future<void> resetForNextSource(PlaybackOperation operation);
 }
 
-/// Package-private SDK boundary. Each instance belongs to exactly one source.
+/// Package-private SDK boundary. One source is active at a time.
 abstract interface class PlaybackBackend {
   VideoOutput get videoOutput;
   Stream<BackendEvent> get events;
@@ -160,8 +143,7 @@ abstract interface class PlaybackBackend {
   // the source and packet cache when the SDK supports native target replacement.
   Future<void> cancelSeek();
   void interrupt();
-  BackendHealth sampleHealth();
-  void resetHealth();
+  Duration? get buffered;
   Future<PlayerPlaybackInformation?> inspectPlaybackInformation(int generation);
   Future<void> dispose();
 }

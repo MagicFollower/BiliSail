@@ -13,7 +13,7 @@ import 'playback_backend.dart';
 import 'validated_source.dart';
 import 'native_media_options.dart';
 import 'native_player_properties.dart';
-import 'native_playback_health.dart';
+import 'native_error_monitor.dart';
 import 'native_load_observer.dart';
 import 'native_audio_gain.dart';
 import 'native_rate_audio.dart';
@@ -24,14 +24,17 @@ import 'media_kit_video_output.dart';
 import 'video_output.dart';
 
 /// mpv commands and observations for one source; owns no playback state.
-final class MediaKitBackend implements PlaybackBackend {
+final class MediaKitBackend
+    implements PlaybackBackend, ReusablePlaybackBackend {
   MediaKitBackend({
     required this.snapshot,
     this.onDiagnostic,
     bool? experimentalVideoFrameQueue,
     bool? experimentalAndroidViewport,
     this.experimentalAudioAutosync,
-  }) : _videoOutput = MediaKitVideoOutput(
+    Future<mk.Player> Function()? createPlayer,
+  }) : _createPlayer = createPlayer ?? createNativePlayer,
+       _videoOutput = MediaKitVideoOutput(
          limitAndroidOutputToViewport: experimentalAndroidViewport,
        ),
        experimentalVideoFrameQueue = resolveVideoFrameQueueEnabled(
@@ -39,31 +42,33 @@ final class MediaKitBackend implements PlaybackBackend {
          enabledOverride: experimentalVideoFrameQueue,
        );
   final PlaybackSnapshot Function() snapshot;
+  final Future<mk.Player> Function() _createPlayer;
   PlaybackSnapshot get _snapshot => snapshot();
   final void Function(PlayerDiagnosticEvent)? onDiagnostic;
   final bool experimentalVideoFrameQueue;
   final int? experimentalAudioAutosync;
   bool _videoFrameQueueActive = false;
   bool get videoFrameQueueActive => _videoFrameQueueActive;
-  final _mediaLeases = AndroidMediaLeases();
+  var _mediaLeases = AndroidMediaLeases();
   final _events = StreamController<BackendEvent>.broadcast(sync: true);
   final _generationChanges = StreamController<int>.broadcast(sync: true);
   final _seekChanges = StreamController<int>.broadcast(sync: true);
   final MediaKitVideoOutput _videoOutput;
   final List<StreamSubscription<Object?>> _subscriptions = [];
   mk.Player? _player;
-  MediaTrack? _seekMedia;
-  Duration? _restartSeekTarget;
+  String? _seekMedia;
   bool _replaceSeek = false;
   NativeLoadObserver? _nativeLoad;
+  Future<NativeLoadObserver>? _attachingLoad;
   NativeAudioGain? _audioGain;
+  NativeRateAudio? _rateAudio;
   Future<mk.Player>? _creating;
   Future<void>? _disposal;
   PlaybackOperation? _preparation;
   PlaybackOperation? _seek;
   bool _disposed = false;
   bool _requiresVideoColorMapping = false;
-  bool _paired = false;
+  OpenOptions? _lastOptions;
   int _generation = 0;
   int _seekRevision = 0;
   NativeReadinessStage? _readinessStage;
@@ -350,38 +355,6 @@ final class MediaKitBackend implements PlaybackBackend {
   bool _hasRealTrack(List<mk.VideoTrack> tracks) =>
       tracks.any((track) => track.id != 'auto' && track.id != 'no');
 
-  Future<Completer<void>> _configureExternalAudio(
-    mk.Player player,
-    MediaTrack audio,
-    int generation,
-    Stopwatch watch,
-    Duration budget,
-  ) async {
-    final platform = player;
-
-    final ready = Completer<void>();
-    final uri = audio.uri.toString();
-    await platform
-        .setPropertyAsync(
-          'audio-files',
-          mpvPathListEntry(audio.uri, windows: Platform.isWindows),
-        )
-        .timeout(_remaining(watch, budget));
-    // The locked SDK does not propagate property errors. Read back before
-    // opening, without emitting the signed URL into diagnostics.
-    final applied = await platform
-        .getPropertyAsync('audio-files')
-        .timeout(_remaining(watch, budget));
-    if (applied != uri) {
-      throw PlayerFailure(
-        PlayerFailureKind.nativePlayback,
-        'The playback backend did not apply the external audio source.',
-        generation,
-      );
-    }
-    return ready;
-  }
-
   Future<void> _configureBufferAhead(
     mk.Player player,
     ResolvedMediaSource source,
@@ -405,10 +378,9 @@ final class MediaKitBackend implements PlaybackBackend {
       'cache-on-disk': 'no',
       'cache': 'yes',
       'cache-pause': 'yes',
-      // The SDK's 5s I/O timeout would end a recoverable connection before
-      // the buffering watchdog allows it to refill. Open still has its own
-      // shorter/shared deadline and can cancel the native loading worker.
-      'network-timeout': NativePlaybackHealth.bufferingTimeout.inSeconds
+      // Allow transient network stalls to refill using native cache events.
+      // Open/seek still have their own shared cancellation and deadlines.
+      'network-timeout': NativeErrorMonitor.bufferingTimeout.inSeconds
           .toString(),
       // Avoid resuming on the first small burst after an underrun. Live also
       // builds a short cushion before starting; previews keep quick startup.
@@ -500,9 +472,7 @@ final class MediaKitBackend implements PlaybackBackend {
     return code == null
         ? null
         : PlayerFailure(
-            // A filter/VO can terminate loading after on_preloaded but
-            // before external audio selection, so do not wait for the
-            // video-readiness stage to classify this as incompatible.
+            // A filter/VO can fail before video readiness confirms its output.
             _requiresVideoColorMapping
                 ? PlayerFailureKind.unsupportedVideoColor
                 : PlayerFailureKind.nativePlayback,
@@ -523,9 +493,10 @@ final class MediaKitBackend implements PlaybackBackend {
     final options = plan.options;
     final video = plan.media;
     final audio = plan.audio;
-    _paired = audio != null;
+    _lastOptions = options;
     final watch = Stopwatch()..start();
     final openBudget = operation.remaining;
+    _videoOutput.resetSource();
     _videoOutput.advanceGeneration(generation);
     final mediaTrack = await _mediaLeases.open(video);
     final audioTrack = audio == null ? null : await _mediaLeases.open(audio);
@@ -534,15 +505,31 @@ final class MediaKitBackend implements PlaybackBackend {
       throw const SourceSuperseded();
     }
     mk.MediaKit.ensureInitialized();
-    final creating = _creating = createNativePlayer().then((player) {
-      _player = player;
-      return player;
-    });
-    final player = await operation.wait(creating);
-    _creating = null;
-    _player = player;
+    if (_player == null) {
+      final creating = _creating = _createPlayer().then((player) {
+        _player = player;
+        return player;
+      });
+      await operation.wait(creating);
+      _creating = null;
+    }
+    final player = _player!;
+    if (_nativeLoad == null) {
+      final attaching = _attachingLoad =
+          NativeLoadObserver.attach(
+            player.native,
+            onFailure: (code) => _diagnose(
+              PlayerDiagnosticKind.openTerminated,
+              nativeErrorCode: code,
+            ),
+          ).then((observer) {
+            _nativeLoad = observer;
+            return observer;
+          });
+      await operation.wait(attaching);
+      _attachingLoad = null;
+    }
     await operation.wait(player.setVolume(options.volume));
-    final platform = player;
 
     _audioGain = NativeAudioGain(
       write: player.setPropertyAsync,
@@ -575,38 +562,22 @@ final class MediaKitBackend implements PlaybackBackend {
       watch,
       openBudget,
     );
-    final rateAdjustable = switch (source) {
-      DashPairSource(:final audio) => audio != null,
-      ProgressiveSource(:final isLive) ||
-      ManifestSource(:final isLive) => !isLive,
-      DashVideoSource() => false,
-    };
-    if (rateAdjustable) {
-      await configureNativeRateAudio(
-        write: player.setPropertyAsync,
-        read: player.getPropertyAsync,
-        isCurrent: () =>
-            generation == _generation &&
-            !_disposed &&
-            identical(_player, player),
-        timeout: _remaining(watch, openBudget),
-      );
-      final autosync = experimentalAudioAutosync;
-      if (autosync != null) {
-        await platform
-            .setPropertyAsync('autosync', '$autosync')
-            .timeout(_remaining(watch, openBudget));
-        final applied = await platform
-            .getPropertyAsync('autosync')
-            .timeout(_remaining(watch, openBudget));
-        if (generation != _generation || _disposed) {
-          throw const SourceSuperseded();
-        }
-        if (int.tryParse(applied) != autosync) {
-          throw StateError('The native backend rejected validation autosync.');
-        }
-      }
-    }
+    // Configure before decoding starts, never during a hold/release. This
+    // controller follows the native player's lifetime across source reuse.
+    final rateAudio = _rateAudio ??= NativeRateAudio(
+      write: player.setPropertyAsync,
+      read: player.getPropertyAsync,
+    );
+    await rateAudio.configure(
+      enabled: !plan.live && !plan.silent,
+      isCurrent: () =>
+          generation == _generation &&
+          !_disposed &&
+          !operation.isCancelled &&
+          identical(_player, player),
+      timeout: _remaining(watch, openBudget),
+      experimentalAutosync: experimentalAudioAutosync,
+    );
     if (experimentalVideoFrameQueue && source is DashPairSource) {
       await configureNativeVideoFrameQueue(
         write: player.setPropertyAsync,
@@ -620,91 +591,22 @@ final class MediaKitBackend implements PlaybackBackend {
       _videoFrameQueueActive = true;
     }
     if (generation != _generation || _disposed) throw const SourceSuperseded();
-    // Register the track before loadfile. mpv loads it in its cancellable
-    // file-loading worker, instead of holding media_kit's command lock in
-    // audio-add while network I/O stalls. Both tracks share the player's
-    // explicit headers; _validate requires identical credential-free values.
-    final audioReady = audioTrack == null
-        ? null
-        : await _configureExternalAudio(
-            player,
-            audioTrack,
-            generation,
-            watch,
-            openBudget,
-          );
-    _seekMedia = mediaTrack;
-    if (generation != _generation || _disposed) throw const SourceSuperseded();
-
-    final load = await NativeLoadObserver.attach(
-      player.native,
-      isCurrent: () =>
-          generation == _generation && !_disposed && identical(_player, player),
-      onPreloaded: !audioOnly
-          ? () async {
-              if (generation != _generation ||
-                  _disposed ||
-                  !identical(_player, player)) {
-                return;
-              }
-              if (_restartSeekTarget case final target?) {
-                player.setProperty(
-                  'start',
-                  (target.inMicroseconds / 1000000).toStringAsFixed(6),
-                );
-              }
-              _requiresVideoColorMapping = configureNativeVideoColor(
-                read: player.getProperty,
-                write: player.setProperty,
-                isAndroid: Platform.isAndroid,
-                onAndroidDolbyVision: _videoOutput.enableAndroidDolbyVision,
-                codecHint: video.codec,
-              );
-              if (_requiresVideoColorMapping && !operation.isCancelled) {
-                // A converter/VO may accept its options but never produce
-                // a frame. Leave time for the caller's compatible source.
-                _colorDeadline = Timer(const Duration(seconds: 6), () {
-                  if (generation == _generation &&
-                      !_disposed &&
-                      identical(_player, player)) {
-                    _nativeLoad?.state.failPreparation();
-                  }
-                });
-              }
-              try {
-                // Size the active renderer after any source-specific
-                // switch, including Android's Dolby Vision output.
-                await _videoOutput.prepareAndroidSurface(player.getProperty);
-              } on Object {
-                throw PlayerFailure(
-                  _requiresVideoColorMapping
-                      ? PlayerFailureKind.unsupportedVideoColor
-                      : PlayerFailureKind.nativePlayback,
-                  'Android video surface could not be prepared.',
-                  generation,
-                );
-              }
-            }
-          : null,
-      onExternalAudio: audioReady == null
-          ? null
-          : (uri) {
-              if (uri == audioTrack?.uri.toString() &&
-                  !audioReady.isCompleted) {
-                audioReady.complete();
-              }
-            },
-      onFailure: (code) =>
-          _diagnose(PlayerDiagnosticKind.openTerminated, nativeErrorCode: code),
-    ).timeout(_remaining(watch, openBudget));
-    _nativeLoad = load;
-
+    final mediaUri = nativeMediaUri(mediaTrack.uri, audioTrack?.uri);
+    _seekMedia = mediaUri;
+    // Restore selection on a reused player after a silent preview/audio-only
+    // source. DASH streams are demuxed as one EDL timeline by mpv.
+    await operation.wait(
+      player.setAudioTrack(
+        plan.silent ? mk.AudioTrack.no() : mk.AudioTrack.auto(),
+      ),
+    );
     if (generation != _generation || _disposed) throw const SourceSuperseded();
     await player
         .open(
           mk.Media(
-            mediaTrack.uri.toString(),
+            mediaUri,
             httpHeaders: mediaTrack.requestPolicy.headers,
+            nativeOptions: const {'force-media-title': 'BiliSail'},
             // Resume as part of loading, before decoding the first frame.
             // Opening at zero and seeking afterward buffers twice when
             // returning from audio-only playback.
@@ -761,27 +663,47 @@ final class MediaKitBackend implements PlaybackBackend {
       );
     }
     if (generation != _generation || _disposed) throw const SourceSuperseded();
-    if (audioReady != null) {
+    if (audioTrack != null) {
       _readinessStage = NativeReadinessStage.externalAudio;
-      // A real embedded audio track is insufficient: confirm that mpv
-      // selected this source's external file, then verify paused decoding.
-      await waitForNativeSignal(
-        signal: audioReady.future,
-        superseded: () =>
-            generation != _generation ||
-            _disposed ||
-            !identical(_player, player),
-        changes: [
-          _generationChanges.stream,
-          if (_nativeLoad case final load?) load.state.changes,
-        ],
-        timeout: _remaining(watch, openBudget),
-        failure: () => _loadFailure(generation),
+      await _waitReady(
+        player,
+        generation,
+        () => player.state.tracks.audio.any(
+          (t) => t.id != 'auto' && t.id != 'no',
+        ),
+        [player.stream.tracks],
+        _remaining(watch, openBudget),
+        'DASH audio track did not become ready.',
       );
-    } else if (source is DashPairSource || source is DashVideoSource) {
-      await player
-          .setAudioTrack(mk.AudioTrack.no())
-          .timeout(_remaining(watch, openBudget));
+    }
+    if (requireVideoOutput) {
+      // Track metadata is available through the SDK before presentation is
+      // admitted. Reconfigure paused output, then verify its converted frame.
+      try {
+        _requiresVideoColorMapping = configureNativeVideoColor(
+          read: player.getProperty,
+          write: player.setProperty,
+          isAndroid: Platform.isAndroid,
+          onAndroidDolbyVision: _videoOutput.enableAndroidDolbyVision,
+          codecHint: video.codec,
+        );
+        await operation.wait(
+          _videoOutput.prepareAndroidSurface(player.getProperty),
+        );
+      } on Object {
+        throw PlayerFailure(
+          PlayerFailureKind.unsupportedVideoColor,
+          '当前播放后端无法正确显示此视频色彩',
+          generation,
+        );
+      }
+      if (_requiresVideoColorMapping) {
+        _colorDeadline = Timer(const Duration(seconds: 6), () {
+          if (generation == _generation && !_disposed) {
+            _nativeLoad?.state.failPreparation();
+          }
+        });
+      }
     }
 
     if (options.startPosition > Duration.zero) {
@@ -814,7 +736,7 @@ final class MediaKitBackend implements PlaybackBackend {
       hasAudio:
           audioTrack != null ||
           player.state.tracks.audio.any((t) => t.id != 'auto' && t.id != 'no'),
-      externalAudioSelected: audioReady?.isCompleted ?? false,
+      externalAudioSelected: audioTrack != null,
       duration: plan.live ? Duration.zero : player.state.duration,
       position: player.state.position,
       dimensions: videoDisplayDimensions(player.state.videoParams),
@@ -841,6 +763,14 @@ final class MediaKitBackend implements PlaybackBackend {
       [player.stream.videoParams],
       _remaining(watch, openBudget),
       'Video did not decode.',
+    );
+    await _waitReady(
+      player,
+      generation,
+      () => load.state.tracksReady,
+      [load.state.changes],
+      _remaining(watch, openBudget),
+      'Video frame did not restart for the current source.',
     );
     _readinessStage = NativeReadinessStage.videoOutput;
     // Decoder metadata alone does not establish a native video output.
@@ -883,6 +813,7 @@ final class MediaKitBackend implements PlaybackBackend {
     }
 
     _colorDeadline?.cancel();
+    _videoOutput.confirmSourceFrame();
     _readinessStage = null;
     return videoDisplayDimensions(player.state.videoParams);
   }
@@ -940,10 +871,9 @@ final class MediaKitBackend implements PlaybackBackend {
     }
     final media = _seekMedia;
     if (replacePending && media != null) {
-      _restartSeekTarget = target;
       await player.native.command([
         'loadfile',
-        media.uri.toString(),
+        media,
         'replace',
         '-1',
         'start=${(target.inMicroseconds / 1000000).toStringAsFixed(6)}',
@@ -979,7 +909,6 @@ final class MediaKitBackend implements PlaybackBackend {
     );
 
     operation.check();
-    _restartSeekTarget = null;
     _seek = null;
     return player.state.position;
   }
@@ -1055,7 +984,7 @@ final class MediaKitBackend implements PlaybackBackend {
               ),
             );
           } on Object {
-            // The bounded health sampler still detects a stopped current load.
+            // The active load continues to receive SDK state and error events.
           }
         }());
       }),
@@ -1093,7 +1022,7 @@ final class MediaKitBackend implements PlaybackBackend {
   Future<void> play() => _player!.play();
   @override
   Future<bool> pauseAndWait() async {
-    await (_nativeLoad?.pause() ?? _player?.pause());
+    await _player?.pause();
     return true;
   }
 
@@ -1105,20 +1034,7 @@ final class MediaKitBackend implements PlaybackBackend {
   Future<void> setGainDb(double gainDb) =>
       _audioGain!.apply(gainDb, smooth: false);
   @override
-  BackendHealth sampleHealth() {
-    final state = _player?.state;
-    final audio = _nativeLoad?.state.audioPosition;
-    _nativeLoad?.sampleClocks();
-    return BackendHealth(
-      position: state?.position,
-      buffered: state?.buffer,
-      audioPosition: audio,
-      comparePairedClocks: _paired,
-    );
-  }
-
-  @override
-  void resetHealth() => _nativeLoad?.state.resetClocks();
+  Duration? get buffered => _player?.state.buffer;
   @override
   void interrupt() {
     ++_generation;
@@ -1140,6 +1056,37 @@ final class MediaKitBackend implements PlaybackBackend {
   }
 
   @override
+  bool canReuse(ValidatedSource plan) =>
+      !_disposed &&
+      _player != null &&
+      !_requiresVideoColorMapping &&
+      _lastOptions?.videoDecoding == plan.options.videoDecoding &&
+      _lastOptions?.androidVideoOutput == plan.options.androidVideoOutput;
+
+  @override
+  Future<void> resetForNextSource(PlaybackOperation operation) async {
+    ++_generation;
+    _preparation?.cancel();
+    _generationChanges.add(_generation);
+    _audioGain?.cancel();
+    _colorDeadline?.cancel();
+    for (final subscription in _subscriptions) {
+      await subscription.cancel();
+    }
+    _subscriptions.clear();
+    await operation.wait(_player!.stop());
+    await operation.wait(_nativeLoad!.waitUntilIdle());
+    await _mediaLeases.close();
+    operation.check();
+    _mediaLeases = AndroidMediaLeases();
+    await _nativeLoad!.reset();
+    _seek = null;
+    _seekMedia = null;
+    _replaceSeek = false;
+    _readinessStage = null;
+  }
+
+  @override
   Future<void> dispose() => _disposal ??= _dispose();
   Future<void> _dispose() async {
     interrupt();
@@ -1153,6 +1100,11 @@ final class MediaKitBackend implements PlaybackBackend {
       } on Object {
         /* The factory did not allocate. */
       }
+    }
+    try {
+      await _attachingLoad;
+    } on Object {
+      // attach cleans up its partial SDK registrations before failing.
     }
     await _nativeLoad?.dispose();
     for (final subscription in _subscriptions) {

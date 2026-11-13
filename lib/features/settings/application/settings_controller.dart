@@ -87,6 +87,12 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(recommendations: value));
   Future<void> setNavigationMode(WorkspaceNavigationMode value) =>
       update((current) => current.copyWith(navigationMode: value));
+  Future<void> setCloseTabOnMiddleClick(bool value) =>
+      update((current) => current.copyWith(closeTabOnMiddleClick: value));
+  Future<void> setCloseTabOnRightClick(bool value) =>
+      update((current) => current.copyWith(closeTabOnRightClick: value));
+  Future<void> setCloseTabOnDoubleClick(bool value) =>
+      update((current) => current.copyWith(closeTabOnDoubleClick: value));
   Future<void> setNavigationBarMode(NavigationBarMode value) =>
       update((current) => current.copyWith(navigationBarMode: value));
   Future<void> setSidebarStyle(SidebarStyle value) =>
@@ -171,8 +177,6 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(mediaCdn: value));
   Future<void> setVideoDecoding(VideoDecodingPreference value) =>
       update((current) => current.copyWith(videoDecoding: value));
-  Future<void> setPlaybackBackend(PlaybackBackendPreference value) =>
-      update((current) => current.copyWith(playbackBackend: value));
   Future<void> setAndroidVideoOutput(AndroidVideoOutputPreference value) =>
       update((current) => current.copyWith(androidVideoOutput: value));
   Future<void> setDefaultPlaybackRate(double value) =>
@@ -235,6 +239,8 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(subtitleBottomPadding: value));
   Future<void> setSponsorBlockMode(SponsorBlockMode value) =>
       update((current) => current.copyWith(sponsorBlockMode: value));
+  Future<void> setSponsorBlockBottomPadding(double value) =>
+      update((current) => current.copyWith(sponsorBlockBottomPadding: value));
   Future<void> setSponsorBlockCategories(List<String> value) =>
       update((current) => current.copyWith(sponsorBlockCategories: value));
 

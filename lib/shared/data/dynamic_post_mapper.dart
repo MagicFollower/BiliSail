@@ -14,10 +14,14 @@ DynamicPost mapDynamicPost(ApiDynamicPost p) {
   final topic = p.topic;
   return DynamicPost(
     id: p.id,
+    pinned: p.pinned,
+    onlySelf: p.onlySelf,
+    editable: p.editable,
     title: p.title,
     authorName: p.authorName,
     authorId: UserId.tryParse(p.authorId),
     authorAvatarUrl: p.authorAvatarUrl,
+    authorPendantUrl: p.authorPendantUrl,
     publishedAt: p.publishedAt,
     publishText: p.publishText,
     actionText: p.actionText,
@@ -39,6 +43,21 @@ DynamicPost mapDynamicPost(ApiDynamicPost p) {
             url: card.url,
             actionLabel: card.actionLabel,
             actionUrl: card.actionUrl,
+            reservation: switch (card.reservation) {
+              final r? => DynamicReservation(
+                id: r.id,
+                status: r.status,
+                type: r.type,
+                total: r.total,
+                description: r.description,
+                checkedText: r.checkedText,
+                uncheckedText: r.uncheckedText,
+                disabled: r.disabled,
+                ended: r.ended,
+                hasJump: r.hasJump,
+              ),
+              _ => null,
+            },
           ),
         )
         .toList(),

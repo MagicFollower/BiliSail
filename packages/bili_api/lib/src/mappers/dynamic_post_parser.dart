@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import '../models.dart';
 import 'video_access_parser.dart';
 import '../models/dynamic_models.dart';
@@ -92,7 +93,7 @@ ApiDynamicPost parseDynamicPost(
   final imageAspectRatios = <Uri, double>{};
   for (final raw in _list(
     _map(major['draw'])['items'] ?? opus['pics'],
-  ).take(9)) {
+  ).take(18)) {
     final image = _map(raw);
     final uri = _uri(image['src'] ?? image['url']);
     if (uri != null) {
@@ -135,10 +136,32 @@ ApiDynamicPost parseDynamicPost(
   final like = _map(counts['like']);
   return ApiDynamicPost(
     id: id,
+    pinned: author['is_top'] == true,
+    onlySelf: _text(_map(author['icon_badge'])['text']) == '仅自己可见',
+    editable:
+        !unavailable &&
+        const {
+          'DYNAMIC_TYPE_WORD',
+          'DYNAMIC_TYPE_DRAW',
+          'DYNAMIC_TYPE_FORWARD',
+          'DYNAMIC_TYPE_ARTICLE',
+        }.contains(type) &&
+        video == null &&
+        (major.isEmpty ||
+            major['type'] == 'MAJOR_TYPE_OPUS' ||
+            major['type'] == 'MAJOR_TYPE_DRAW') &&
+        (_map(content['additional']).isEmpty ||
+            const {
+              'ADDITIONAL_TYPE_VOTE',
+              'ADDITIONAL_TYPE_RESERVE',
+            }.contains(_map(content['additional'])['type'])),
     title: _text(opus['title']),
     authorName: _text(author['name']),
     authorId: _id(author['mid']),
     authorAvatarUrl: _uri(author['face']),
+    authorPendantUrl:
+        _uri(_map(author['pendant'])['image_enhance']) ??
+        _uri(_map(author['pendant'])['image']),
     publishedAt: _date(author['pub_ts']),
     publishText: _text(author['pub_time']),
     actionText: _text(author['pub_action']),

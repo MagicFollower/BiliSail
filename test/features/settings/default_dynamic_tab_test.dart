@@ -76,8 +76,8 @@ void main() {
       ) as Map<String, Object?>;
       expect(snapshot['defaultDynamicTab'], tab.name);
       // The merged snapshot carries upstream's keys plus this branch's own at
-      // schemaVersion 45; the SQLite table version stays this branch's 6.
-      expect(snapshot['schemaVersion'], 45);
+      // schemaVersion 47; the SQLite table version stays this branch's 6.
+      expect(snapshot['schemaVersion'], 47);
       expect(database.schemaVersion, 6);
       container.invalidate(settingsControllerProvider);
       expect(

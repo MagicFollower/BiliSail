@@ -58,7 +58,7 @@ enum DanmakuStylePreference { shadow, stroke, plain }
 
 enum SponsorBlockMode { disabled, manual, automatic }
 
-enum PlaybackBackendPreference { mediaKit, fvp }
+enum PlaybackBackendPreference { mediaKit }
 
 enum AndroidVideoOutputPreference { renderedTexture, directTexture }
 
@@ -69,6 +69,9 @@ final class AppSettings {
     this.theme = AppThemePreference.system,
     this.appIcon = AppIconPreference.bilisail,
     this.navigationMode = WorkspaceNavigationMode.dualTabs,
+    this.closeTabOnMiddleClick = false,
+    this.closeTabOnRightClick = false,
+    this.closeTabOnDoubleClick = false,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
@@ -127,7 +130,7 @@ final class AppSettings {
     this.danmakuScrollEnabled = true,
     this.danmakuTopEnabled = true,
     this.danmakuBottomEnabled = true,
-    this.danmakuFont = DanmakuFontPreference.system,
+    this.danmakuFont = DanmakuFontPreference.harmonyOsSans,
     this.danmakuSystemFontFamily = '',
     this.danmakuBold = false,
     this.danmakuStyle = DanmakuStylePreference.shadow,
@@ -141,6 +144,7 @@ final class AppSettings {
     this.subtitleBackgroundOpacity = 0.45,
     this.subtitleBottomPadding = 24.0,
     this.sponsorBlockMode = SponsorBlockMode.manual,
+    this.sponsorBlockBottomPadding = 120.0,
     List<String> sponsorBlockCategories = supportedSponsorCategories,
   }) : playbackMode =
            playbackMode ??
@@ -158,6 +162,9 @@ final class AppSettings {
     this.recommendations = const RecommendationSettings.defaults(),
     this.shortcuts = const ShortcutSettings.defaults(),
     this.navigationMode = WorkspaceNavigationMode.dualTabs,
+    this.closeTabOnMiddleClick = false,
+    this.closeTabOnRightClick = false,
+    this.closeTabOnDoubleClick = false,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
@@ -218,7 +225,7 @@ final class AppSettings {
        danmakuScrollEnabled = true,
        danmakuTopEnabled = true,
        danmakuBottomEnabled = true,
-       danmakuFont = DanmakuFontPreference.system,
+       danmakuFont = DanmakuFontPreference.harmonyOsSans,
        danmakuSystemFontFamily = '',
        danmakuBold = false,
        danmakuStyle = DanmakuStylePreference.shadow,
@@ -231,6 +238,7 @@ final class AppSettings {
        subtitleBackgroundOpacity = 0.45,
        subtitleBottomPadding = 24.0,
        sponsorBlockMode = SponsorBlockMode.manual,
+       sponsorBlockBottomPadding = 120.0,
        _danmakuBlockedWords = const [],
        _sponsorBlockCategories = supportedSponsorCategories;
 
@@ -239,6 +247,9 @@ final class AppSettings {
   final AppThemePreference theme;
   final AppIconPreference appIcon;
   final WorkspaceNavigationMode navigationMode;
+  final bool closeTabOnMiddleClick;
+  final bool closeTabOnRightClick;
+  final bool closeTabOnDoubleClick;
   final NavigationBarMode navigationBarMode;
   final SidebarStyle sidebarStyle;
   final bool sidebarCollapsed;
@@ -346,6 +357,7 @@ final class AppSettings {
   final double subtitleBackgroundOpacity;
   final double subtitleBottomPadding;
   final SponsorBlockMode sponsorBlockMode;
+  final double sponsorBlockBottomPadding;
   final List<String> _sponsorBlockCategories;
   List<String> get sponsorBlockCategories => _sponsorBlockCategories;
 
@@ -355,6 +367,9 @@ final class AppSettings {
     AppThemePreference? theme,
     AppIconPreference? appIcon,
     WorkspaceNavigationMode? navigationMode,
+    bool? closeTabOnMiddleClick,
+    bool? closeTabOnRightClick,
+    bool? closeTabOnDoubleClick,
     NavigationBarMode? navigationBarMode,
     SidebarStyle? sidebarStyle,
     bool? sidebarCollapsed,
@@ -427,6 +442,7 @@ final class AppSettings {
     double? subtitleBackgroundOpacity,
     double? subtitleBottomPadding,
     SponsorBlockMode? sponsorBlockMode,
+    double? sponsorBlockBottomPadding,
     List<String>? sponsorBlockCategories,
   }) => AppSettings(
     shortcuts: shortcuts ?? this.shortcuts,
@@ -434,6 +450,9 @@ final class AppSettings {
     theme: theme ?? this.theme,
     appIcon: appIcon ?? this.appIcon,
     navigationMode: navigationMode ?? this.navigationMode,
+    closeTabOnMiddleClick: closeTabOnMiddleClick ?? this.closeTabOnMiddleClick,
+    closeTabOnRightClick: closeTabOnRightClick ?? this.closeTabOnRightClick,
+    closeTabOnDoubleClick: closeTabOnDoubleClick ?? this.closeTabOnDoubleClick,
     navigationBarMode: navigationBarMode ?? this.navigationBarMode,
     sidebarStyle: sidebarStyle ?? this.sidebarStyle,
     sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
@@ -533,6 +552,8 @@ final class AppSettings {
         subtitleBackgroundOpacity ?? this.subtitleBackgroundOpacity,
     subtitleBottomPadding: subtitleBottomPadding ?? this.subtitleBottomPadding,
     sponsorBlockMode: sponsorBlockMode ?? this.sponsorBlockMode,
+    sponsorBlockBottomPadding:
+        sponsorBlockBottomPadding ?? this.sponsorBlockBottomPadding,
     sponsorBlockCategories: List.unmodifiable(
       sponsorBlockCategories ?? this.sponsorBlockCategories,
     ),
@@ -621,6 +642,12 @@ final class AppSettings {
       subtitleFontScale: bounded(subtitleFontScale, .5, 2, 1),
       subtitleBackgroundOpacity: bounded(subtitleBackgroundOpacity, 0, 1, .45),
       subtitleBottomPadding: bounded(subtitleBottomPadding, 0, 240, 24),
+      sponsorBlockBottomPadding: bounded(
+        sponsorBlockBottomPadding,
+        0,
+        240,
+        120,
+      ),
       sponsorBlockCategories: sponsorBlockCategories
           .where(supportedSponsorCategories.contains)
           .toSet()

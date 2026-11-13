@@ -16,6 +16,8 @@ import 'mappers/dash_audio_parser.dart';
 import 'transport.dart';
 import 'wbi.dart';
 import 'app_profile.dart';
+import 'risk_control.dart';
+import 'web_device_context.dart';
 
 final class _WbiKeyFlight {
   _WbiKeyFlight(this.epoch);
@@ -41,6 +43,9 @@ final class BiliApiClient {
     ApiSessionProvider? sessionProvider,
     ApiCookieJar? cookieJar,
     this.onCookiesChanged,
+    this.prepareWebRequests = false,
+    this.loadWebDevice,
+    this.saveWebDevice,
     this.timeout = const Duration(seconds: 12),
     DateTime Function()? clock,
     Future<List<ApiDanmakuItem>> Function(Uint8List)? danmakuDecoder,
@@ -58,6 +63,20 @@ final class BiliApiClient {
   final ApiSessionProvider? _sessionProvider;
   final ApiCookieJar cookieJar;
   final Future<void> Function()? onCookiesChanged;
+  final bool prepareWebRequests;
+  final Future<Map<String, String>?> Function()? loadWebDevice;
+  final Future<void> Function(Map<String, String>)? saveWebDevice;
+  final _riskControl = ApiRiskControl();
+  late final _webDevice = WebDeviceContext(
+    transport: _transport,
+    cookies: cookieJar,
+    epoch: () => _sessionProvider?.sessionEpoch,
+    clock: _clock,
+    riskControl: _riskControl,
+    timeout: timeout,
+    load: loadWebDevice,
+    save: saveWebDevice,
+  );
   final Duration timeout;
   final DateTime Function() _clock;
   final Future<List<ApiDanmakuItem>> Function(Uint8List) _danmakuDecoder;
@@ -77,6 +96,12 @@ final class BiliApiClient {
         deadline: context?.deadline ?? _clock().add(timeout),
         sessionEpoch: context?.sessionEpoch ?? _sessionProvider?.sessionEpoch,
       );
+
+  /// Establish the same Web identity before non-HTTP connection discovery.
+  Future<void> prepareWebContext({ApiRequestContext? context}) =>
+      prepareWebRequests
+      ? _webDevice.ensure(boundedReadContext(context))
+      : Future<void>.value();
 
   /// Registered Web reads share WBI keys and bounded re-signing.
   Future<Map<String, Object?>> requestWbiJson(
@@ -122,6 +147,7 @@ final class BiliApiClient {
   }
 
   void close() {
+    if (prepareWebRequests) _webDevice.close();
     _wbiInFlight?.cancellation.cancel();
     if (_ownsTransport && _transport is DioApiTransport) {
       (_transport).close();
@@ -233,6 +259,7 @@ final class BiliApiClient {
       passport ? 'passport.bilibili.com' : 'app.bilibili.com',
       path,
     );
+    _riskControl.check(uri, endpoint, epoch, _clock());
     ApiHttpResponse response;
     if (passport) {
       final transport = _transport;
@@ -266,6 +293,7 @@ final class BiliApiClient {
       );
     }
     check();
+    _riskControl.inspect(uri, endpoint, response, epoch, _clock());
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiFailure(
         response.statusCode == 429
@@ -408,9 +436,13 @@ final class BiliApiClient {
       '/x/web-interface/archive/like',
       '/x/web-interface/coin/add',
       '/x/v3/fav/resource/deal',
+      '/x/v3/fav/resource/batch-deal',
+      '/x/v3/fav/folder/del',
       '/x/v3/fav/folder/unfav',
       '/x/v3/fav/season/unfav',
       '/x/v3/fav/season/fav',
+      '/pgc/web/follow/add',
+      '/pgc/web/follow/del',
       '/x/v3/fav/folder/edit',
       '/x/v2/history/toview/add',
       '/x/v2/history/toview/del',
@@ -571,23 +603,39 @@ final class BiliApiClient {
   }) {
     if (!const {
       '/x/dynamic/feed/dyn/thumb',
+      '/x/dynamic/feed/reserve/click',
       '/x/dynamic/feed/create/dyn',
       '/x/vote/create',
       '/x/vote/do_vote',
+      '/x/dynamic/feed/operate/remove',
+      '/x/dynamic/feed/dyn/private_pub_setting',
+      '/x/dynamic/feed/space/set_top',
+      '/x/dynamic/feed/space/rm_top',
     }.contains(path)) {
       throw ArgumentError('Unsupported dynamic mutation');
     }
+    final uri = _api.replace(path: path);
+    final voteCsrf = path == '/x/vote/do_vote'
+        ? _mutationCredentials(uri, endpoint).csrf
+        : null;
     return _submitForm(
       _api.replace(
         path: path,
-        queryParameters: path == '/x/dynamic/feed/create/dyn'
+        queryParameters:
+            const {
+              '/x/dynamic/feed/create/dyn',
+              '/x/dynamic/feed/operate/remove',
+              '/x/dynamic/feed/dyn/private_pub_setting',
+            }.contains(path)
             ? const {'platform': 'web'}
             : null,
       ),
       endpoint,
       const {},
       context,
-      jsonBody: body,
+      jsonBody: voteCsrf == null
+          ? body
+          : {...body, 'csrf': voteCsrf, 'csrf_token': voteCsrf},
     );
   }
 
@@ -600,6 +648,77 @@ final class BiliApiClient {
     fields,
     context,
   );
+
+  Future<Object?> submitDynamicForm(
+    String path,
+    String endpoint,
+    Map<String, String> fields, {
+    ApiRequestContext? context,
+  }) {
+    if (!const {
+      '/x/dynamic/feed/space/set_top',
+      '/x/dynamic/feed/space/rm_top',
+      '/x/dynamic/feed/dynamic_report/add',
+      '/x/v2/reply/subject/modify',
+    }.contains(path)) {
+      throw ArgumentError('Unsupported dynamic form');
+    }
+    return _submitForm(_api.replace(path: path), endpoint, fields, context);
+  }
+
+  Future<void> editDynamic(
+    Map<String, Object?> body, {
+    required String uploadId,
+    ApiRequestContext? context,
+  }) async {
+    const endpoint = 'dynamic_edit';
+    final uri = _api.replace(path: '/x/dynamic/feed/edit/dyn');
+    final credentials = _mutationCredentials(uri, endpoint);
+    final parameters = await _signed({
+      'platform': 'web',
+      'csrf': credentials.csrf,
+      'x-bili-device-req-json':
+          '{"platform":"web","device":"pc","spmid":"333.1368"}',
+      'w_dyn_req.upload_id': uploadId,
+      'w_dyn_req.meta':
+          '{"app_meta":{"from":"create.dynamic.web","mobi_app":"web"}}',
+    }, context);
+    // Signing reads may refresh their key; the mutation itself is attempted once.
+    await _submitForm(
+      uri.replace(queryParameters: parameters),
+      endpoint,
+      const {},
+      context,
+      jsonBody: body,
+    );
+  }
+
+  Future<Map<String, Object?>> publicDynamicDetail(
+    String id, {
+    ApiRequestContext? context,
+  }) async {
+    if (!RegExp(r'^[1-9][0-9]{0,18}$').hasMatch(id)) {
+      throw ArgumentError('Invalid dynamic identity');
+    }
+    final publicApi = BiliApiClient(
+      transport: _transport,
+      sessionProvider: _sessionProvider,
+      timeout: timeout,
+      clock: _clock,
+    );
+    try {
+      return await publicApi.requestJson(
+        Uri.https('api.bilibili.com', '/x/polymer/web-dynamic/v1/detail', {
+          'id': id,
+          'features': 'itemOpusStyle',
+        }),
+        'dynamic_public_check',
+        context: context,
+      );
+    } finally {
+      publicApi.close();
+    }
+  }
 
   ({String cookie, String csrf}) _mutationCredentials(
     Uri uri,
@@ -646,6 +765,11 @@ final class BiliApiClient {
     }
 
     check();
+    context = boundedReadContext(context);
+    _mutationCredentials(uri, endpoint);
+    _riskControl.check(uri, endpoint, epoch, _clock());
+    if (prepareWebRequests) await _webDevice.ensure(context);
+    check();
     final credentials = _mutationCredentials(uri, endpoint);
     final cookie = credentials.cookie, csrf = credentials.csrf;
     final transport = _transport;
@@ -656,7 +780,7 @@ final class BiliApiClient {
         : transport is! ApiJsonTransport) {
       throw ApiFailure(ApiFailureCategory.unavailable, endpoint);
     }
-    final remaining = context?.deadline?.difference(_clock()) ?? timeout;
+    final remaining = context.deadline!.difference(_clock());
     if (remaining <= Duration.zero) {
       throw ApiFailure(ApiFailureCategory.timeout, endpoint);
     }
@@ -665,7 +789,7 @@ final class BiliApiClient {
     try {
       final headers = <String, String>{
         'Accept': 'application/json',
-        'User-Agent': 'BiliSail/0.1',
+        'User-Agent': webUserAgent,
         'Referer': message
             ? 'https://message.bilibili.com/'
             : live
@@ -690,7 +814,7 @@ final class BiliApiClient {
               mimeType: upload.mimeType,
               headers: headers,
               timeout: budget,
-              cancellation: context?.cancellation,
+              cancellation: context.cancellation,
             )
           : jsonBody == null
           ? (transport as ApiFormTransport).postForm(
@@ -702,24 +826,23 @@ final class BiliApiClient {
               },
               headers: headers,
               timeout: budget,
-              cancellation: context?.cancellation,
+              cancellation: context.cancellation,
             )
           : (transport as ApiJsonTransport).postJson(
               uri.replace(
                 queryParameters: {...uri.queryParameters, 'csrf': csrf},
               ),
-              body: uri.path == '/x/vote/do_vote'
-                  ? {...jsonBody, 'csrf': csrf, 'csrf_token': csrf}
-                  : jsonBody,
+              body: jsonBody,
               headers: headers,
               timeout: budget,
-              cancellation: context?.cancellation,
+              cancellation: context.cancellation,
             );
       response = await operation.timeout(budget);
     } on TimeoutException {
       throw ApiFailure(ApiFailureCategory.timeout, endpoint);
     }
     check();
+    _riskControl.inspect(uri, endpoint, response, epoch, _clock());
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiFailure(
         response.statusCode == 429
@@ -1004,6 +1127,7 @@ final class BiliApiClient {
     )?.trim();
     final card = _commentMap(_commentMap(member['user_sailing'])['cardbg']);
     final fan = _commentMap(card['fan']);
+    final pendant = _commentMap(member['pendant']);
     final authorMid =
         _userMid(member['mid']) ?? _userMid(entry['mid_str'] ?? entry['mid']);
     final upAction = _commentMap(entry['up_action']);
@@ -1038,7 +1162,11 @@ final class BiliApiClient {
           : null,
       medalName: _text(_commentMap(member['fans_detail'])['medal_name']),
       medalLevel: _int(_commentMap(member['fans_detail'])['level']),
-      decorationImageUrl: _commentImage(card['image']),
+      pendantUrl:
+          _commentImage(pendant['image_enhance']) ??
+          _commentImage(pendant['image']),
+      decorationImageUrl:
+          _commentImage(card['image_enhance']) ?? _commentImage(card['image']),
       decorationName: _text(card['name']),
       decorationFanNumber: _text(fan['num_desc']),
       decorationFanColor: _commentColor(fan['color']),
@@ -1449,8 +1577,9 @@ final class BiliApiClient {
     ApiRequestContext? context,
   }) async {
     const endpoint = 'popular_weeks';
-    final data = await _json(
-      _api.replace(path: '/x/web-interface/popular/series/list'),
+    final data = await _wbiJson(
+      '/x/web-interface/popular/series/list',
+      const {'web_location': '333.934'},
       endpoint,
       context,
     );
@@ -1508,8 +1637,9 @@ final class BiliApiClient {
     String endpoint,
     ApiRequestContext? context,
   ) async {
-    final data = await _json(
-      _api.replace(path: path, queryParameters: parameters),
+    final data = await _wbiJson(
+      path,
+      {...parameters, 'web_location': '333.934'},
       endpoint,
       context,
     );
@@ -2365,7 +2495,19 @@ final class BiliApiClient {
     Uri? origin,
     _ReadAttemptBudget? attemptBudget,
   }) async {
+    context = boundedReadContext(context);
+    _checkWbiContext(
+      context,
+      _sessionProvider?.sessionEpoch,
+      context.deadline!,
+    );
     final base = origin ?? _api;
+    _riskControl.check(
+      base.replace(path: path),
+      endpoint,
+      _sessionProvider?.sessionEpoch,
+      _clock(),
+    );
     var signed = await _signed(parameters, context);
     try {
       return await _json(
@@ -2375,7 +2517,9 @@ final class BiliApiClient {
         attemptBudget: attemptBudget,
       );
     } on ApiFailure catch (failure) {
-      if (failure.businessCode != -403 || attemptBudget?.isExhausted == true) {
+      if (failure.category == ApiFailureCategory.rateLimited ||
+          failure.businessCode != -403 ||
+          attemptBudget?.isExhausted == true) {
         rethrow;
       }
       _wbi = null;
@@ -2424,6 +2568,14 @@ final class BiliApiClient {
     }
     final root = _map(decoded, endpoint);
     if (endpoint == 'subtitle_body') return root;
+    if (hasRiskVoucher(root)) {
+      throw ApiFailure(
+        ApiFailureCategory.rateLimited,
+        endpoint,
+        requiresVerification: true,
+        retryAfter: const Duration(seconds: 30),
+      );
+    }
     final code = _int(root['code']);
     if (code == null) throw ApiFailure(ApiFailureCategory.protocol, endpoint);
     // Guest nav returns -101 while still carrying the public WBI image keys.
@@ -2434,7 +2586,7 @@ final class BiliApiClient {
       final category = switch (code) {
         -101 || -111 || -400 => ApiFailureCategory.authentication,
         -403 || -404 => ApiFailureCategory.permission,
-        -412 || -352 => ApiFailureCategory.rateLimited,
+        -412 || -352 || -509 || -799 => ApiFailureCategory.rateLimited,
         62002 || 62004 => ApiFailureCategory.notFound,
         _ => ApiFailureCategory.unavailable,
       };
@@ -2459,23 +2611,32 @@ final class BiliApiClient {
     if (context?.sessionEpoch != null && context!.sessionEpoch != epoch) {
       throw ApiFailure(ApiFailureCategory.cancelled, endpoint);
     }
-    final spaceDetails =
-        endpoint == 'profile_details' &&
-        uri.host == 'api.bilibili.com' &&
-        uri.path == '/x/space/wbi/acc/info';
+    context = boundedReadContext(context);
+    _riskControl.check(uri, endpoint, epoch, _clock());
+    if (prepareWebRequests &&
+        uri.host.endsWith('.bilibili.com') &&
+        uri.path != '/x/frontend/finger/spi') {
+      await _webDevice.ensure(context);
+    }
+    final spaceDetails = endpoint == 'profile_details';
+    final popularReferer = switch (endpoint) {
+      'popular_weeks' => 'https://www.bilibili.com/v/popular/weekly',
+      'popular_week' =>
+        'https://www.bilibili.com/v/popular/weekly?num=${uri.queryParameters['number']}',
+      'popular_precious' => 'https://www.bilibili.com/v/popular/history',
+      _ => null,
+    };
     final headers = <String, String>{
       'Accept': endpoint == 'danmaku_segment'
           ? 'application/octet-stream'
           : 'application/json',
-      'User-Agent': spaceDetails
-          ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
-          : endpoint == 'video_storyboard'
-          ? 'Mozilla/5.0'
-          : 'BiliSail/0.1',
+      'User-Agent': webUserAgent,
       'Referer': spaceDetails
           ? 'https://space.bilibili.com/${uri.queryParameters['mid']}/dynamic'
-          : referer,
-      if (spaceDetails) 'Origin': 'https://space.bilibili.com',
+          : popularReferer ?? referer,
+      'Origin': spaceDetails
+          ? 'https://space.bilibili.com'
+          : 'https://www.bilibili.com',
     };
     final cookie = cookieJar.headerFor(uri, now: _clock());
     if (cookie != null) headers['Cookie'] = cookie;
@@ -2492,7 +2653,7 @@ final class BiliApiClient {
       readOnly: readOnly,
     );
     if (epoch != null && _sessionProvider?.sessionEpoch != epoch ||
-        context?.cancellation?.isCancelled == true) {
+        context.cancellation?.isCancelled == true) {
       throw ApiFailure(ApiFailureCategory.cancelled, endpoint);
     }
     if (response.statusCode >= 300 && response.statusCode < 400) {
@@ -2675,6 +2836,7 @@ final class BiliApiClient {
       if (remaining <= Duration.zero) {
         throw ApiFailure(ApiFailureCategory.timeout, endpoint);
       }
+      _riskControl.check(uri, endpoint, epoch, _clock());
       attemptBudget?.consume();
       final retryIndex = attemptBudget == null
           ? attempt
@@ -2692,6 +2854,11 @@ final class BiliApiClient {
           context?.cancellation,
           maxBytes: maxBytes,
         );
+        if (context?.cancellation?.isCancelled == true ||
+            (epoch != null && _sessionProvider?.sessionEpoch != epoch)) {
+          throw ApiFailure(ApiFailureCategory.cancelled, endpoint);
+        }
+        _riskControl.inspect(uri, endpoint, response, epoch, _clock());
         if (canRetry(attempt) &&
             const [500, 502, 503, 504].contains(response.statusCode)) {
           await _retryDelay(retryIndex, deadline, context?.cancellation);
@@ -2710,7 +2877,9 @@ final class BiliApiClient {
             failure.category,
             endpoint,
             httpStatus: failure.httpStatus,
+            businessCode: failure.businessCode,
             retryAfter: failure.retryAfter,
+            requiresVerification: failure.requiresVerification,
           );
         }
       }

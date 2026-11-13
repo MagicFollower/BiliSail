@@ -14,6 +14,80 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   for (final failSave in [false, true]) {
+    testWidgets(
+      'tab close options allow multiple selections and rollback: $failSave',
+      (tester) async {
+        final repository = _SettingsRepository()
+          ..settings = AppSettings.defaults(
+            navigationMode: WorkspaceNavigationMode.multipleTabs,
+          )
+          ..failSave = failSave;
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              settingsRepositoryProvider.overrideWithValue(repository),
+            ],
+            child: MaterialApp(
+              builder: AppNoticeHost.builder,
+              home: const Scaffold(
+                body: SettingsScreen(category: SettingsCategory.appearance),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (final label in ['鼠标中键', '鼠标右键', '鼠标双击']) {
+          final chip = find.widgetWithText(FilterChip, label);
+          expect(tester.widget<FilterChip>(chip).selected, isFalse);
+          await tester.ensureVisible(chip);
+          await tester.pumpAndSettle();
+          await tester.tap(chip);
+          await tester.pumpAndSettle();
+          expect(tester.widget<FilterChip>(chip).selected, !failSave);
+        }
+        final container = ProviderScope.containerOf(
+          tester.element(find.text('关闭标签页（可多选）')),
+        );
+        container.invalidate(settingsControllerProvider);
+        await tester.pumpAndSettle();
+        for (final label in ['鼠标中键', '鼠标右键', '鼠标双击']) {
+          expect(
+            tester
+                .widget<FilterChip>(find.widgetWithText(FilterChip, label))
+                .selected,
+            !failSave,
+          );
+        }
+        expect(repository.settings.closeTabOnMiddleClick, !failSave);
+        expect(repository.settings.closeTabOnRightClick, !failSave);
+        expect(repository.settings.closeTabOnDoubleClick, !failSave);
+        if (!failSave) {
+          await tester.tap(find.widgetWithText(FilterChip, '鼠标右键'));
+          await tester.pumpAndSettle();
+          expect(repository.settings.closeTabOnMiddleClick, isTrue);
+          expect(repository.settings.closeTabOnRightClick, isFalse);
+          expect(repository.settings.closeTabOnDoubleClick, isTrue);
+          for (final mode in ['双标签页', '单标签页', '多标签页']) {
+            final chip = find.widgetWithText(ChoiceChip, mode);
+            await tester.ensureVisible(chip);
+            await tester.pumpAndSettle();
+            await tester.tap(chip);
+            await tester.pumpAndSettle();
+            expect(
+              find.text('关闭标签页（可多选）'),
+              mode == '多标签页' ? findsOneWidget : findsNothing,
+            );
+          }
+          expect(repository.settings.closeTabOnMiddleClick, isTrue);
+          expect(repository.settings.closeTabOnRightClick, isFalse);
+          expect(repository.settings.closeTabOnDoubleClick, isTrue);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final failSave in [false, true]) {
     testWidgets('background playback saves, reloads or rolls back: $failSave', (
       tester,
     ) async {
@@ -719,6 +793,48 @@ void main() {
       await tester.drag(slider, const Offset(800, 0));
       await tester.pumpAndSettle();
       expect(repository.settings.subtitleBottomPadding, 240);
+      final container = ProviderScope.containerOf(tester.element(slider));
+      container.invalidate(settingsControllerProvider);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 240);
+    });
+    testWidgets('sponsor button distance saves 240 px (player: $inPlayer)', (
+      tester,
+    ) async {
+      final repository = _SettingsRepository();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [settingsRepositoryProvider.overrideWithValue(repository)],
+          child: MaterialApp(
+            home: Scaffold(
+              body: inPlayer
+                  ? Builder(
+                      builder: (context) => TextButton(
+                        onPressed: () => showPlayerSettings(context, tab: 3),
+                        child: const Text('空降设置'),
+                      ),
+                    )
+                  : const SettingsScreen(
+                      category: SettingsCategory.sponsorBlock,
+                    ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      if (inPlayer) {
+        await tester.tap(find.text('空降设置'));
+        await tester.pumpAndSettle();
+      }
+      final slider = find.byWidgetPredicate(
+        (widget) => widget is Slider && widget.max == 240,
+      );
+      await tester.ensureVisible(slider);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 120);
+      await tester.drag(slider, const Offset(800, 0));
+      await tester.pumpAndSettle();
+      expect(repository.settings.sponsorBlockBottomPadding, 240);
       final container = ProviderScope.containerOf(tester.element(slider));
       container.invalidate(settingsControllerProvider);
       await tester.pumpAndSettle();

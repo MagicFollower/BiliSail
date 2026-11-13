@@ -127,6 +127,9 @@ GoRouter createBiliRouter({
                     ),
                   ),
             navigationMode: settings.navigationMode,
+            closeTabOnMiddleClick: settings.closeTabOnMiddleClick,
+            closeTabOnRightClick: settings.closeTabOnRightClick,
+            closeTabOnDoubleClick: settings.closeTabOnDoubleClick,
             defaultDynamicTab: settings.defaultDynamicTab,
             appIcon: settings.appIcon,
             navigationBarMode: settings.navigationBarMode,
@@ -748,6 +751,10 @@ final class _WorkspacePage extends ConsumerWidget {
                   }
                   return PgcScreen(
                     key: PageStorageKey('pgc-${tab.id}'),
+                    onLogin: () => showAppDialog<void>(
+                      context: context,
+                      builder: (_) => const AccountDialog(),
+                    ),
                     defaultShowComments: defaultShowComments,
                     seasonId: uri.pathSegments[1] == 'season' ? id : null,
                     episodeId: uri.pathSegments[1] == 'episode'

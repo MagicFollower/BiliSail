@@ -14,6 +14,7 @@ import 'package:bilisail/shared/ui/app_network_image.dart';
 import 'package:bilisail/shared/ui/bili_badges.dart';
 import 'package:bilisail/shared/ui/image_viewer.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -295,7 +296,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  for (final width in [180.0, 320.0]) {
+  for (final width in [180.0, 220.0, 260.0, 299.0, 320.0]) {
     testWidgets('decoration image and fan serial fit $width pixel header', (
       tester,
     ) async {
@@ -338,18 +339,40 @@ void main() {
       final image = tester.widget<AppNetworkImage>(
         find.byType(AppNetworkImage),
       );
-      expect(image.url, 'https://i0.hdslb.com/card.png@336w_120h_0e.webp');
-      expect(image.alignment, Alignment.centerRight);
+      expect(image.url, 'https://i0.hdslb.com/card.png');
+      expect(image.cacheWidth, isNull);
+      expect(image.cacheHeight, 52);
+      expect(image.fit, BoxFit.contain);
+      expect(image.height, 52);
+      expect(serial.style?.fontSize, 12);
+      final serialText = tester.renderObject<RenderParagraph>(
+        find.descendant(
+          of: find.text('NO.\n0014931'),
+          matching: find.byType(RichText),
+        ),
+      );
+      expect(serialText.didExceedMaxLines, isFalse);
       final decorationRect = tester.getRect(
         find.byType(CommentAuthorDecoration),
       );
+      expect(decorationRect.height, lessThanOrEqualTo(52));
+      expect(decorationRect.width, lessThanOrEqualTo(width * .4));
       expect(decorationRect.right, width);
-      if (width >= 220) {
-        expect(
-          decorationRect.left,
-          greaterThan(tester.getRect(find.byType(BiliLevelBadge)).right),
-        );
-      }
+      expect(
+        tester.getRect(find.text('NO.\n0014931')).right,
+        decorationRect.right,
+      );
+      final headerRect = tester.getRect(find.byType(CommentAuthorHeader));
+      expect(decorationRect.top, greaterThanOrEqualTo(headerRect.top));
+      expect(decorationRect.bottom, lessThanOrEqualTo(headerRect.bottom));
+      expect(
+        decorationRect.left,
+        greaterThan(tester.getRect(find.byType(BiliLevelBadge)).right),
+      );
+      expect(
+        decorationRect.left,
+        greaterThan(tester.getRect(find.text(comment.author)).right),
+      );
       expect(tester.takeException(), isNull);
     });
   }
@@ -432,7 +455,13 @@ void main() {
       );
       expect(find.text('刚刚'), findsOneWidget);
       expect(find.textContaining('IP属地'), findsNothing);
-      expect(find.byType(Text), findsNWidgets(2));
+      expect(
+        find.descendant(
+          of: find.byType(CommentAuthorHeader),
+          matching: find.text('reader'),
+        ),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     }
   });
@@ -494,6 +523,7 @@ void main() {
       decorationName: '装扮名称',
       decorationFanNumber: '0014931',
       decorationFanColor: 0xabcdef,
+      pendantUrl: Uri.https('i0.hdslb.com', '/pendant.png'),
       emotes: {'[笑]': Uri.https('i0.hdslb.com', '/e.png')},
       pictures: [Uri.https('i0.hdslb.com', '/p.png')],
     );
@@ -502,6 +532,7 @@ void main() {
       expect(changed.ipLocation, 'IP属地：广东');
       expect(changed.medalName, 'medal');
       expect(changed.medalLevel, 5);
+      expect(changed.pendantUrl, c.pendantUrl);
       expect(changed.decorationImageUrl, c.decorationImageUrl);
       expect(changed.decorationName, '装扮名称');
       expect(changed.decorationFanNumber, '0014931');

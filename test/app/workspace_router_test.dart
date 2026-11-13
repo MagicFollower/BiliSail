@@ -96,6 +96,56 @@ Finder primaryNavigationTarget(String section, double width) => width < 600
     : find.byKey(ValueKey('workspace-nav-$section'));
 
 void main() {
+  for (final (label, buttons) in [
+    ('鼠标中键', kMiddleMouseButton),
+    ('鼠标右键', kSecondaryMouseButton),
+    ('鼠标双击', kPrimaryMouseButton),
+  ]) {
+    _workspaceTestWidgets('tab close setting applies immediately: $label', (
+      tester,
+    ) async {
+      final settings = _SettingsRepository(
+        navigationMode: WorkspaceNavigationMode.multipleTabs,
+      );
+      final search = _SearchRepository();
+      final router = createBiliRouter(
+        initialLocation: '/search?q=cat',
+        playerBuilder: (_, _, _) => const SizedBox(),
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsRepositoryProvider.overrideWithValue(settings),
+            searchRepositoryProvider.overrideWithValue(search),
+            feedRepositoryProvider.overrideWithValue(_FeedRepository()),
+            homeRepositoryProvider.overrideWithValue(_HomeRepository()),
+          ],
+          child: InputTestApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+      router.go('/settings');
+      await tester.pumpAndSettle();
+      final option = find.widgetWithText(FilterChip, label);
+      await tester.ensureVisible(option);
+      await tester.pumpAndSettle();
+      await tester.tap(option);
+      await tester.pumpAndSettle();
+      final tab = find.byKey(const ValueKey('workspace-tab-tab-1'));
+      await tester.tap(tab, kind: PointerDeviceKind.mouse, buttons: buttons);
+      if (buttons == kPrimaryMouseButton) {
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.tap(tab, kind: PointerDeviceKind.mouse, buttons: buttons);
+      }
+      await tester.pumpAndSettle();
+      expect(tab, findsNothing);
+      expect(router.routeInformationProvider.value.uri.path, '/settings');
+      expect(find.byType(SearchScreen, skipOffstage: false), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   for (final width in [390.0, 1280.0]) {
     for (final textScale in [1.0, 2.0]) {
       _workspaceTestWidgets(
@@ -1421,6 +1471,8 @@ void main() {
           listen: false,
         );
         final catScope = tabScope();
+        final searchInput = find.byKey(const ValueKey('workspace-search'));
+        expect(tester.widget<TextField>(searchInput).controller!.text, 'cat');
         expect(root.read(searchControllerProvider).query, isEmpty);
         expect(find.byKey(const ValueKey('home-channel-strip')), findsNothing);
         expect(find.byType(SearchCategoryBar), findsOneWidget);
@@ -1462,8 +1514,12 @@ void main() {
           'cat',
         );
         expect(find.byKey(const ValueKey('workspace-tab-tab-2')), findsNothing);
+        await tester.enterText(searchInput, 'cat 教程');
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
         router.go('/search?q=dog');
         await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(searchInput).controller!.text, 'dog');
         expect(identical(catScope, tabScope()), isFalse);
         expect(
           tabScope().read(searchControllerProvider).category,
@@ -1480,6 +1536,10 @@ void main() {
         }
         await tester.pumpAndSettle();
         expect(identical(catScope, tabScope()), isTrue);
+        expect(
+          tester.widget<TextField>(searchInput).controller!.text,
+          'cat 教程',
+        );
         expect(catScope.read(searchControllerProvider).query, 'cat');
         expect(
           catScope.read(searchControllerProvider).category,

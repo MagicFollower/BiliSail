@@ -8,29 +8,21 @@ dependencies:
   flutter:
     sdk: flutter
   ffi: 2.2.0
-  code_assets: 2.1.0
-  hooks: 2.2.0
-  native_toolchain_c: 0.19.5
-  meta: 1.19.0
-  fvp:
-    git:
-      url: https://github.com/wang-bin/fvp.git
-      ref: e81637411c58a9ae28de246ee73ad06e3418f10e
   media_kit:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: media_kit
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: media_kit_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/universal/media_kit_libs_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
 
 # Pub ignores overrides from transitive packages; repeat these in the app.
 dependency_overrides:
@@ -39,45 +31,44 @@ dependency_overrides:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: media_kit
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: media_kit_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/universal/media_kit_libs_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_android_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/android/media_kit_libs_android_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_windows_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/windows/media_kit_libs_windows_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_macos_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/macos/media_kit_libs_macos_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_ios_video:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/ios/media_kit_libs_ios_video
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
   media_kit_libs_linux:
     git:
       url: https://github.com/CKopoer/media-kit.git
       path: libs/linux/media_kit_libs_linux
-      ref: 9858a8db83faf8bcfa39a8bfbc02dde9a2e92572
+      ref: 302d60eedc55ca677e911e529569b1e14d8c2e7e
 
 dev_dependencies:
-  ffigen: 23.0.0
   flutter_test:
     sdk: flutter
   flutter_lints: 6.0.0

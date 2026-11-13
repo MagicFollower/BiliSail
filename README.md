@@ -60,7 +60,7 @@ BiliSail（哔帆）以视频、影视和直播观看为核心，提供双／多
 | 视频卡片 | 悬停封面放大与静音视频预览、添加稍后再看、操作菜单；推荐反馈保留原卡片位置并支持撤销 |
 | 搜索 | 综合、视频、番剧、影视、直播、专栏和用户七类搜索，支持对应排序、筛选与自动分页 |
 | 视频与影视 | DASH 音视频分轨播放，分 P、合集与选集、合集订阅、稍后再看队列；清晰度、编码与 CDN 偏好、倍速、音量、全屏、章节与进度条缩略图 |
-| DLNA 投屏 | 视频／影视投屏地址、局域网设备搜索、暂停／继续／停止，适配明暗主题与窄屏；真实电视兼容性待验，见 [投屏记录](docs/validation/dlna-casting.md) |
+| DLNA 投屏 | 视频／影视／直播投屏，按接收端能力交接内容身份与弹幕开关或普通媒体地址，支持设备搜索和暂停／继续／停止；真实电视兼容性待验，见 [投屏记录](docs/validation/dlna-casting.md) |
 | 直播 | HLS / FLV、可用清晰度、实时聊天与表情、画面弹幕、Super Chat 展示、用户主页跳转及弹幕发送入口 |
 | 弹幕与字幕 | 滚动、顶部、底部弹幕，暂停与缓冲冻结、seek 重定位；样式、密度与本地过滤配置，字幕 cue 显示 |
 | 账号与个人空间 | 扫码登录、内嵌官方网页密码／短信登录、系统安全存储；用户主页、关注分组、收藏夹查看与编辑、追番、追剧、稍后再看及消息／私信 |
@@ -92,16 +92,16 @@ BiliSail（哔帆）以视频、影视和直播观看为核心，提供双／多
 下表由 Release 发布后自动读取附件并更新，无需手动修改版本号，安装包保留原有文件名。预发布版、各安装包的 SHA-256 校验文件与构建信息见 [Releases](https://github.com/CKopoer/BiliSail/releases)。实际可下载平台以该版本附件为准；也可按[源码运行说明](#从源码运行)自行构建。
 
 <!-- release-downloads:start -->
-下载版本：[v1.2.8+5](https://github.com/CKopoer/BiliSail/releases/tag/v1.2.8%2B5)。
+下载版本：[v1.2.9+5](https://github.com/CKopoer/BiliSail/releases/tag/v1.2.9%2B5)。
 
 | 平台 | 最新正式版下载 | 安装说明 |
 | --- | --- | --- |
-| Windows x64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-x64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-x64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-x64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-x64.cer) | 使用msix安装时，需要先信任对应证书；具体步骤见 [MSIX 签名与安装](docs/validation/ci-cd.md#windows-msix-签名与安装) |
-| Windows ARM64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-arm64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-arm64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-arm64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-windows-arm64.cer) | 新增 CI 构建目标；已发布版本不会自动补齐该架构 |
-| Android arm64 | [APK](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-android-arm64.apk) | 固定 release 密钥，跨签名切换与覆盖升级说明见 [Android 签名](docs/validation/ci-cd.md#android-固定签名与覆盖升级) |
-| macOS arm64 / Intel x64 | [Apple Silicon DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-macos-arm64.dmg) / [Intel x64 DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-macos-x64.dmg) | 按芯片选择对应包；打开后将 `BiliSail.app` 拖到 `Applications`；当前配置使用 ad-hoc 签名，安装后启动需要`设置-隐私与安全性-允许BiliSail运行` |
-| iOS arm64 | [未签名 IPA](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-ios-arm64-unsigned.ipa) | 安装前须自行使用 Apple 证书及 provisioning profile 签名；GitHub token 仅供 CI 上传产物使用 |
-| Linux x64 | [Flatpak](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-linux-x64.flatpak) / [AppImage](https://github.com/CKopoer/BiliSail/releases/download/v1.2.8%2B5/BiliSail-1.2.8%2B5-linux-x64.AppImage) | Flatpak 通过 `flatpak install --user 文件.flatpak` 安装；AppImage 赋予执行权限后运行。运行库、密钥环及沙盒说明见[平台扩展记录](docs/validation/ios-linux.md) |
+| Windows x64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.cer) | 使用msix安装时，需要先信任对应证书；具体步骤见 [MSIX 签名与安装](docs/validation/ci-cd.md#windows-msix-签名与安装) |
+| Windows ARM64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.cer) | 新增 CI 构建目标；已发布版本不会自动补齐该架构 |
+| Android arm64 | [APK](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-android-arm64.apk) | 固定 release 密钥，跨签名切换与覆盖升级说明见 [Android 签名](docs/validation/ci-cd.md#android-固定签名与覆盖升级) |
+| macOS arm64 / Intel x64 | [Apple Silicon DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-macos-arm64.dmg) / [Intel x64 DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-macos-x64.dmg) | 按芯片选择对应包；打开后将 `BiliSail.app` 拖到 `Applications`；当前配置使用 ad-hoc 签名，安装后启动需要`设置-隐私与安全性-允许BiliSail运行` |
+| iOS arm64 | [未签名 IPA](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-ios-arm64-unsigned.ipa) | 安装前须自行使用 Apple 证书及 provisioning profile 签名；GitHub token 仅供 CI 上传产物使用 |
+| Linux x64 | [Flatpak](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-linux-x64.flatpak) / [AppImage](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-linux-x64.AppImage) | Flatpak 通过 `flatpak install --user 文件.flatpak` 安装；AppImage 赋予执行权限后运行。运行库、密钥环及沙盒说明见[平台扩展记录](docs/validation/ios-linux.md) |
 <!-- release-downloads:end -->
 
 GitHub Actions 的 **CI** 执行根应用和四个包的检查，并按平台构建预览产物；维护者可手动运行 **Release preview** 创建预览 Release 草稿，再公开发布。Release 和 CI 构建包的签名种类以各自的 `build-info.json` 为准。触发方式、产物校验与签名配置见 [CI/CD 说明](docs/validation/ci-cd.md)。
@@ -150,7 +150,7 @@ flutter build windows --release
 
 首页、动态、直播、我的、消息、下载、设置属于同一固定根标签，一级切换不另开标签，各自保留列表与筛选。“我的”以紧凑资料区展示等级、经验、硬币及关注/粉丝/动态，直接分标签显示历史、稍后再看、收藏和下载；桌面直播直接显示推荐直播、我的关注、观看记录。首页、动态和直播保留头像与搜索，头像仍打开账号抽屉；动态首次进入默认视频动态，之后保留本次选择。设置只保留分类与设置内容。
 
-播放默认使用 media_kit。可在「设置 → 播放 → 视频编解码 → 播放后端」选择实验性 fvp，保存后对下次打开或重新加载的播放源生效，方便同包实机对比；当前播放不切换。接入及测试边界见[可选 fvp 后端](docs/validation/fvp-backend-2026-11-07.md)。
+播放统一使用 media_kit，保留硬件／软件解码及 Android 视频输出设置。旧版保存的已删除或未识别后端自动按 media_kit 加载，其余设置保持；后续成功保存写回规范值。清理范围与验证边界见[播放后端清理](docs/validation/fvp-removal-2026-11-12.md)。
 
 ### 常用快捷键
 
@@ -184,7 +184,7 @@ lib/
 └── shared/               # 共用数据映射与 ui 组件
 packages/
 ├── bili_api/             # 纯 Dart 协议与 API 包
-├── bili_player/          # 通用播放器契约、media_kit/fvp 适配与 VideoSurface
+├── bili_player/          # 通用播放器契约、media_kit 适配与 VideoSurface
 ├── bili_danmaku/         # 无网络的有界弹幕调度与绘制
 └── bili_mux/             # 独立精简原生组件，仅处理本地 MP4 无损封装
 docs/                     # 设计、决策与验证记录

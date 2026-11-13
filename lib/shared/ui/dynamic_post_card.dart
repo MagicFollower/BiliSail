@@ -26,12 +26,14 @@ class DynamicPostCard extends StatelessWidget {
     this.onShare,
     this.onComment,
     this.onLike,
+    this.onMore,
     this.liked,
     this.likeCount,
     this.repostCount,
     this.busy = false,
     this.expansionState,
     this.inDetail = false,
+    this.contentCardBuilder,
   }) : _layoutOnly = false;
 
   /// Uses the same layout without image requests or account state subscriptions.
@@ -49,10 +51,12 @@ class DynamicPostCard extends StatelessWidget {
        onShare = null,
        onComment = null,
        onLike = null,
+       onMore = null,
        liked = null,
        likeCount = null,
        repostCount = null,
-       busy = false;
+       busy = false,
+       contentCardBuilder = null;
 
   final bool _layoutOnly;
   final bool inDetail;
@@ -63,9 +67,11 @@ class DynamicPostCard extends StatelessWidget {
   final ValueChanged<Uri>? onOpenLink;
   final VoidCallback? onOpenDetail;
   final VoidCallback? onShare, onComment, onLike;
+  final VoidCallback? onMore;
   final bool? liked;
   final int? likeCount, repostCount;
   final bool busy;
+  final Widget Function(DynamicPost, DynamicContentCard)? contentCardBuilder;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -74,10 +80,13 @@ class DynamicPostCard extends StatelessWidget {
     clipBehavior: Clip.antiAlias,
     child: InkWell(
       onTap: onOpenDetail,
+      onLongPress: onMore,
+      onSecondaryTap: onMore,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: _PostBody(
           post: post,
+          contentCardBuilder: contentCardBuilder,
           inDetail: inDetail,
           onOpenDetail: onOpenDetail,
           layoutOnly: _layoutOnly,
@@ -85,6 +94,7 @@ class DynamicPostCard extends StatelessWidget {
           onOpenUser: onOpenUser,
           onOpenVideo: onOpenVideo,
           onOpenLink: onOpenLink,
+          onMore: onMore,
           actions: _DynamicActions(
             post: post,
             onShare: onShare,
@@ -108,21 +118,25 @@ class _PostBody extends StatelessWidget {
     this.onOpenVideo,
     this.onOpenLink,
     this.onOpenDetail,
+    this.onMore,
     this.depth = 0,
     this.actions,
     this.layoutOnly = false,
     this.inDetail = false,
     this.expansionState,
+    this.contentCardBuilder,
   });
   final DynamicPost post;
   final ValueChanged<UserId>? onOpenUser;
   final ValueChanged<VideoSummary>? onOpenVideo;
   final ValueChanged<Uri>? onOpenLink;
   final VoidCallback? onOpenDetail;
+  final VoidCallback? onMore;
   final int depth;
   final Widget? actions;
   final bool layoutOnly, inDetail;
   final DynamicPostExpansionState? expansionState;
+  final Widget Function(DynamicPost, DynamicContentCard)? contentCardBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -156,6 +170,7 @@ class _PostBody extends StatelessWidget {
                   children: [
                     NetworkAvatar(
                       url: layoutOnly ? null : post.authorAvatarUrl,
+                      pendantUrl: layoutOnly ? null : post.authorPendantUrl,
                       name: post.authorName,
                       radius: depth == 0 ? 20 : 14,
                     ),
@@ -193,6 +208,12 @@ class _PostBody extends StatelessWidget {
                 tooltip: '查看动态详情',
                 onPressed: onOpenDetail,
                 icon: const Icon(Icons.chevron_right, size: 20),
+              ),
+            if (depth == 0)
+              IconButton(
+                tooltip: '更多动态操作',
+                onPressed: onMore,
+                icon: const Icon(Icons.more_horiz, size: 20),
               ),
           ],
         ),
@@ -247,6 +268,15 @@ class _PostBody extends StatelessWidget {
                 ?.copyWith(color: scheme.primary),
           ),
         ],
+        if (post.pinned || post.onlySelf)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              [if (post.pinned) '置顶', if (post.onlySelf) '仅自己可见'].join(' · '),
+              style: Theme.of(context).textTheme.labelMedium
+                  ?.copyWith(color: scheme.primary),
+            ),
+          ),
         if (post.title.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text(post.title, style: Theme.of(context).textTheme.titleSmall),
@@ -385,7 +415,7 @@ class _PostBody extends StatelessWidget {
                       runSpacing: 6,
                       children: [
                         for (final (index, image)
-                            in post.imageUrls.take(9).indexed)
+                            in post.imageUrls.take(18).indexed)
                           SizedBox.square(
                             dimension: width,
                             child: ClipRRect(
@@ -410,11 +440,12 @@ class _PostBody extends StatelessWidget {
         ],
         for (final card in post.contentCards) ...[
           const SizedBox(height: 10),
-          DynamicContentCardView(
-            card: card,
-            onOpenLink: onOpenLink,
-            layoutOnly: layoutOnly,
-          ),
+          contentCardBuilder?.call(post, card) ??
+              DynamicContentCardView(
+                card: card,
+                onOpenLink: onOpenLink,
+                layoutOnly: layoutOnly,
+              ),
         ],
         if (post.notice.isNotEmpty) ...[
           const SizedBox(height: 10),
@@ -492,6 +523,7 @@ class _PostBody extends StatelessWidget {
             ),
             child: _PostBody(
               post: original,
+              contentCardBuilder: contentCardBuilder,
               inDetail: inDetail,
               layoutOnly: layoutOnly,
               expansionState: expansionState,

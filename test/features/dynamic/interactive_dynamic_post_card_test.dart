@@ -9,6 +9,8 @@ import 'package:bilisail/features/auth/application/auth_controller.dart';
 import 'package:bilisail/features/auth/domain/auth_repository.dart';
 import 'package:bilisail/features/comments/application/comments_controller.dart';
 import 'package:bilisail/shared/ui/comments_panel.dart';
+import 'package:bilisail/shared/ui/comment_rich_content.dart';
+import 'package:bilisail/shared/ui/network_avatar.dart';
 import 'package:bilisail/features/dynamic/application/dynamic_actions_controller.dart';
 import 'package:bilisail/features/dynamic/domain/dynamic_repository.dart';
 import 'package:bilisail/shared/ui/dynamic_post_interactions.dart';
@@ -84,6 +86,45 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  for (final width in [320.0, 360.0, 600.0]) {
+    testWidgets('comment decoration stays beside the avatar at $width pixels', (
+      tester,
+    ) async {
+      comments.items = [
+        CommentEntry(
+          id: '50',
+          author: '十六點半到家',
+          message: '负担走了，真是一身轻松啊',
+          level: 6,
+          vipLabel: '年度大会员',
+          publishedAt: DateTime.now().subtract(const Duration(minutes: 43)),
+          ipLocation: 'IP属地：天津',
+          decorationImageUrl: Uri.https('i0.hdslb.com', '/card.png'),
+          decorationFanNumber: '000006',
+        ),
+      ];
+      await show(tester, width: width);
+      await tester.tap(find.byTooltip('查看评论'));
+      await tester.pumpAndSettle();
+      final panel = find.byType(CommentsPanel);
+      final avatar = tester.getRect(
+        find.descendant(of: panel, matching: find.byType(NetworkAvatar)),
+      );
+      final decoration = tester.getRect(find.byType(CommentAuthorDecoration));
+      final header = tester.getRect(find.byType(CommentAuthorHeader));
+      final author = tester.getRect(find.text('十六點半到家'));
+      final body = tester.getRect(find.text('负担走了，真是一身轻松啊'));
+      expect(decoration.center.dy, closeTo(avatar.center.dy, .01));
+      expect(avatar.center.dy, closeTo(header.center.dy, .01));
+      expect(author.top, greaterThanOrEqualTo(header.top));
+      expect(decoration.left, greaterThan(author.right));
+      expect(body.left, closeTo(author.left, .01));
+      expect(body.top, greaterThanOrEqualTo(decoration.bottom));
+      expect(body.top, greaterThan(avatar.bottom));
+      expect(tester.takeException(), isNull);
+    });
   }
 
   testWidgets('video link in dynamic comments closes dialog and navigates', (

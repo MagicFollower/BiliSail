@@ -1,5 +1,19 @@
 # 参考项目、证据与采用边界
 
+2026-11-13 B站扩展投屏只读核对 MIT 的 NeoBV `6c8ce4bbf82f43681cc6c5e46cd4f8c9b9b71bf6`、GPLv3 的 Danmu TV `d28b8aed03e6da6df47469ac22771dc40ae228f4`；直播地址投屏只读参考 GPLv3 的 Pure Live `1a60607cdd308132afcd85cd562f404109499633`。仅采用内容身份、压缩／编码格式、服务发现与控制的协议事实，独立实现领域模型、能力分流和仓储，无参考应用源码／资源／抓包凭据复制。精确源码路径、依赖许可和验证边界见 [DLNA 投屏](validation/dlna-casting.md)。
+
+2026-11-12：已移除 fvp／MDK，当前仅使用 media_kit。历史文档中的双后端实现、SDK、命令及测试记录保留当时事实，不再作为现行入口；清理与设置兼容见[移除记录](validation/fvp-removal-2026-11-12.md)。
+
+2026-11-12 评论装扮对齐只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/pages/video/reply/widgets/reply_item_grpc.dart` 和 `lib/common/widgets/translucent_row.dart`，核对实际 overrides／锁文件。借鉴头像与作者信息共同排版、装扮靠右的职责，结合本项目 52 像素装扮实现整组垂直居中；未复制 GPLv3 源码／资源、修改相邻仓库或依赖，见[评论样式与验证](validation/official-client-typography-2026-11-09.md)。
+
+2026-11-12 追番只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/http/api.dart`、`lib/http/video.dart` 和 `lib/http/pgc.dart`，核对状态读取及追番／取消端点、季编号与 CSRF。仅采用协议事实，独立实现本项目仓储、控制器和主题按钮，未复制 GPLv3 应用源码／资源或修改依赖，见[PGC 追番](validation/pgc-follow.md)。
+
+2026-11-12 视频合集工具栏只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/pages/episode_panel/view.dart` 和 `lib/pages/video/view.dart`，核对实际 overrides／锁文件。仅借鉴定位、显示排序与倒序播放职责，独立实现合集卡片与领域播放顺序，未复制 GPLv3 应用源码／资源、修改相邻仓库或依赖，见[来源与验证](validation/video-collection-controls-2026-11-12.md)。
+
+2026-11-11 风控处理只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的热门精选、设备 SPI／激活及 Gaia 验证职责。独立实现共享请求策略、设备上下文和测试，未复制 GPLv3 应用代码、随机指纹或资源，未修改相邻仓库或依赖；精确路径、采用边界与未线上验收项见[请求风控](validation/api-risk-control-2026-11-11.md)。
+
+2026-11-11 动态菜单与投票只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的动态作者菜单、详情、保存、投票和 HTTP／模型职责；核对实际 overrides／锁文件，独立实现本项目管理端口、状态覆盖、编辑草稿及响应式投票，无源码／资源复制或依赖变化。路径、采用限制和验证见[动态操作菜单与投票](validation/dynamic-operations-and-voting-2026-11-11.md)。
+
 2026-11-11 动态投票查看只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的投票卡片／正文、详情、模型及 HTTP 端点；核对实际 overrides／锁文件，仅采用协议事实与交互职责，独立实现。未复制 GPLv3 应用代码／资源或修改参考仓库、媒体依赖，详见[投票来源与验证](validation/dynamic-poll-viewing-2026-11-11.md)。
 
 2026-11-11 动态投稿继续只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的发布／富文本、表情、用户选择、投票及直播预约页面与HTTP协议。核对其实际overrides和锁文件，仅借鉴能力和协议事实，独立实现本项目的自适应表单与账号草稿，没有复制GPLv3应用源码／资源、修改相邻仓库或增加依赖；精确路径、采用范围及验证见[动态发布能力](validation/dynamic-publishing-parity-2026-11-11.md)。

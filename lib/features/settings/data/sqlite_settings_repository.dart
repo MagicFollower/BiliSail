@@ -98,6 +98,9 @@ class SqliteSettingsRepository implements SettingsRepository {
               .firstOrNull ??
           DynamicPageTab.dynamic,
       allowConcurrentPlayback: boolean('allowConcurrentPlayback', false),
+      closeTabOnMiddleClick: boolean('closeTabOnMiddleClick', false),
+      closeTabOnRightClick: boolean('closeTabOnRightClick', false),
+      closeTabOnDoubleClick: boolean('closeTabOnDoubleClick', false),
       cacheImages: boolean('cacheImages', true),
       recordSearchHistory: boolean('recordSearchHistory', true),
       checkPrereleaseUpdates: boolean('checkPrereleaseUpdates', false),
@@ -198,6 +201,7 @@ class SqliteSettingsRepository implements SettingsRepository {
               .where((item) => item.name == decoded['videoDecoding'])
               .firstOrNull ??
           VideoDecodingPreference.automatic,
+      // Unknown or retired backends fall back without resetting the snapshot.
       playbackBackend:
           PlaybackBackendPreference.values
               .where((item) => item.name == decoded['playbackBackend'])
@@ -242,7 +246,7 @@ class SqliteSettingsRepository implements SettingsRepository {
           DanmakuFontPreference.values
               .where((v) => v.name == decoded['danmakuFont'])
               .firstOrNull ??
-          DanmakuFontPreference.system,
+          defaults.danmakuFont,
       danmakuBold: boolean('danmakuBold', false),
       danmakuStyle:
           DanmakuStylePreference.values
@@ -273,6 +277,10 @@ class SqliteSettingsRepository implements SettingsRepository {
         'sponsorBlockCategories',
         AppSettings.supportedSponsorCategories,
       ),
+      sponsorBlockBottomPadding: number(
+        'sponsorBlockBottomPadding',
+        defaults.sponsorBlockBottomPadding,
+      ),
     ).normalized();
   }
 
@@ -282,10 +290,11 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 45 carries upstream's mobile background-playback key next to this
-        // branch's dock/liquid-card keys; the reader never branches on this
-        // number, it only states what the payload holds (F73 口径).
-        'schemaVersion': 45,
+        // 合并取舍：取上游 schemaVersion 47。上游本轮新增「鼠标手势关闭标签」
+        // （closeTabOnMiddleClick/RightClick/DoubleClick）与弹幕默认字体等键，
+        // 此 payload 已是上游 47 键集与本分支 dock/liquid-card/backgroundPlayback
+        // 键的并集。reader 从不按此数字分支，它只声明 payload 所持键集（F73 口径）。
+        'schemaVersion': 47,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
@@ -299,6 +308,9 @@ class SqliteSettingsRepository implements SettingsRepository {
         'playerFullscreenGesture': value.playerFullscreenGesture,
         'playerShrinkVideo': value.playerShrinkVideo,
         'navigationMode': value.navigationMode.name,
+        'closeTabOnMiddleClick': value.closeTabOnMiddleClick,
+        'closeTabOnRightClick': value.closeTabOnRightClick,
+        'closeTabOnDoubleClick': value.closeTabOnDoubleClick,
         'allowConcurrentPlayback': value.allowConcurrentPlayback,
         'cacheImages': value.cacheImages,
         'recordSearchHistory': value.recordSearchHistory,
@@ -365,6 +377,7 @@ class SqliteSettingsRepository implements SettingsRepository {
         'subtitleBackgroundOpacity': value.subtitleBackgroundOpacity,
         'subtitleBottomPadding': value.subtitleBottomPadding,
         'sponsorBlockMode': value.sponsorBlockMode.name,
+        'sponsorBlockBottomPadding': value.sponsorBlockBottomPadding,
         'sponsorBlockCategories': value.sponsorBlockCategories,
       }),
     );

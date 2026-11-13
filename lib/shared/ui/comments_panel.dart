@@ -16,12 +16,12 @@ import '../../domain/comment_target.dart';
 import 'app_network_image.dart';
 import 'app_notice.dart';
 import 'emoticon_picker_dialog.dart';
-import 'network_avatar.dart';
 import 'scroll_collapsing_header.dart';
 import 'bili_icons.dart';
 import 'comment_rich_content.dart';
 import 'comment_badge.dart';
 import 'comment_text_styles.dart';
+import 'comment_actions.dart';
 import 'comment_mention_dialog.dart';
 import '../../features/comments/domain/comment_composer.dart';
 import '../../features/comments/application/comments_controller.dart';
@@ -1251,21 +1251,17 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
     final styles = CommentTextStyles(theme);
     return Padding(
       padding: const EdgeInsets.only(top: 12),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            onTap: c.authorId?.isValid == true && onOpenUser != null
-                ? () => onOpenUser(c.authorId!)
-                : null,
-            child: NetworkAvatar(url: c.avatarUrl, name: c.author, radius: 15),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
+          CommentAuthorHeader(comment: c, onOpenUser: onOpenUser),
+          Padding(
+            padding: const EdgeInsets.only(
+              left: CommentAuthorHeader.contentIndent,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CommentAuthorHeader(comment: c, onOpenUser: onOpenUser),
                 const SizedBox(height: 8),
                 CommentRichContent(
                   comment: c,
@@ -1281,35 +1277,11 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
                 Consumer(
                   builder: (context, ref, _) {
                     final busy = _busy(ref);
-                    return Row(
-                      children: [
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          onPressed: busy ? null : _like,
-                          iconSize: 16,
-                          color: c.liked
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.outline,
-                          icon: Icon(
-                            c.liked
-                                ? Icons.thumb_up_alt
-                                : Icons.thumb_up_alt_outlined,
-                            semanticLabel: c.liked ? '取消点赞评论' : '点赞评论',
-                          ),
-                        ),
-                        Text('${c.likeCount}', style: styles.action),
-                        const SizedBox(width: 12),
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          onPressed: busy ? null : _reply,
-                          iconSize: 17,
-                          color: theme.colorScheme.outline,
-                          icon: const Icon(
-                            BiliIcons.reply,
-                            semanticLabel: '回复评论',
-                          ),
-                        ),
-                      ],
+                    return CommentActions(
+                      comment: c,
+                      busy: busy,
+                      onLike: _like,
+                      onReply: _reply,
                     );
                   },
                 ),

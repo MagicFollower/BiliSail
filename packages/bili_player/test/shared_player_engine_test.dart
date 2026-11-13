@@ -27,7 +27,7 @@ final class _Output implements FlutterVideoOutput, VideoFrameReadiness {
   Widget buildVideoSurface() => const ColoredBox(color: Color(0xFF123456));
 }
 
-final class _Backend extends Fake implements PlaybackBackend {
+class _Backend extends Fake implements PlaybackBackend {
   final signals = StreamController<BackendEvent>.broadcast(sync: true);
   final writes = <String>[];
   final seeks = <(Duration, Completer<Duration>)>[];
@@ -51,7 +51,8 @@ final class _Backend extends Fake implements PlaybackBackend {
     duration: Duration(seconds: 20),
     dimensions: VideoDimensions(320, 180),
   );
-  BackendHealth sample = const BackendHealth();
+  @override
+  Duration? buffered;
   ValidatedSource? preparedPlan;
   @override
   VideoOutput get videoOutput => _output;
@@ -151,10 +152,6 @@ final class _Backend extends Fake implements PlaybackBackend {
   }
 
   @override
-  BackendHealth sampleHealth() => sample;
-  @override
-  void resetHealth() {}
-  @override
   Future<PlayerPlaybackInformation?> inspectPlaybackInformation(
     int generation,
   ) async => null;
@@ -168,6 +165,23 @@ final class _Backend extends Fake implements PlaybackBackend {
   }
 }
 
+final class _ReusableBackend extends _Backend
+    implements ReusablePlaybackBackend {
+  int resets = 0;
+  bool compatible = true;
+  bool failReset = false;
+  Completer<void>? resetGate;
+  @override
+  bool canReuse(ValidatedSource plan) => compatible;
+  @override
+  Future<void> resetForNextSource(PlaybackOperation operation) async {
+    resets++;
+    playing = false;
+    await resetGate?.future;
+    if (failReset) throw StateError('unconfirmed stop');
+  }
+}
+
 Future<void> tick() => Future<void>.delayed(Duration.zero);
 
 MediaTrack track(String name) => MediaTrack(
@@ -178,6 +192,104 @@ MediaTrack track(String name) => MediaTrack(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final pair = DashPairSource(video: track('v'), audio: track('a'));
+  test(
+    'event backend reuses a stopped source and never polls native health',
+    () async {
+      final backend = _ReusableBackend();
+      var allocations = 0;
+      final engine = SharedPlayerEngine(
+        createBackend: () {
+          allocations++;
+          return backend;
+        },
+      );
+      await engine.open(pair, const OpenOptions(play: false));
+      await engine.open(
+        pair,
+        const OpenOptions(play: true, rate: 1.5, volume: 32),
+      );
+      expect(allocations, 1);
+      expect(backend.resets, 1);
+      expect(backend.disposals, 0);
+      expect(engine.currentSnapshot.generation, 2);
+      expect(engine.currentSnapshot.rate, 1.5);
+      expect(backend.volume, 32);
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(seconds: 3),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(engine.currentSnapshot.position, const Duration(seconds: 3));
+      await engine.dispose();
+      expect(backend.disposals, 1);
+    },
+  );
+  test(
+    'a failed reuse barrier disposes before allowing any replacement',
+    () async {
+      final first = _ReusableBackend();
+      final next = _Backend();
+      var allocations = 0;
+      final engine = SharedPlayerEngine(
+        createBackend: () => ++allocations == 1 ? first : next,
+      );
+      await engine.open(pair, const OpenOptions(play: false));
+      first.failReset = true;
+      await expectLater(
+        engine.open(pair, const OpenOptions(play: false)),
+        throwsA(isA<PlayerFailure>()),
+      );
+      expect(first.disposals, 1);
+      expect(allocations, 1);
+      await engine.open(pair, const OpenOptions(play: false));
+      expect(allocations, 2);
+      await engine.dispose();
+    },
+  );
+  test('incompatible source configuration retires reusable backend', () async {
+    final first = _ReusableBackend();
+    final next = _Backend();
+    var allocations = 0;
+    final engine = SharedPlayerEngine(
+      createBackend: () => ++allocations == 1 ? first : next,
+    );
+    await engine.open(pair, const OpenOptions(play: false));
+    first.compatible = false;
+    await engine.open(
+      pair,
+      const OpenOptions(play: false, videoDecoding: VideoDecodingMode.software),
+    );
+    expect(first.resets, 0);
+    expect(first.disposals, 1);
+    expect(allocations, 2);
+    await engine.dispose();
+  });
+  test(
+    'superseding a source reset never prepares a cancelled source',
+    () async {
+      final first = _ReusableBackend();
+      final next = _Backend();
+      var allocations = 0;
+      final engine = SharedPlayerEngine(
+        createBackend: () => ++allocations == 1 ? first : next,
+      );
+      await engine.open(pair, const OpenOptions(play: false));
+      first.resetGate = Completer<void>();
+      final obsolete = engine.open(pair, const OpenOptions(play: true));
+      await tick();
+      final replacement = engine.open(pair, const OpenOptions(play: false));
+      await obsolete;
+      first.resetGate!.complete();
+      await replacement;
+      expect(first.writes.where((e) => e == 'prepare'), hasLength(1));
+      expect(first.disposals, 1);
+      expect(engine.currentSnapshot.generation, 3);
+      expect(engine.currentSnapshot.desiredPlaying, false);
+      await engine.dispose();
+    },
+  );
 
   test(
     'native preparation receives the original tracks, headers and window',
@@ -207,33 +319,40 @@ void main() {
     },
   );
 
-  test('events and polling accept a shrinking native cache without moving progress', () async {
-    final backend = _Backend();
-    final engine = SharedPlayerEngine(createBackend: () => backend);
-    addTearDown(engine.dispose);
-    await engine.open(pair, const OpenOptions());
-    backend.signals.add(
-      const BackendEvent(
-        BackendEventKind.sample,
-        position: Duration(seconds: 4),
-        buffered: Duration(seconds: 18),
-      ),
-    );
-    backend.signals.add(
-      const BackendEvent(
-        BackendEventKind.sample,
-        buffered: Duration(seconds: 8),
-      ),
-    );
-    expect(engine.currentSnapshot.position, const Duration(seconds: 4));
-    expect(engine.currentSnapshot.buffered, const Duration(seconds: 8));
-    backend.sample = const BackendHealth(buffered: Duration(seconds: 6));
-    await Future<void>.delayed(const Duration(milliseconds: 280));
-    expect(engine.currentSnapshot.position, const Duration(seconds: 4));
-    expect(engine.currentSnapshot.buffered, const Duration(seconds: 6));
-    expect(backend.seeks, isEmpty);
-    expect(backend.writes.where((w) => w == 'prepare'), hasLength(1));
-  });
+  test(
+    'native events accept a shrinking cache without moving progress',
+    () async {
+      final backend = _Backend();
+      final engine = SharedPlayerEngine(createBackend: () => backend);
+      addTearDown(engine.dispose);
+      await engine.open(pair, const OpenOptions());
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(seconds: 4),
+          buffered: Duration(seconds: 18),
+        ),
+      );
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          buffered: Duration(seconds: 8),
+        ),
+      );
+      expect(engine.currentSnapshot.position, const Duration(seconds: 4));
+      expect(engine.currentSnapshot.buffered, const Duration(seconds: 8));
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          buffered: Duration(seconds: 6),
+        ),
+      );
+      expect(engine.currentSnapshot.position, const Duration(seconds: 4));
+      expect(engine.currentSnapshot.buffered, const Duration(seconds: 6));
+      expect(backend.seeks, isEmpty);
+      expect(backend.writes.where((w) => w == 'prepare'), hasLength(1));
+    },
+  );
 
   test(
     'native timeline endpoints stay within confirmed duration and position',
@@ -709,8 +828,7 @@ void main() {
     test(
       'confirmed native seek reuses readiness and cache, playing=$playing',
       () async {
-        final backend = _Backend()
-          ..sample = const BackendHealth(buffered: Duration(seconds: 18));
+        final backend = _Backend()..buffered = const Duration(seconds: 18);
         final engine = SharedPlayerEngine(createBackend: () => backend);
         addTearDown(engine.dispose);
         await engine.open(pair, OpenOptions(play: playing));
@@ -825,7 +943,7 @@ void main() {
     expect(backend.playing, false);
   });
 
-  test('natural EOF emits once, ignores trailing events, and replay resumes sampling', () async {
+  test('natural EOF emits once, ignores trailing events, and replay resumes native events', () async {
     final backend = _Backend();
     final engine = SharedPlayerEngine(createBackend: () => backend);
     addTearDown(engine.dispose);
@@ -857,8 +975,12 @@ void main() {
       expect(engine.currentSnapshot.isBuffering, false);
       await engine.seek(Duration.zero);
       await engine.play();
-      backend.sample = const BackendHealth(position: Duration(seconds: 1));
-      await Future<void>.delayed(const Duration(milliseconds: 280));
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(seconds: 1),
+        ),
+      );
       expect(engine.currentSnapshot.position, const Duration(seconds: 1));
     }
     expect(ended, 2);
@@ -1149,77 +1271,4 @@ void main() {
     expect(late.released, true);
     expect(calls, 2);
   });
-
-  test('native underrun evidence survives timeline display clamping', () async {
-    final backend = _Backend();
-    final engine = SharedPlayerEngine(createBackend: () => backend);
-    addTearDown(engine.dispose);
-    final failures = <PlayerFailure>[];
-    engine.failures.listen(failures.add);
-    await engine.open(pair, const OpenOptions(play: true));
-    for (final seconds in [5, 6]) {
-      backend.sample = BackendHealth(
-        position: Duration(seconds: seconds),
-        buffered: const Duration(seconds: 2),
-        audioPosition: Duration(seconds: seconds),
-        comparePairedClocks: true,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 280));
-    }
-    expect(failures, hasLength(1));
-    expect(failures.single.kind, PlayerFailureKind.videoInterrupted);
-    expect(backend.playing, false);
-    expect(engine.currentSnapshot.buffered, engine.currentSnapshot.position);
-  });
-
-  test('health sampling detects lost audio activity while video position continues', () async {
-    final backend = _Backend();
-    var now = Duration.zero;
-    final engine = SharedPlayerEngine(
-      createBackend: () => backend,
-      monotonicNow: () => now,
-    );
-    addTearDown(engine.dispose);
-    final failures = <PlayerFailure>[];
-    engine.failures.listen(failures.add);
-    await engine.open(pair, const OpenOptions(play: true));
-    for (final seconds in [0, 1, 4]) {
-      now = Duration(seconds: seconds);
-      backend.sample = BackendHealth(
-        position: Duration(seconds: seconds + 1),
-        audioFrames: 10,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 280));
-    }
-    expect(failures, hasLength(1));
-    expect(backend.playing, false);
-    expect(engine.currentSnapshot.phase, PlaybackPhase.failed);
-  });
-
-  test(
-    'synchronized buffering uses the shared thirty second deadline',
-    () async {
-      final backend = _Backend();
-      var now = Duration.zero;
-      final engine = SharedPlayerEngine(
-        createBackend: () => backend,
-        monotonicNow: () => now,
-      );
-      addTearDown(engine.dispose);
-      final failures = <PlayerFailure>[];
-      engine.failures.listen(failures.add);
-      await engine.open(pair, const OpenOptions(play: true));
-      backend.signals.add(
-        const BackendEvent(BackendEventKind.buffering, value: true),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 280));
-      now = const Duration(seconds: 29);
-      await Future<void>.delayed(const Duration(milliseconds: 280));
-      expect(failures, isEmpty);
-      now = const Duration(seconds: 31);
-      await Future<void>.delayed(const Duration(milliseconds: 280));
-      expect(failures, hasLength(1));
-      expect(backend.playing, false);
-    },
-  );
 }
