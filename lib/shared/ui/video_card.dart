@@ -12,6 +12,7 @@ import 'video_card_menu_sheet.dart';
 import 'card_menu.dart';
 import 'scroll_aware_hover_region.dart';
 import 'video_card_feedback.dart';
+import 'video_card_surface.dart';
 import 'text_measurement_cache.dart';
 export 'video_card_feedback.dart' show VideoCardFeedback;
 import '../../features/video/domain/video_card_interactions.dart';

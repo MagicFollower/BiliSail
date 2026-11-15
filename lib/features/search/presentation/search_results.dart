@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/platform/external_links.dart';
 import '../../../domain/user.dart';
 import '../../../shared/ui/app_cover_image.dart';
+import '../../../shared/ui/app_notice.dart';
 import '../../../shared/ui/live_card_cover.dart';
 import '../../../shared/ui/scroll_aware_hover_region.dart';
 import '../../../shared/ui/bili_badges.dart';
