@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../shared/ui/app_dialog.dart';
+import '../../../shared/ui/content_section_tabs.dart';
 import '../../../core/platform/external_links.dart';
 import '../../../core/network/api_requests.dart';
 import '../../../domain/app_failure.dart';
@@ -236,32 +237,29 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
             controller: scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
+              if (liveBrowse && areas != null)
+                SliverToBoxAdapter(
+                  child: areas.items.when(
+                    loading: () => const LinearProgressIndicator(),
+                    error: (error, _) => StateView.error(
+                      message: _message(error),
+                      onAction: ref
+                          .read(homeControllerProvider(areasQuery).notifier)
+                          .refresh,
+                    ),
+                    data: (items) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _areaRow(items, parent: true),
+                        if (_liveParent != null)
+                          _areaRow(_liveParent!.children, parent: false),
+                      ],
+                    ),
+                  ),
+                ),
               SliverCardGridPadding(
                 sliver: SliverMainAxisGroup(
                   slivers: [
-                    if (liveBrowse && areas != null)
-                      SliverToBoxAdapter(
-                        child: areas.items.when(
-                          loading: () => const LinearProgressIndicator(),
-                          error: (error, _) => StateView.error(
-                            message: _message(error),
-                            onAction: ref
-                                .read(
-                                  homeControllerProvider(areasQuery).notifier,
-                                )
-                                .refresh,
-                          ),
-                          data: (items) => Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _areaRow(items, parent: true),
-                              if (_liveParent != null)
-                                _areaRow(_liveParent!.children, parent: false),
-                              const SizedBox(height: 12),
-                            ],
-                          ),
-                        ),
-                      ),
                     if ((_folder != null || favoriteRequest != null) &&
                         !liveBrowse)
                       SliverToBoxAdapter(
@@ -529,54 +527,44 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   }
 
   Widget _areaRow(List<HomeEntry> items, {required bool parent}) {
-    final choices = <Widget>[
-      ChoiceChip(
-        label: const Text('全部'),
-        selected: parent ? _liveParent == null : _folder?.id == _liveParent?.id,
-        onSelected: (_) => setState(() {
-          if (parent) {
-            _liveParent = null;
-            _folder = null;
-          } else {
-            _folder = _liveParent;
-          }
-        }),
-      ),
-      for (final item in items)
-        ChoiceChip(
-          label: Text(item.title),
-          selected: parent
-              ? _liveParent?.id == item.id
-              : _folder?.id == item.id,
-          onSelected: (_) => setState(() {
-            if (parent) _liveParent = item;
-            _folder = item;
-          }),
-        ),
-    ];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: _expandedAreas
-                ? Wrap(spacing: 8, runSpacing: 8, children: choices)
-                : SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(spacing: 8, children: choices),
-                  ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: ContentSectionTabs<String>(
+            entries: [
+              ('', '全部'),
+              for (final item in items) (item.id, item.title),
+            ],
+            value: parent
+                ? _liveParent?.id ?? ''
+                : _folder?.id == _liveParent?.id
+                ? ''
+                : _folder?.id,
+            wrap: _expandedAreas,
+            onSelected: (id) {
+              final item = id.isEmpty
+                  ? null
+                  : items.firstWhere((item) => item.id == id);
+              setState(() {
+                if (parent) _liveParent = item;
+                _folder = item ?? _liveParent;
+              });
+            },
           ),
-          if (parent)
-            IconButton(
+        ),
+        if (parent)
+          SizedBox.square(
+            dimension: 44,
+            child: IconButton(
               tooltip: _expandedAreas ? '收起分区' : '展开分区',
               onPressed: () => setState(() => _expandedAreas = !_expandedAreas),
               icon: Icon(
                 _expandedAreas ? Icons.expand_less : Icons.expand_more,
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -930,8 +918,8 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   }) async {
     final provider = favoritePlaybackQueueProvider(request);
     if (ref.read(provider).isLoading) return;
-    final ({int page, String? cursor})? origin = initial == null
-        ? (page: 1, cursor: null)
+    final origin = initial == null
+        ? (page: 1, cursor: null, reconcile: false)
         : ref
               .read(homeControllerProvider(request.query).notifier)
               .queuePageFor(initial);
@@ -941,7 +929,12 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
     }
     final queue = await ref
         .read(provider.notifier)
-        .capture(page: origin.page, cursor: origin.cursor, initial: initial);
+        .capture(
+          page: origin.page,
+          cursor: origin.cursor,
+          initial: initial,
+          reconcile: origin.reconcile,
+        );
     if (!mounted ||
         !widget.active ||
         !WorkspaceActivity.isActive(context) ||

@@ -4,6 +4,125 @@ import 'package:bili_player/bili_player.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'hardware frame warnings and nested output failures keep safe categories',
+    () {
+      final decoder = NativeErrorSummary.classify(
+        'Error while decoding frame (hardware decoding)!',
+        prefix: 'vd',
+      );
+      expect(decoder.cause, NativeErrorCause.hardwareDecoder);
+      expect(decoder.detail, NativeErrorDetail.decoderFailure);
+      final output = NativeErrorSummary.classify(
+        'Failed to map video frame https://private/?token=SECRET',
+        prefix: 'vo/libmpv/token=SECRET',
+      );
+      expect(output.cause, NativeErrorCause.videoOutput);
+      expect(output.component, 'vo');
+      final event = PlayerDiagnosticEvent(
+        kind: PlayerDiagnosticKind.nativeLog,
+        snapshot: const PlaybackSnapshot(
+          phase: PlaybackPhase.playing,
+          generation: 1,
+        ),
+        nativeError: output,
+      );
+      expect(jsonEncode(event.toJson()), isNot(contains('SECRET')));
+    },
+  );
+  test('video bitstream errors enter stall checking and keep only fixed subcategories', () {
+    for (final (message, detail) in [
+      (
+        'Invalid NAL unit size 999 https://cdn/?token=SECRET',
+        NativeErrorDetail.invalidBitstream,
+      ),
+      (
+        'Reference picture missing during reorder',
+        NativeErrorDetail.missingReference,
+      ),
+      ('Packet corrupt (stream = 0)', NativeErrorDetail.corruptPacket),
+      ('Non-monotonous DTS in output stream', NativeErrorDetail.timestamp),
+      ('Error decoding video frame', NativeErrorDetail.decoderFailure),
+      ('Unrecognized native decoder message', NativeErrorDetail.unknown),
+    ]) {
+      final summary = NativeErrorSummary.classify(
+        message,
+        prefix: 'ffmpeg/video',
+      );
+      expect(summary.isVideoDecodeError, true);
+      expect(summary.detail, detail);
+      expect(summary.cause, NativeErrorCause.decoder);
+      expect(
+        jsonEncode(
+          PlayerDiagnosticEvent(
+            kind: PlayerDiagnosticKind.nativeLog,
+            snapshot: const PlaybackSnapshot(
+              phase: PlaybackPhase.playing,
+              generation: 1,
+            ),
+            nativeError: summary,
+          ).toJson(),
+        ),
+        isNot(contains('SECRET')),
+      );
+    }
+    expect(
+      NativeErrorSummary.classify(
+        'HTTP error 403',
+        prefix: 'ffmpeg/video',
+      ).isVideoDecodeError,
+      false,
+    );
+  });
+  test(
+    'hardware advice and desync hints are not hardware decoder failures',
+    () {
+      for (final message in [
+        'Consider trying --profile=fast and/or --hwdec=auto as they may help.',
+        'Audio/Video desynchronisation detected! Possible reasons include too slow hardware.',
+        'hardware, temporary CPU spikes, broken drivers, and broken files.',
+      ]) {
+        expect(
+          NativeErrorSummary.classify(message, prefix: 'cplayer').cause,
+          isNot(NativeErrorCause.hardwareDecoder),
+        );
+      }
+      expect(
+        NativeErrorSummary.classify(
+          'Failed D3D11 hardware decoder',
+          prefix: 'vd',
+        ).isVideoDecodeError,
+        true,
+      );
+    },
+  );
+  test('enrichment preserves capture identity, timing and sanitized state', () {
+    final event = PlayerDiagnosticEvent(
+      kind: PlayerDiagnosticKind.nativeState,
+      snapshot: const PlaybackSnapshot(
+        phase: PlaybackPhase.buffering,
+        generation: 3,
+      ),
+      bufferingDuration: const Duration(seconds: 2),
+      nativeState: const NativePlaybackState(
+        coreIdle: true,
+        pausedForCache: false,
+        hardwareDecoder: 'SECRET',
+        videoCodec: 'https://private/?token=SECRET',
+      ),
+    );
+    final first = event.withContext(
+      playerId: 7,
+      sourceKind: DiagnosticSourceKind.liveManifest,
+    );
+    final second = event.withContext(playerId: 8);
+    expect(first.timestamp, event.timestamp);
+    expect(first.toJson()['playerId'], 7);
+    expect(second.toJson()['playerId'], 8);
+    expect(first.toJson()['sourceKind'], 'liveManifest');
+    expect(first.toJson()['bufferingDurationMs'], 2000);
+    expect(jsonEncode(first.toJson()), isNot(contains('SECRET')));
+  });
   test('stall diagnostics record safe clocks and the detection deadline', () {
     final json = PlayerDiagnosticEvent(
       kind: PlayerDiagnosticKind.playbackStalled,
@@ -92,5 +211,70 @@ void main() {
       NativeErrorSummary.classify('Failed D3D11 hardware decoder').cause,
       NativeErrorCause.hardwareDecoder,
     );
+  });
+
+  test('audio decoding errors retain the sanitized decoder category', () {
+    final summary = NativeErrorSummary.classify(
+      'Error decoding audio.',
+      prefix: 'ffmpeg/audio',
+    );
+    expect(summary.component, 'ffmpeg/audio');
+    expect(summary.cause, NativeErrorCause.decoder);
+  });
+
+  test('premature HTTP reads and TLS pull failures retain no source text', () {
+    for (final message in [
+      'Stream ends prematurely at 100, should be 200',
+      'Error in the pull function. https://private.test/?token=SECRET',
+    ]) {
+      final summary = NativeErrorSummary.classify(message, prefix: 'ffmpeg');
+      expect(summary.cause, NativeErrorCause.inputOutput);
+      expect(summary.httpStatus, isNull);
+    }
+  });
+
+  test('truncated containers and segment failures are media read errors', () {
+    for (final (message, detail) in [
+      (
+        'stream 0, offset 0x1234: partial file',
+        NativeErrorDetail.prematureRead,
+      ),
+      (
+        'root atom offset 0x1234: partial file '
+            'https://private.test/?pts=10&token=SECRET',
+        NativeErrorDetail.prematureRead,
+      ),
+      ('Failed to open segment 3 of playlist 0', NativeErrorDetail.segmentRead),
+      ('Failed to reload playlist 0', NativeErrorDetail.segmentRead),
+    ]) {
+      for (final prefix in ['ffmpeg/demuxer', 'ffmpeg', 'other']) {
+        final summary = NativeErrorSummary.classify(message, prefix: prefix);
+        expect(summary.cause, NativeErrorCause.inputOutput, reason: message);
+        expect(summary.detail, detail, reason: message);
+        final json = jsonEncode(
+          PlayerDiagnosticEvent(
+            kind: PlayerDiagnosticKind.nativeLog,
+            snapshot: const PlaybackSnapshot(
+              generation: 1,
+              phase: PlaybackPhase.playing,
+            ),
+            nativeError: summary,
+          ).toJson(),
+        );
+        expect(json, isNot(contains('SECRET')));
+        expect(json, isNot(contains('private.test')));
+      }
+    }
+  });
+
+  test('decoder components retain their dedicated failure routes', () {
+    for (final prefix in ['ffmpeg/audio', 'ffmpeg/video']) {
+      final summary = NativeErrorSummary.classify(
+        'Input/output error',
+        prefix: prefix,
+      );
+      expect(summary.cause, NativeErrorCause.decoder);
+      expect(summary.component, prefix);
+    }
   });
 }

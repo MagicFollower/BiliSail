@@ -11,6 +11,9 @@ import '../core/presentation/app_input_host.dart';
 import '../core/presentation/input_scope.dart';
 import '../features/settings/domain/shortcut_settings.dart';
 import '../shared/ui/app_notice.dart';
+import '../shared/ui/responsive_layout_scope.dart';
+import '../domain/responsive_layout_settings.dart';
+import '../domain/wheel_scroll_animation.dart';
 import '../shared/ui/smooth_scroll_behavior.dart';
 import 'shortcut_coordinator.dart';
 
@@ -26,6 +29,12 @@ class WorkspacePlaybackWindow extends StatefulWidget {
     required this.onActivateBrowser,
     this.onHome,
     required this.theme,
+    this.responsiveLayout = const ResponsiveLayoutSettings.defaults(),
+    this.wheelScrollAnimation = defaultWheelScrollAnimation,
+    this.wheelDampingRatio = 1.3,
+    this.chromiumScrollCurve = ChromiumScrollCurve.easeInOut,
+    this.wheelScrollDistanceMultiplier = 1,
+    this.wheelScrollDurationMultiplier = defaultWheelScrollDurationMultiplier,
   });
 
   final Widget child;
@@ -35,6 +44,12 @@ class WorkspacePlaybackWindow extends StatefulWidget {
   final VoidCallback onActivateBrowser;
   final VoidCallback? onHome;
   final ThemeData theme;
+  final ResponsiveLayoutSettings responsiveLayout;
+  final WheelScrollAnimation wheelScrollAnimation;
+  final double wheelDampingRatio;
+  final ChromiumScrollCurve chromiumScrollCurve;
+  final double wheelScrollDistanceMultiplier;
+  final double wheelScrollDurationMultiplier;
 
   @override
   State<WorkspacePlaybackWindow> createState() =>
@@ -200,24 +215,34 @@ class _WorkspacePlaybackWindowState extends State<WorkspacePlaybackWindow> {
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       scrollBehavior: const SmoothScrollBehavior(),
       navigatorObservers: [_input.routes],
-      builder: (context, child) => AppInputHost<Object>(
-        dispatcher: _input,
-        routes: _input.routes,
-        onEditingChanged: window == null
-            ? null
-            : (active) => window.setTextInputActive(active),
-        child: AppNoticeHost(
-          child: CommandTargetScope<Object>(
-            scope: CommandScope.workspace,
-            commands: {
-              for (final command in <Object>[
-                ShortcutAction.closeTab,
-                ShortcutAction.nextTab,
-                ShortcutAction.previousTab,
-              ])
-                command: (stroke) => _command(command, stroke),
-            },
-            child: child ?? const SizedBox.shrink(),
+      builder: (context, child) => SmoothScrollScope(
+        animation: widget.wheelScrollAnimation,
+        dampingRatio: widget.wheelDampingRatio,
+        chromiumCurve: widget.chromiumScrollCurve,
+        distanceMultiplier: widget.wheelScrollDistanceMultiplier,
+        durationMultiplier: widget.wheelScrollDurationMultiplier,
+        child: AppInputHost<Object>(
+          dispatcher: _input,
+          routes: _input.routes,
+          onEditingChanged: window == null
+              ? null
+              : (active) => window.setTextInputActive(active),
+          child: AppNoticeHost(
+            child: CommandTargetScope<Object>(
+              scope: CommandScope.workspace,
+              commands: {
+                for (final command in <Object>[
+                  ShortcutAction.closeTab,
+                  ShortcutAction.nextTab,
+                  ShortcutAction.previousTab,
+                ])
+                  command: (stroke) => _command(command, stroke),
+              },
+              child: ResponsiveLayoutScope(
+                settings: widget.responsiveLayout,
+                child: child ?? const SizedBox.shrink(),
+              ),
+            ),
           ),
         ),
       ),

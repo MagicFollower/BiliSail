@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:bili_player/bili_player.dart';
+import 'package:bili_player/src/native_audio_error_monitor.dart';
 import 'package:bili_player/src/playback_backend.dart';
 import 'package:bili_player/src/shared_player_engine.dart';
 import 'package:bili_player/src/validated_source.dart';
@@ -190,8 +191,156 @@ MediaTrack track(String name) => MediaTrack(
 );
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
   final pair = DashPairSource(video: track('v'), audio: track('a'));
+  test('video decode errors use the existing bounded stall recovery', () async {
+    final backend = _Backend();
+    final diagnostics = <PlayerDiagnosticEvent>[];
+    final engine = SharedPlayerEngine(
+      createBackend: () => backend,
+      onDiagnostic: diagnostics.add,
+    );
+    addTearDown(engine.dispose);
+    await engine.open(pair, const OpenOptions(play: true));
+    backend.signals.add(
+      const BackendEvent(BackendEventKind.warning, videoDecodeError: true),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 2100));
+    expect(engine.currentSnapshot.phase, PlaybackPhase.failed);
+    expect(
+      diagnostics.any((e) => e.kind == PlayerDiagnosticKind.playbackStalled),
+      true,
+    );
+  });
+  test(
+    'video errors with confirmed progress do not retire a healthy source',
+    () async {
+      final backend = _Backend();
+      final engine = SharedPlayerEngine(createBackend: () => backend);
+      addTearDown(engine.dispose);
+      await engine.open(pair, const OpenOptions(play: true));
+      backend.signals.add(
+        const BackendEvent(BackendEventKind.warning, videoDecodeError: true),
+      );
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(seconds: 1),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 2100));
+      expect(engine.currentSnapshot.phase, PlaybackPhase.playing);
+      expect(backend.released, false);
+    },
+  );
+  test('repeated frozen decoder buffering emits one bounded failure', () async {
+    final backend = _Backend();
+    final diagnostics = <PlayerDiagnosticEvent>[];
+    var now = Duration.zero;
+    final engine = SharedPlayerEngine(
+      createBackend: () => backend,
+      monotonicNow: () => now,
+      onDiagnostic: diagnostics.add,
+    );
+    addTearDown(engine.dispose);
+    final failures = <PlayerFailure>[];
+    engine.failures.listen(failures.add);
+    await engine.open(pair, const OpenOptions(play: true));
+    for (var i = 0; i < 3; i++) {
+      backend.signals.add(
+        const BackendEvent(BackendEventKind.buffering, value: true),
+      );
+      backend.signals.add(
+        const BackendEvent(BackendEventKind.warning, videoDecodeError: true),
+      );
+      now += const Duration(seconds: 2);
+      backend.signals.add(
+        const BackendEvent(BackendEventKind.buffering, value: false),
+      );
+      backend.signals.add(
+        BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(milliseconds: 100 * (i + 1)),
+        ),
+      );
+      await tick();
+    }
+    expect(failures, hasLength(1));
+    expect(
+      diagnostics.where(
+        (e) => e.stallReason == PlaybackStallReason.repeatedDecoderBuffering,
+      ),
+      hasLength(1),
+    );
+    expect(engine.currentSnapshot.phase, PlaybackPhase.failed);
+  });
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'audio failure pauses the pair before video can mask the error',
+    () async {
+      final backend = _Backend();
+      final diagnostics = <PlayerDiagnosticEvent>[];
+      final engine = SharedPlayerEngine(
+        createBackend: () => backend,
+        onDiagnostic: diagnostics.add,
+      );
+      addTearDown(engine.dispose);
+      final failures = <PlayerFailure>[];
+      engine.failures.listen(failures.add);
+      await engine.open(
+        pair,
+        const OpenOptions(play: true, rate: 2, volume: 37),
+      );
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(seconds: 10),
+        ),
+      );
+      final monitor = NativeAudioErrorMonitor(
+        snapshot: () => engine.currentSnapshot,
+        onFailure: () => backend.signals.add(
+          const BackendEvent(
+            BackendEventKind.failure,
+            stallReason: PlaybackStallReason.audioDecodeError,
+          ),
+        ),
+      );
+      addTearDown(monitor.dispose);
+      monitor.report(
+        NativeErrorSummary.classify('Error decoding audio.', prefix: 'ad'),
+        NativeLogSeverity.error,
+      );
+      backend.signals.add(const BackendEvent(BackendEventKind.warning));
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(seconds: 14),
+        ),
+      );
+      await tick();
+      expect(failures.single.kind, PlayerFailureKind.nativePlayback);
+      final cause = diagnostics.singleWhere(
+        (event) => event.kind == PlayerDiagnosticKind.playbackStalled,
+      );
+      expect(cause.toJson()['stallReason'], 'audioDecodeError');
+      expect(cause.snapshot.desiredPlaying, true);
+      expect(backend.playing, false);
+      expect(backend.writes.last, 'pause');
+      expect(engine.currentSnapshot.phase, PlaybackPhase.failed);
+      expect(engine.currentSnapshot.position, const Duration(seconds: 10));
+      expect(engine.currentSnapshot.rate, 2);
+      expect(engine.currentSnapshot.volume, 37);
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.sample,
+          position: Duration(seconds: 15),
+        ),
+      );
+      expect(engine.currentSnapshot.phase, PlaybackPhase.failed);
+      expect(failures, hasLength(1));
+    },
+  );
+
   test(
     'event backend reuses a stopped source and never polls native health',
     () async {
@@ -942,6 +1091,26 @@ void main() {
     expect(backend.seeks.map((s) => s.$1), [const Duration(seconds: 2)]);
     expect(backend.playing, false);
   });
+
+  test(
+    'premature playback completion still reports a recoverable interruption',
+    () async {
+      final backend = _Backend();
+      final engine = SharedPlayerEngine(createBackend: () => backend);
+      addTearDown(engine.dispose);
+      await engine.open(pair, const OpenOptions(play: true));
+      final failure = engine.failures.first;
+      backend.signals.add(
+        const BackendEvent(
+          BackendEventKind.ended,
+          position: Duration(seconds: 10),
+        ),
+      );
+      expect((await failure).kind, PlayerFailureKind.videoInterrupted);
+      expect(engine.currentSnapshot.phase, PlaybackPhase.failed);
+      expect(backend.playing, false);
+    },
+  );
 
   test('natural EOF emits once, ignores trailing events, and replay resumes native events', () async {
     final backend = _Backend();

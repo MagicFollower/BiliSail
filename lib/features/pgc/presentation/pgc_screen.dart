@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../domain/content_link.dart';
+import '../../../shared/ui/content_link_scope.dart';
+
 import '../../../core/input/input_stroke.dart';
 import '../../../domain/video.dart';
 import '../../../domain/playback_mode.dart';
@@ -15,6 +18,7 @@ import '../../playback/application/playback_session.dart';
 import '../../../shared/ui/playback_page_commands.dart';
 import '../../../shared/ui/playback_layout_builder.dart';
 import '../../../shared/ui/width_layout_builder.dart';
+import '../../../shared/ui/responsive_layout_scope.dart';
 import '../../../core/presentation/workspace_activity.dart';
 import '../../settings/domain/shortcut_settings.dart';
 import '../../../shared/ui/app_cover_image.dart';
@@ -75,6 +79,21 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
   late PgcLocator _locator;
   int? _tab;
   bool _infoVisible = true;
+  ContentLink? _contentLink;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final link = ContentLinkScope.of(context);
+    if (link != _contentLink) {
+      _contentLink = link;
+      if (link.comment != null) {
+        _tab = 1;
+        _infoVisible = true;
+      }
+    }
+  }
+
   final _introScroll = HeaderScrollController();
   PgcSeason? _playerSeason;
   PgcEpisode? _playerEpisode;
@@ -216,7 +235,9 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
       toggleInfo: () => setState(() => _infoVisible = !_infoVisible),
       child: WidthLayoutBuilder(
         builder: (context, width) {
-          final wide = width >= 1000;
+          final wide =
+              width >=
+              ResponsiveLayoutScope.of(context).playbackSideBySideWidth;
           final showInfo = _infoVisible;
           void toggleInfo() => setState(() => _infoVisible = !_infoVisible);
           final info = Material(

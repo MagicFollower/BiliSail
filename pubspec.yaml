@@ -1,7 +1,7 @@
 name: bilisail
 description: BiliSail, a cross-platform third-party Bilibili client focused on the viewing experience, built with Flutter.
 publish_to: none
-version: 1.2.9+5
+version: 1.2.9+8
 
 environment:
   sdk: '>=3.13.0 <4.0.0'
@@ -14,6 +14,10 @@ dependencies:
     sdk: flutter
   flutter_riverpod: 3.4.3
   flutter_markdown_plus: 1.0.12
+  scroll_animator: 0.3.0
+  smooth_scroll_multiplatform:
+    path: third_party/smooth_scroll_multiplatform
+    version: 1.0.8+bilisail.1
   go_router: 18.0.2
   drift: 2.35.2
   path: 1.9.1
@@ -44,21 +48,17 @@ dependencies:
   #   1) liquid_dock_navi —— 本分支独有的「液态玻璃 dock」组件，来自同级独立仓库
   #      ../liquid_dock_navi（path 依赖）。它是本分支 UI 身份的核心，上游没有此包，
   #      必须保留，否则壳层 dock 无法编译。
-  #   2) image_picker —— 上游本轮「动态发布」新增的依赖，用于 composing 时打开系统
-  #      相册选图（上游提交 0cdd0eef）。采纳上游动态发布功能即需要它。
-  # 一个服务本地 dock、一个服务上游动态发图，合并后共存，不互相替代。
+  #   2) image_picker / webview_all —— 上游新增的依赖，采纳上游功能即需要它们。
+  # 本地 dock 组件与上游功能依赖合并后共存，不互相替代。
   liquid_dock_navi:
     path: ../liquid_dock_navi
+  webview_all: 1.5.0
   image_picker: 1.2.4
 
 # Keep core, video output and native library manifests on one reviewed fork commit.
 dependency_overrides:
   # Retain the existing wakelock API and package_info_plus compatibility.
   wakelock_plus: 1.8.1
-  # Linux uses QR login until the experimental WPE WebKit implementation has
-  # a separately validated portable packaging path. No native WebView is linked.
-  flutter_inappwebview_linux:
-    path: linux/plugins/flutter_inappwebview_linux
   media_kit:
     git:
       url: https://github.com/CKopoer/media-kit.git
@@ -108,6 +108,7 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: 6.0.0
+  webview_platform_interface: 1.5.0
 
 flutter:
   # The pinned video and native-library plugins share CocoaPods integration.
@@ -122,6 +123,7 @@ flutter:
     - assets/branding/dsconfinement_icon.png
     - assets/branding/bilibili_pink_macos.icns
     - assets/branding/bilibili_LICENSE.md
+    - assets/licenses/scroll_animator_chromium.txt
     - assets/fonts/harmonyos_sans/LICENSE.txt
   fonts:
     - family: HarmonyOS Sans

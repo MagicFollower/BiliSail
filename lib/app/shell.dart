@@ -140,10 +140,13 @@ final class BiliAppShell extends StatefulWidget {
     this.shortcuts = const ShortcutSettings.defaults(),
     this.appIcon = AppIconPreference.bilisail,
     this.navigationMode,
+    this.predictiveBackEnabled = true,
     this.closeTabOnMiddleClick = false,
     this.closeTabOnRightClick = false,
     this.closeTabOnDoubleClick = false,
     this.sidebarStyle = SidebarStyle.automatic,
+    this.navigationBarBreakpoint = 600,
+    this.sidebarExpandedWidth = 1600,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.liquidGlassDock = true,
     this.dockShowHistoryDownloads = false,
@@ -158,10 +161,13 @@ final class BiliAppShell extends StatefulWidget {
   final ShortcutSettings shortcuts;
   final AppIconPreference appIcon;
   final WorkspaceNavigationMode? navigationMode;
+  final bool predictiveBackEnabled;
   final bool closeTabOnMiddleClick;
   final bool closeTabOnRightClick;
   final bool closeTabOnDoubleClick;
   final SidebarStyle sidebarStyle;
+  final int navigationBarBreakpoint;
+  final int sidebarExpandedWidth;
   final NavigationBarMode navigationBarMode;
   final bool liquidGlassDock;
   final bool dockShowHistoryDownloads;
@@ -238,7 +244,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
     final compact = _compactLayout(width);
     if (_mobile && compact) return true;
     return switch (widget.navigationBarMode) {
-      NavigationBarMode.automatic => compact,
+      NavigationBarMode.automatic => width < widget.navigationBarBreakpoint,
       NavigationBarMode.bottom => true,
       NavigationBarMode.sidebar => false,
     };
@@ -873,7 +879,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
                   builder: (context, constraints) {
                     final compact = _usesBottomNavigation(constraints.maxWidth);
                     final extended = switch (widget.sidebarStyle) {
-                      SidebarStyle.automatic => constraints.maxWidth >= 1600,
+                      SidebarStyle.automatic =>
+                        constraints.maxWidth >= widget.sidebarExpandedWidth,
                       SidebarStyle.expanded => true,
                       SidebarStyle.compact => false,
                     };
@@ -1126,6 +1133,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
       builder: (context, constraints) => PredictiveBackRegion(
         // Match the frame's navigation layout after SafeArea consumes padding.
         enabled:
+            widget.predictiveBackEnabled &&
             supported &&
             _usesBottomNavigation(
               constraints.maxWidth - MediaQuery.paddingOf(context).horizontal,

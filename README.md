@@ -60,10 +60,10 @@ BiliSail（哔帆）以视频、影视和直播观看为核心，提供双／多
 | 视频卡片 | 悬停封面放大与静音视频预览、添加稍后再看、操作菜单；推荐反馈保留原卡片位置并支持撤销 |
 | 搜索 | 综合、视频、番剧、影视、直播、专栏和用户七类搜索，支持对应排序、筛选与自动分页 |
 | 视频与影视 | DASH 音视频分轨播放，分 P、合集与选集、合集订阅、稍后再看队列；清晰度、编码与 CDN 偏好、倍速、音量、全屏、章节与进度条缩略图 |
-| DLNA 投屏 | 视频／影视／直播投屏，按接收端能力交接内容身份与弹幕开关或普通媒体地址，支持设备搜索和暂停／继续／停止；真实电视兼容性待验，见 [投屏记录](docs/validation/dlna-casting.md) |
+| DLNA 投屏 | 视频／影视／直播默认使用兼容播放，可主动尝试电视弹幕实验模式，支持设备搜索和暂停／继续／停止；真实电视兼容性待验，见 [投屏记录](docs/validation/dlna-casting.md) |
 | 直播 | HLS / FLV、可用清晰度、实时聊天与表情、画面弹幕、Super Chat 展示、用户主页跳转及弹幕发送入口 |
 | 弹幕与字幕 | 滚动、顶部、底部弹幕，暂停与缓冲冻结、seek 重定位；样式、密度与本地过滤配置，字幕 cue 显示 |
-| 账号与个人空间 | 扫码登录、内嵌官方网页密码／短信登录、系统安全存储；用户主页、关注分组、收藏夹查看与编辑、追番、追剧、稍后再看及消息／私信 |
+| 账号与个人空间 | 扫码与 App 密码／短信双凭据登录、独立官网登录、系统安全存储；用户主页、关注分组、收藏夹查看与编辑、追番、追剧、稍后再看及消息／私信 |
 | 评论与动态互动 | 最热／最新评论、楼中楼、表情与图片、作者装扮、服务端提供的 IP 属地、正文链接与时间点跳转；视频点赞／投币／收藏，动态点赞、评论、复制链接与转发 |
 | 导航与界面 | 单／双／多标签模式与 Android 默认单标签、Windows／macOS 双标签独立播放窗口及媒体返回历史、Android 应用内双标签、多标签可选并发播放、桌面侧栏与窄屏首页／动态／我的／设置、我的页历史／稍后再看／收藏／下载内容标签、分类横向滚轮、紧凑播放布局、桌面平滑滚动、键盘与鼠标侧键配置、图片缓存 |
 | 历史与续播 | 当前账号云端观看历史分页；登录点播上报云端进度，记住进度开启时本地优先、云端补充；新点播继承本次运行中最近选择的倍速 |
@@ -92,16 +92,16 @@ BiliSail（哔帆）以视频、影视和直播观看为核心，提供双／多
 下表由 Release 发布后自动读取附件并更新，无需手动修改版本号，安装包保留原有文件名。预发布版、各安装包的 SHA-256 校验文件与构建信息见 [Releases](https://github.com/CKopoer/BiliSail/releases)。实际可下载平台以该版本附件为准；也可按[源码运行说明](#从源码运行)自行构建。
 
 <!-- release-downloads:start -->
-下载版本：[v1.2.9+5](https://github.com/CKopoer/BiliSail/releases/tag/v1.2.9%2B5)。
+下载版本：[v1.2.9+6](https://github.com/CKopoer/BiliSail/releases/tag/v1.2.9%2B6)。
 
 | 平台 | 最新正式版下载 | 安装说明 |
 | --- | --- | --- |
-| Windows x64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-x64.cer) | 使用msix安装时，需要先信任对应证书；具体步骤见 [MSIX 签名与安装](docs/validation/ci-cd.md#windows-msix-签名与安装) |
-| Windows ARM64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-windows-arm64.cer) | 新增 CI 构建目标；已发布版本不会自动补齐该架构 |
-| Android arm64 | [APK](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-android-arm64.apk) | 固定 release 密钥，跨签名切换与覆盖升级说明见 [Android 签名](docs/validation/ci-cd.md#android-固定签名与覆盖升级) |
-| macOS arm64 / Intel x64 | [Apple Silicon DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-macos-arm64.dmg) / [Intel x64 DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-macos-x64.dmg) | 按芯片选择对应包；打开后将 `BiliSail.app` 拖到 `Applications`；当前配置使用 ad-hoc 签名，安装后启动需要`设置-隐私与安全性-允许BiliSail运行` |
-| iOS arm64 | [未签名 IPA](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-ios-arm64-unsigned.ipa) | 安装前须自行使用 Apple 证书及 provisioning profile 签名；GitHub token 仅供 CI 上传产物使用 |
-| Linux x64 | [Flatpak](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-linux-x64.flatpak) / [AppImage](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B5/BiliSail-1.2.9%2B5-linux-x64.AppImage) | Flatpak 通过 `flatpak install --user 文件.flatpak` 安装；AppImage 赋予执行权限后运行。运行库、密钥环及沙盒说明见[平台扩展记录](docs/validation/ios-linux.md) |
+| Windows x64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-x64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-x64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-x64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-x64.cer) | 使用msix安装时，需要先信任对应证书；具体步骤见 [MSIX 签名与安装](docs/validation/ci-cd.md#windows-msix-签名与安装) |
+| Windows ARM64 | [EXE](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-arm64.exe) / [MSI](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-arm64.msi) / [MSIX](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-arm64.msix) / [证书 CER](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-windows-arm64.cer) | 新增 CI 构建目标；已发布版本不会自动补齐该架构 |
+| Android arm64 | [APK](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-android-arm64.apk) | 固定 release 密钥，跨签名切换与覆盖升级说明见 [Android 签名](docs/validation/ci-cd.md#android-固定签名与覆盖升级) |
+| macOS arm64 / Intel x64 | [Apple Silicon DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-macos-arm64.dmg) / [Intel x64 DMG](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-macos-x64.dmg) | 按芯片选择对应包；打开后将 `BiliSail.app` 拖到 `Applications`；当前配置使用 ad-hoc 签名，安装后启动需要`设置-隐私与安全性-允许BiliSail运行` |
+| iOS arm64 | [未签名 IPA](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-ios-arm64-unsigned.ipa) | 安装前须自行使用 Apple 证书及 provisioning profile 签名；GitHub token 仅供 CI 上传产物使用 |
+| Linux x64 | [Flatpak](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-linux-x64.flatpak) / [AppImage](https://github.com/CKopoer/BiliSail/releases/download/v1.2.9%2B6/BiliSail-1.2.9%2B6-linux-x64.AppImage) | Flatpak 通过 `flatpak install --user 文件.flatpak` 安装；AppImage 赋予执行权限后运行。运行库、密钥环及沙盒说明见[平台扩展记录](docs/validation/ios-linux.md) |
 <!-- release-downloads:end -->
 
 GitHub Actions 的 **CI** 执行根应用和四个包的检查，并按平台构建预览产物；维护者可手动运行 **Release preview** 创建预览 Release 草稿，再公开发布。Release 和 CI 构建包的签名种类以各自的 `build-info.json` 为准。触发方式、产物校验与签名配置见 [CI/CD 说明](docs/validation/ci-cd.md)。
@@ -114,7 +114,7 @@ CI 和 Release 构建的 Windows 产物同时包含 `.msix`、`.msi` 和 `.exe` 
 
 项目固定使用 **Flutter 3.47.6 stable / Dart 3.13.5**。直接依赖采用精确版本，根应用和各包均保留锁文件。
 
-Windows 开发还需安装 **Visual Studio 2022** 的“使用 C++ 的桌面开发”工作负载及 Windows SDK，并将 NuGet CLI 加入 `PATH`（内嵌网页插件构建使用）。Windows 密码／短信登录需要 WebView2 Runtime；来源与平台边界见[登录验证](docs/validation/password-sms-login.md)。Android 和 macOS 的构建需各自的工具链，macOS 构建需在 macOS 主机上执行。
+Windows 开发还需安装 **Visual Studio 2022** 的“使用 C++ 的桌面开发”工作负载及 Windows SDK，并将 NuGet CLI 加入 `PATH`（内嵌网页插件构建使用）。Windows 人机验证及官网登录需要 WebView2 Runtime；密码／短信流程与验证边界见[App 登录记录](docs/validation/password-sms-app-login-2026-11-15.md)。Android 和 macOS 的构建需各自的工具链，macOS 构建需在 macOS 主机上执行。Linux 构建需 WebKitGTK 4.1 开发包；网页登录与安装包运行依赖见[WebView 平台记录](docs/validation/webview-all-linux-2026-11-14.md)。
 
 ### Windows 调试
 

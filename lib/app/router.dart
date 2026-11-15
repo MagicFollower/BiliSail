@@ -39,6 +39,8 @@ import '../features/playback/application/playback_session.dart';
 import '../features/playback/application/playback_manager.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/comments/application/comment_link_resolver.dart';
+import '../domain/content_link.dart';
+import '../shared/ui/content_link_scope.dart';
 import '../features/auth/presentation/account_button.dart';
 import '../features/auth/presentation/account_screen.dart';
 import '../features/feed/application/feed_controller.dart';
@@ -135,7 +137,12 @@ GoRouter createBiliRouter({
             navigationBarMode: settings.navigationBarMode,
             liquidGlassDock: settings.liquidGlassDock,
             dockShowHistoryDownloads: settings.dockShowHistoryDownloads,
+            predictiveBackEnabled: settings.predictiveBackEnabled,
             sidebarStyle: settings.sidebarStyle,
+            navigationBarBreakpoint:
+                settings.responsiveLayout.navigationBarBreakpoint,
+            sidebarExpandedWidth:
+                settings.responsiveLayout.sidebarExpandedWidth,
             sidebarCollapsed: settings.sidebarCollapsed,
             onSidebarCollapsedChanged: (collapsed) async {
               try {
@@ -460,7 +467,23 @@ final class _WorkspacePage extends ConsumerWidget {
     onOpenTarget: (target) {
       final location = messageWorkspaceLocation(target);
       if (location != null) {
-        context.go(location);
+        final uri = Uri.parse(location);
+        final hasPosition =
+            uri.queryParameters.containsKey('comment_root_id') ||
+            uri.queryParameters.containsKey('start_progress');
+        context.go(
+          hasPosition
+              ? uri
+                    .replace(
+                      queryParameters: {
+                        ...uri.queryParameters,
+                        'message_request':
+                            '${DateTime.now().microsecondsSinceEpoch}',
+                      },
+                    )
+                    .toString()
+              : location,
+        );
       } else {
         ProviderScope.containerOf(
           context,
@@ -652,6 +675,7 @@ final class _WorkspacePage extends ConsumerWidget {
         : (false, null, null, 0);
     return Builder(
       builder: (context) => _PageCommandTarget(
+        link: ContentLink.fromUri(tab.location),
         commands: {
           if (!tab.isRoot &&
               !tab.isPgc &&
@@ -922,6 +946,33 @@ final class _WorkspacePage extends ConsumerWidget {
                           ),
                           onOpenVideo: (video) =>
                               context.go('/video/${video.id.value}'),
+                          onCloseQueue: (part) {
+                            final target = uri.replace(
+                              queryParameters: {
+                                for (final entry in uri.queryParameters.entries)
+                                  if (entry.key != 'queue')
+                                    entry.key: entry.value,
+                                'cid': part.cid,
+                              },
+                            );
+                            final navigation = WorkspacePageNavigation.maybeOf(
+                              context,
+                            );
+                            if (navigation != null) {
+                              navigation.navigate(target);
+                            } else {
+                              context.go(
+                                target
+                                    .replace(
+                                      queryParameters: {
+                                        ...target.queryParameters,
+                                        'tab': tab.id,
+                                      },
+                                    )
+                                    .toString(),
+                              );
+                            }
+                          },
                           onAdvanceVideo: (video, cid) {
                             final target = Uri(
                               path: '/video/${video.value}',
@@ -1018,7 +1069,12 @@ Widget _workspacePlayer(BuildContext context, Widget Function() build) =>
 
 /// Visibility updates only the input registration, not the page factory.
 class _PageCommandTarget extends StatelessWidget {
-  const _PageCommandTarget({required this.commands, required this.child});
+  const _PageCommandTarget({
+    required this.commands,
+    required this.child,
+    this.link = const ContentLink(),
+  });
+  final ContentLink link;
   final Map<Object, InputCommand> commands;
   final Widget child;
 
@@ -1028,6 +1084,6 @@ class _PageCommandTarget extends StatelessWidget {
     active: WorkspaceActivity.isActive(context),
     merge: const {ShortcutAction.refresh},
     commands: commands,
-    child: child,
+    child: ContentLinkScope(link: link, child: child),
   );
 }

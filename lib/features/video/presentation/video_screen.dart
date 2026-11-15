@@ -9,16 +9,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/app_failure.dart';
 import '../../../shared/ui/app_notice.dart';
+import '../../../shared/ui/app_dialog.dart';
 import '../../../core/network/api_requests.dart';
 
 import '../../../shared/ui/playback_page_commands.dart';
 import '../../../shared/ui/playback_layout_builder.dart';
+import '../../../shared/ui/responsive_layout_scope.dart';
 import '../../../shared/ui/width_layout_builder.dart';
 import '../../../domain/video.dart';
 import '../../../domain/playback_mode.dart';
 import '../../../shared/ui/state_view.dart';
-import '../../../shared/ui/app_cover_image.dart';
-import '../../../shared/ui/highlighted_text.dart';
 import '../../../shared/ui/playback_page_layout.dart';
 import '../../../shared/ui/scroll_collapsing_header.dart';
 import '../../../shared/ui/playback_info_tabs.dart';
@@ -26,9 +26,7 @@ import '../../../shared/ui/comment_detail_builder.dart';
 import '../../../domain/comment_target.dart';
 import '../../../core/presentation/workspace_activity.dart';
 import '../../../shared/ui/video_card.dart';
-import '../../../shared/ui/video_card_cover.dart';
-import '../../../shared/ui/video_card_menu_sheet.dart';
-import '../../../shared/ui/scroll_aware_hover_region.dart';
+import '../../../shared/ui/horizontal_video_card.dart';
 import '../../../shared/ui/video_card_interaction_scope.dart';
 import '../../feed/application/home_repository_provider.dart';
 import '../../feed/application/watch_later_removal_controller.dart';
@@ -41,6 +39,8 @@ import 'video_collection_panel.dart';
 import '../application/video_controller.dart';
 import '../application/video_extras_controller.dart';
 import 'video_comments_panel.dart';
+import '../../../domain/content_link.dart';
+import '../../../shared/ui/content_link_scope.dart';
 import 'video_tags_panel.dart';
 import 'video_access_notice.dart';
 import 'watch_later_queue_panel.dart';
@@ -76,6 +76,7 @@ final class VideoScreen extends ConsumerStatefulWidget {
     this.onSearchTag,
     this.queue,
     this.onOpenQueueVideo,
+    this.onCloseQueue,
     this.onAdvanceVideo,
   });
   final VideoId id;
@@ -92,6 +93,7 @@ final class VideoScreen extends ConsumerStatefulWidget {
   final ValueChanged<String>? onSearchTag;
   final WatchLaterQueue? queue;
   final ValueChanged<VideoId>? onOpenQueueVideo;
+  final ValueChanged<VideoPart>? onCloseQueue;
   final void Function(VideoId, String?)? onAdvanceVideo;
   @override
   ConsumerState<VideoScreen> createState() => _VideoScreenState();
@@ -100,7 +102,7 @@ final class VideoScreen extends ConsumerStatefulWidget {
 final class _VideoScreenState extends ConsumerState<VideoScreen> {
   String? _selectedCid;
   int? _tab;
-  bool _infoVisible = true;
+  final _infoVisible = ValueNotifier(true);
   bool _descriptionExpanded = false;
   bool _tagsRequested = false;
   bool _queueExpanded = true;
@@ -125,9 +127,24 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
   final _introScroll = HeaderScrollController();
   final GlobalKey _infoKey = GlobalKey();
   final GlobalKey _playerKey = GlobalKey();
+  (VideoDetail, VideoPart, VideoPlayerBuilder)? _playerConfiguration;
+  Widget? _playerContent;
+  ContentLink? _contentLink;
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final link = ContentLinkScope.of(context);
+    if (link != _contentLink) {
+      if (link.page != _contentLink?.page && link.page != null) {
+        _selectedCid = null;
+      }
+      _contentLink = link;
+      if (link.comment != null) {
+        _tab = 1;
+        _queueExpanded = false;
+        _infoVisible.value = true;
+      }
+    }
     _syncQueue();
   }
 
@@ -160,6 +177,7 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
       _retainedRegistry?.release(id);
     }
     _introScroll.dispose();
+    _infoVisible.dispose();
     super.dispose();
   }
 
@@ -256,6 +274,9 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
                       : _selectedCid ?? widget.initialCid),
             )
             .firstOrNull ??
+        video.parts
+            .where((part) => part.page == _contentLink?.page)
+            .firstOrNull ??
         video.parts.first;
     if (!transitioning) {
       _lastVideo = video;
@@ -266,9 +287,10 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
       children: [
         WidthLayoutBuilder(
           builder: (context, width) {
-            final wide = width >= 1000;
-            final showInfo = _infoVisible;
-            void toggleInfo() => setState(() => _infoVisible = !_infoVisible);
+            final wide =
+                width >=
+                ResponsiveLayoutScope.of(context).playbackSideBySideWidth;
+            void toggleInfo() => _infoVisible.value = !_infoVisible.value;
             return PlaybackPageCommands(
               previousPart: () => _changePart(video, selected, -1),
               nextPart: () => _changePart(video, selected, 1),
@@ -287,10 +309,7 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
               child: Focus(
                 child: Builder(
                   builder: (context) {
-                    final playerContent = ColoredBox(
-                      color: Colors.black,
-                      child: widget.playerBuilder(context, video, selected),
-                    );
+                    final playerContent = _player(video, selected);
                     final content = Padding(
                       padding: const EdgeInsets.fromLTRB(12, 16, 12, 0),
                       child: Column(
@@ -462,90 +481,95 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
                         ],
                       ),
                     );
-                    final detailsVisible =
-                        showInfo && (queue == null || !_queueExpanded);
-                    final infoTabs = WorkspaceActivity(
-                      active:
-                          detailsVisible && WorkspaceActivity.isActive(context),
-                      previewing:
-                          detailsVisible &&
-                          WorkspaceActivity.isVisible(context) &&
-                          !WorkspaceActivity.isActive(context),
-                      child: CommentDetailBuilder(
-                        target: switch (video.aid) {
-                          final String aid => CommentTarget(
-                            aid,
-                            CommentTargetType.video,
-                          ),
-                          null => null,
-                        },
-                        enabled: tab == 1,
-                        builder: (context, detailOpen) => PlaybackInfoTabs(
-                          key: ValueKey(video.summary.id),
-                          showNavigation: !detailOpen,
-                          value: tab,
-                          onChanged: (tab) => setState(() => _tab = tab),
-                          viewKey: const ValueKey('video-info-swipe'),
-                          labels: [
-                            const Text('简介'),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text('评论'),
-                                const SizedBox(width: 4),
-                                Text(
-                                  compactCount(video.replyCount),
-                                  style: Theme.of(context).textTheme.labelSmall,
-                                ),
-                              ],
-                            ),
-                          ],
-                          trailing: widget.menuBuilder?.call(
-                            context,
-                            video,
-                            selected,
-                          ),
-                          pageBuilder: (context, tab, active) {
-                            if (tab == 0) {
-                              _introScroll.configure(
-                                context,
-                                active:
-                                    detailsVisible &&
-                                    active &&
-                                    WorkspaceActivity.isActive(context),
-                              );
-                            }
-                            return TickerMode(
-                              enabled: detailsVisible && active,
-                              child: tab == 0
-                                  ? CustomScrollView(
-                                      key: const ValueKey('video-intro-scroll'),
-                                      controller: _introScroll,
-                                      slivers: [
-                                        SliverToBoxAdapter(child: content),
-                                        SliverPadding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            12,
-                                            0,
-                                            12,
-                                            12,
-                                          ),
-                                          sliver: _RelatedVideosSliver(
-                                            id: widget.id,
-                                            onOpenVideo: widget.onOpenVideo,
-                                            onOpenUser: widget.onOpenUser,
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  : VideoCommentsPanel(
-                                      detail: video,
-                                      onLogin: widget.onLogin,
-                                      onOpenUser: widget.onOpenUser,
-                                    ),
-                            );
-                          },
+                    final detailsVisible = queue == null || !_queueExpanded;
+                    final tabs = CommentDetailBuilder(
+                      target: switch (video.aid) {
+                        final String aid => CommentTarget(
+                          aid,
+                          CommentTargetType.video,
                         ),
+                        null => null,
+                      },
+                      enabled: tab == 1,
+                      builder: (context, detailOpen) => PlaybackInfoTabs(
+                        key: ValueKey(video.summary.id),
+                        showNavigation: !detailOpen,
+                        value: tab,
+                        onChanged: (tab) => setState(() => _tab = tab),
+                        viewKey: const ValueKey('video-info-swipe'),
+                        labels: [
+                          const Text('简介'),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('评论'),
+                              const SizedBox(width: 4),
+                              Text(
+                                compactCount(video.replyCount),
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
+                            ],
+                          ),
+                        ],
+                        trailing: widget.menuBuilder?.call(
+                          context,
+                          video,
+                          selected,
+                        ),
+                        pageBuilder: (context, tab, active) {
+                          if (tab == 0) {
+                            _introScroll.configure(
+                              context,
+                              active:
+                                  detailsVisible &&
+                                  active &&
+                                  WorkspaceActivity.isActive(context),
+                            );
+                          }
+                          return TickerMode(
+                            enabled: detailsVisible && active,
+                            child: tab == 0
+                                ? CustomScrollView(
+                                    key: const ValueKey('video-intro-scroll'),
+                                    controller: _introScroll,
+                                    slivers: [
+                                      SliverToBoxAdapter(child: content),
+                                      SliverPadding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          12,
+                                          0,
+                                          12,
+                                          12,
+                                        ),
+                                        sliver: _RelatedVideosSliver(
+                                          id: widget.id,
+                                          onOpenVideo: widget.onOpenVideo,
+                                          onOpenUser: widget.onOpenUser,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : VideoCommentsPanel(
+                                    detail: video,
+                                    onLogin: widget.onLogin,
+                                    onOpenUser: widget.onOpenUser,
+                                  ),
+                          );
+                        },
+                      ),
+                    );
+                    // Resolve the enclosing layout's visibility here, below
+                    // PlaybackPageLayout, while reusing the tab content.
+                    final infoTabs = Builder(
+                      builder: (context) => WorkspaceActivity(
+                        active:
+                            detailsVisible &&
+                            WorkspaceActivity.isActive(context),
+                        previewing:
+                            detailsVisible &&
+                            WorkspaceActivity.isVisible(context) &&
+                            !WorkspaceActivity.isActive(context),
+                        child: tabs,
                       ),
                     );
                     final info = Material(
@@ -563,6 +587,10 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
                                 () => _queueExpanded = !_queueExpanded,
                               ),
                               onSelect: _openQueueVideo,
+                              onClose: widget.onCloseQueue == null
+                                  ? null
+                                  : () => _closeQueue(selected),
+                              onOpenUser: widget.onOpenUser,
                               onRemove: queue.isWatchLater
                                   ? _removeQueueItem
                                   : null,
@@ -593,27 +621,33 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
                       builder: (context, constraints, listening) =>
                           PlaybackVideoDimensions(
                             builder: (context, dimensions) =>
-                                PlaybackPageLayout(
-                                  minimumInfoHeight: 480,
-                                  wide: wide,
-                                  showInfo: showInfo,
-                                  listening: listening,
-                                  dimensions: dimensions,
-                                  collapsedHeight:
-                                      listening &&
-                                          constraints.maxHeight.isFinite
-                                      ? PlaybackLayoutBuilder.listeningHeight(
-                                          constraints.maxHeight,
-                                        )
-                                      : constraints.maxWidth * 9 / 16,
-                                  contentKey: video.summary.id,
-                                  player: KeyedSubtree(
-                                    key: _playerKey,
-                                    child: playerContent,
-                                  ),
-                                  info: info,
-                                  toggleInfo: toggleInfo,
-                                  toggleTooltip: showInfo ? '收起视频信息' : '展开视频信息',
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: _infoVisible,
+                                  builder: (context, showInfo, _) =>
+                                      PlaybackPageLayout(
+                                        minimumInfoHeight: 480,
+                                        wide: wide,
+                                        showInfo: showInfo,
+                                        listening: listening,
+                                        dimensions: dimensions,
+                                        collapsedHeight:
+                                            listening &&
+                                                constraints.maxHeight.isFinite
+                                            ? PlaybackLayoutBuilder.listeningHeight(
+                                                constraints.maxHeight,
+                                              )
+                                            : constraints.maxWidth * 9 / 16,
+                                        contentKey: video.summary.id,
+                                        player: KeyedSubtree(
+                                          key: _playerKey,
+                                          child: playerContent,
+                                        ),
+                                        info: info,
+                                        toggleInfo: toggleInfo,
+                                        toggleTooltip: showInfo
+                                            ? '收起视频信息'
+                                            : '展开视频信息',
+                                      ),
                                 ),
                           ),
                     );
@@ -631,6 +665,20 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _player(VideoDetail video, VideoPart part) {
+    final builder = widget.playerBuilder;
+    final configuration = (video, part, builder);
+    final cached = _playerContent;
+    if (_playerConfiguration == configuration && cached != null) return cached;
+    _playerConfiguration = configuration;
+    // Inherited settings/theme dependencies belong to the player's own
+    // element, so cached content still receives those updates.
+    return _playerContent = ColoredBox(
+      color: Colors.black,
+      child: Builder(builder: (context) => builder(context, video, part)),
     );
   }
 
@@ -860,6 +908,39 @@ final class _VideoScreenState extends ConsumerState<VideoScreen> {
     );
     setState(() => _selectedCid = part.cid);
     widget.onPartChanged?.call(part);
+  }
+
+  Future<void> _closeQueue(VideoPart selected) async {
+    final queue = _validQueue;
+    final id = widget.id;
+    if (queue == null || !WorkspaceActivity.isActive(context)) return;
+    final confirmed = await showAppDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('关闭播放列表？'),
+        content: const Text('关闭后，当前视频将按普通视频播放。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true &&
+        mounted &&
+        WorkspaceActivity.isActive(context) &&
+        widget.id == id &&
+        _validQueue?.id == queue.id) {
+      final current = _lastVideo?.parts
+          .where((part) => part.cid == _lastCid)
+          .firstOrNull;
+      widget.onCloseQueue?.call(current ?? selected);
+    }
   }
 
   void _openQueueVideo(VideoId id) {
@@ -1170,7 +1251,7 @@ final class _RelatedVideosSliverState
               return Padding(
                 key: ValueKey(video.id),
                 padding: const EdgeInsets.only(bottom: 10),
-                child: _RelatedVideoCard(
+                child: HorizontalVideoCard(
                   video: video,
                   onTap: onOpen == null ? null : () => onOpen(video),
                   onOpenUser: onOpenUser,
@@ -1189,189 +1270,6 @@ final class _RelatedVideosSliverState
           return sliver;
         },
       );
-}
-
-final class _RelatedVideoCard extends StatefulWidget {
-  const _RelatedVideoCard({required this.video, this.onTap, this.onOpenUser});
-
-  final VideoSummary video;
-  final VoidCallback? onTap;
-  final ValueChanged<UserId>? onOpenUser;
-
-  @override
-  State<_RelatedVideoCard> createState() => _RelatedVideoCardState();
-}
-
-final class _RelatedVideoCardState extends State<_RelatedVideoCard> {
-  bool _hovered = false;
-  bool _focused = false;
-  bool _authorHovered = false;
-  bool _authorFocused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final video = widget.video;
-    final theme = Theme.of(context);
-    final authorId = video.authorId;
-    final onOpenUser = widget.onOpenUser;
-    final canOpenAuthor =
-        authorId != null && authorId.isValid && onOpenUser != null;
-    return ScrollAwareHoverRegion(
-      onHover: (hovered) => setState(() => _hovered = hovered),
-      child: InkWell(
-        onTap: widget.onTap,
-        onLongPress: () => showVideoCardWatchLaterMenu(
-          context,
-          video.id,
-          isCurrent: () => widget.video.id == video.id,
-        ),
-        onFocusChange: (focused) => setState(() => _focused = focused),
-        hoverColor: Colors.transparent,
-        hoverDuration: Duration.zero,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 140,
-              height: 79,
-              child: VideoCardCover(
-                video: video,
-                hovered: _hovered,
-                focused: _focused,
-                borderRadius: 5,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (video.coverUrl.isEmpty)
-                      const ColoredBox(
-                        color: Colors.black12,
-                        child: Icon(Icons.video_library_outlined),
-                      )
-                    else
-                      AppCoverImage(
-                        url: video.coverUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            const Icon(Icons.video_library_outlined),
-                      ),
-                    Positioned(
-                      right: 4,
-                      bottom: 3,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: Text(
-                            durationLabel(video.duration),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 79),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    HighlightedText(
-                      video.title,
-                      query: '',
-                      maxLines: 2,
-                      showOverflowTooltip: true,
-                      tooltipTriggerMode: MediaQuery.sizeOf(context).width < 600
-                          ? TooltipTriggerMode.manual
-                          : TooltipTriggerMode.longPress,
-                      style: Theme.of(context).textTheme.titleSmall
-                          ?.copyWith(height: 19 / 14),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                BiliIcons.up,
-                                size: 13,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 3),
-                              Flexible(
-                                child: ScrollAwareHoverRegion(
-                                  onHover: (hovered) =>
-                                      setState(() => _authorHovered = hovered),
-                                  child: InkWell(
-                                    onTap: canOpenAuthor
-                                        ? () => onOpenUser(authorId)
-                                        : null,
-                                    onFocusChange: (focused) => setState(
-                                      () => _authorFocused = focused,
-                                    ),
-                                    hoverColor: Colors.transparent,
-                                    hoverDuration: Duration.zero,
-                                    child: Text(
-                                      video.author,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.bodySmall
-                                          ?.copyWith(
-                                            color:
-                                                canOpenAuthor &&
-                                                    (_authorHovered ||
-                                                        _authorFocused)
-                                                ? theme.colorScheme.primary
-                                                : null,
-                                          ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 3,
-                            children: [
-                              _Meta(
-                                icon: BiliIcons.playCount,
-                                label: compactCount(video.playCount),
-                              ),
-                              _Meta(
-                                icon: BiliIcons.danmaku,
-                                label: compactCount(video.danmakuCount),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 final class _Meta extends StatelessWidget {

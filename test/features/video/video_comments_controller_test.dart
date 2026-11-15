@@ -1,5 +1,6 @@
 import 'package:bilisail/features/comments/domain/comment_composer.dart';
 import 'package:bilisail/domain/user.dart';
+import 'package:bilisail/domain/comment_target.dart';
 import 'package:bilisail/app/theme.dart';
 import 'package:bilisail/core/platform/external_links.dart';
 import 'package:bilisail/core/presentation/workspace_activity.dart';
@@ -10,6 +11,7 @@ import 'package:bilisail/features/playback/application/playback_session.dart';
 import 'package:bilisail/features/playback/domain/playback_repository.dart';
 import 'package:bilisail/features/video/presentation/comment_rich_content.dart';
 import 'package:bilisail/shared/ui/app_notice.dart';
+import 'package:bilisail/shared/ui/comments_panel.dart';
 import 'package:bilisail/shared/ui/bili_icons.dart';
 import 'package:bili_player/bili_player.dart';
 
@@ -1244,12 +1246,13 @@ void main() {
     );
     await tester.pumpAndSettle();
     final builds = <String, int>{};
+    final measurements = <String, int>{};
     final previous = debugOnRebuildDirtyWidget;
     debugOnRebuildDirtyWidget = (element, builtOnce) {
       previous?.call(element, builtOnce);
       final widget = element.widget;
       if (widget is CommentRichContent) {
-        builds.update(
+        (widget.layoutOnly ? measurements : builds).update(
           widget.comment.id,
           (value) => value + 1,
           ifAbsent: () => 1,
@@ -1262,6 +1265,7 @@ void main() {
     final loading = controller.load();
     await tester.pump();
     expect(builds, isEmpty, reason: 'loading should rebuild controls only');
+    expect(measurements, isEmpty);
     repo.pending!.complete(
       CommentPage(
         items: List.generate(
@@ -1283,11 +1287,18 @@ void main() {
       isEmpty,
       reason: 'appending offscreen data should reuse visible content',
     );
+    expect(
+      measurements.keys,
+      unorderedEquals(List.generate(20, (index) => '${480 + index}')),
+      reason: 'only appended comments need an inert height measurement',
+    );
+    measurements.clear();
 
     repo.writePending = Completer<void>();
     final liking = controller.toggleLike(state().items.first);
     await tester.pump();
     expect(builds, isEmpty, reason: 'busy should rebuild controls only');
+    expect(measurements, isEmpty);
     expect(
       tester
           .widget<TextButton>(
@@ -1435,6 +1446,58 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final replies in [false, true]) {
+    testWidgets('500 ${replies ? 'replies' : 'comments'} release scrolled-out '
+        'rows and recreate working timecodes on return', (tester) async {
+      final entries = List.generate(
+        500,
+        (index) => CommentEntry(
+          id: 'scroll-$index',
+          author: '用户 $index',
+          message: '评论 $index 00:09',
+        ),
+      );
+      repo.items = entries;
+      repo.replyItems = entries;
+      await controller.load(refresh: true);
+      if (replies) await controller.openReplies(root);
+      final sought = <Duration>[];
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 340,
+                child: CommentsPanel(
+                  target: const CommentTarget('42', CommentTargetType.video),
+                  onSeek: sought.add,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final first = find.byKey(const ValueKey(('comment', 'scroll-0')));
+      final original = tester.element(first);
+      final scroll = tester.widget<ListView>(find.byType(ListView)).controller!;
+      for (var step = 1; step <= 12; step++) {
+        scroll.jumpTo(step * 500.0);
+        await tester.pumpAndSettle();
+        expect(find.byType(CommentRichContent).evaluate().length, lessThan(30));
+      }
+      expect(original.mounted, isFalse);
+      scroll.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(tester.element(first), isNot(same(original)));
+      await tester.tapOnText(find.textRange.ofSubstring('00:09').first);
+      expect(sought, [const Duration(seconds: 9)]);
+      await tester.pumpWidget(const SizedBox());
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets(
     '500 comments use a lazy delegate and reply targeting does not rebuild the list',

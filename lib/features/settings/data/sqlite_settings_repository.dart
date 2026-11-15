@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../../../domain/playback_rates.dart';
 
 import '../../../domain/recommendation_settings.dart';
+import '../../../domain/responsive_layout_settings.dart';
 
 import '../../../core/storage/app_database.dart';
 import '../domain/app_settings.dart';
@@ -90,10 +91,12 @@ class SqliteSettingsRepository implements SettingsRepository {
               .firstOrNull ??
           NavigationBarMode.automatic,
       sidebarCollapsed: boolean('sidebarCollapsed', false),
+      predictiveBackEnabled: boolean('predictiveBackEnabled', true),
       liquidGlassDock: boolean('liquidGlassDock', true),
       // 默认关闭：旧快照无此键时回退 false，底栏不含历史/下载入口。
       dockShowHistoryDownloads: boolean('dockShowHistoryDownloads', false),
       liquidVideoCards: boolean('liquidVideoCards', true),
+      responsiveLayout: _responsiveLayout(decoded['responsiveLayout']),
       defaultDynamicTab:
           DynamicPageTab.values
               .where((item) => item.name == decoded['defaultDynamicTab'])
@@ -108,6 +111,21 @@ class SqliteSettingsRepository implements SettingsRepository {
       checkPrereleaseUpdates: boolean('checkPrereleaseUpdates', false),
       checkUpdatesOnStartup: boolean('checkUpdatesOnStartup', false),
       wheelDampingRatio: number('wheelDampingRatio', 1.3),
+      wheelScrollAnimation:
+          WheelScrollAnimation.values
+              .where((item) => item.name == decoded['wheelScrollAnimation'])
+              .firstOrNull ??
+          defaultWheelScrollAnimation,
+      chromiumScrollCurve:
+          ChromiumScrollCurve.values
+              .where((item) => item.name == decoded['chromiumScrollCurve'])
+              .firstOrNull ??
+          ChromiumScrollCurve.easeInOut,
+      wheelScrollDistanceMultiplier: number('wheelScrollDistanceMultiplier', 1),
+      wheelScrollDurationMultiplier: number(
+        'wheelScrollDurationMultiplier',
+        defaultWheelScrollDurationMultiplier,
+      ),
       systemFontFamily: decoded['systemFontFamily'] is String
           ? decoded['systemFontFamily'] as String
           : '',
@@ -292,11 +310,11 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 48 在上游 47 键集（含鼠标手势关闭标签、弹幕默认字体）与本分支
-        // dock/liquid-card/backgroundPlayback 键之外，新增本分支的
-        // dockShowHistoryDownloads（底栏是否显示历史/下载，默认 false）。
-        // reader 从不按此数字分支，它只声明 payload 所持键集（F73 口径）。
-        'schemaVersion': 48,
+        // 53 在上游 52 键集（含 responsiveLayout、predictiveBackEnabled）之外，
+        // 保留本分支的 dockShowHistoryDownloads（底栏是否显示历史/下载，默认 false）
+        // 与既有 liquidGlassDock / liquidVideoCards 键。reader 从不按此数字分支，
+        // 它只声明 payload 所持键集（F73 口径）。
+        'schemaVersion': 53,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
@@ -305,12 +323,21 @@ class SqliteSettingsRepository implements SettingsRepository {
         'liquidGlassDock': value.liquidGlassDock,
         'dockShowHistoryDownloads': value.dockShowHistoryDownloads,
         'liquidVideoCards': value.liquidVideoCards,
+        'responsiveLayout': {
+          'videoGridMinWidths': value.responsiveLayout.videoGridMinWidths,
+          'navigationBarBreakpoint':
+              value.responsiveLayout.navigationBarBreakpoint,
+          'sidebarExpandedWidth': value.responsiveLayout.sidebarExpandedWidth,
+          'playbackSideBySideWidth':
+              value.responsiveLayout.playbackSideBySideWidth,
+        },
         'defaultDynamicTab': value.defaultDynamicTab.name,
         'fullscreenSwipeControls': value.fullscreenSwipeControls,
         'playerFullscreenGestureReverse': value.playerFullscreenGestureReverse,
         'playerFullscreenGesture': value.playerFullscreenGesture,
         'playerShrinkVideo': value.playerShrinkVideo,
         'navigationMode': value.navigationMode.name,
+        'predictiveBackEnabled': value.predictiveBackEnabled,
         'closeTabOnMiddleClick': value.closeTabOnMiddleClick,
         'closeTabOnRightClick': value.closeTabOnRightClick,
         'closeTabOnDoubleClick': value.closeTabOnDoubleClick,
@@ -320,6 +347,10 @@ class SqliteSettingsRepository implements SettingsRepository {
         'checkPrereleaseUpdates': value.checkPrereleaseUpdates,
         'checkUpdatesOnStartup': value.checkUpdatesOnStartup,
         'wheelDampingRatio': value.wheelDampingRatio,
+        'wheelScrollAnimation': value.wheelScrollAnimation.name,
+        'chromiumScrollCurve': value.chromiumScrollCurve.name,
+        'wheelScrollDistanceMultiplier': value.wheelScrollDistanceMultiplier,
+        'wheelScrollDurationMultiplier': value.wheelScrollDurationMultiplier,
         'shortcuts': value.shortcuts.toJson(),
         'theme': value.theme.name,
         'font': value.font.name,
@@ -383,6 +414,27 @@ class SqliteSettingsRepository implements SettingsRepository {
         'sponsorBlockBottomPadding': value.sponsorBlockBottomPadding,
         'sponsorBlockCategories': value.sponsorBlockCategories,
       }),
+    );
+  }
+
+  static ResponsiveLayoutSettings _responsiveLayout(Object? value) {
+    if (value is! Map<String, Object?>) {
+      return const ResponsiveLayoutSettings.defaults();
+    }
+    final widths = value['videoGridMinWidths'];
+    return ResponsiveLayoutSettings(
+      videoGridMinWidths: widths is List && widths.every((item) => item is int)
+          ? widths.cast<int>()
+          : null,
+      navigationBarBreakpoint: value['navigationBarBreakpoint'] is int
+          ? value['navigationBarBreakpoint'] as int
+          : 600,
+      sidebarExpandedWidth: value['sidebarExpandedWidth'] is int
+          ? value['sidebarExpandedWidth'] as int
+          : 1600,
+      playbackSideBySideWidth: value['playbackSideBySideWidth'] is int
+          ? value['playbackSideBySideWidth'] as int
+          : 1000,
     );
   }
 

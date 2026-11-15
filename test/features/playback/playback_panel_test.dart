@@ -11,6 +11,10 @@ import 'package:bilisail/core/input/input_stroke.dart';
 import 'package:bilisail/core/input/shortcut_dispatcher.dart';
 
 import 'dart:async';
+
+import 'package:bilisail/domain/content_link.dart';
+import 'package:bilisail/shared/ui/content_link_scope.dart';
+
 import 'dart:io';
 
 import 'package:bilisail/features/playback/presentation/live_stream_picker.dart';
@@ -65,6 +69,45 @@ import 'package:flutter_test/flutter_test.dart';
 final _composerScopeProvider = Provider<String>((ref) => 'root');
 
 void main() {
+  testWidgets(
+    'content link seeks once without replacing the retained surface',
+    (tester) async {
+      final engine = _FakeEngine();
+      final session = _session(engine);
+      final window = _MiniWindowService(desktop: true);
+      addTearDown(session.close);
+      final settings = AppSettings();
+      Future<void> show(ContentLink link) async {
+        await tester.pumpWidget(_app(session, window, settings, link: link));
+        await _pumpFrames(tester);
+      }
+
+      await show(
+        const ContentLink(position: Duration(seconds: 12), requestId: '1'),
+      );
+      expect(engine.currentSnapshot.position, const Duration(seconds: 12));
+      final surface = tester.element(
+        find.byKey(const ValueKey('player-surface-tap-target')),
+      );
+      await session.pause();
+      await show(
+        const ContentLink(position: Duration(seconds: 24), requestId: '2'),
+      );
+      expect(engine.currentSnapshot.position, const Duration(seconds: 24));
+      expect(engine.opens, 1);
+      expect(engine.seeks, 1);
+      expect(engine.currentSnapshot.phase, PlaybackPhase.paused);
+      expect(
+        tester.element(find.byKey(const ValueKey('player-surface-tap-target'))),
+        same(surface),
+      );
+      await show(
+        const ContentLink(position: Duration(seconds: 24), requestId: '2'),
+      );
+      expect(engine.seeks, 1);
+      expect(engine.maxSurfaces, 1);
+    },
+  );
   testWidgets(
     'hiding a page while native mini enter is pending restores its window',
     (tester) async {
@@ -5613,7 +5656,7 @@ void main() {
             tester
                 .widget<DanmakuOverlay>(find.byType(DanmakuOverlay))
                 .bottomInset,
-            visible ? 100 : 48,
+            48,
           );
           final after = session.danmaku.frame().single;
           expect(after.event.id, before.event.id);
@@ -5632,6 +5675,107 @@ void main() {
       await _pumpFrames(tester);
     },
   );
+
+  for (final (content, target) in <(String, ContentPlaybackTarget?)>[
+    ('video', null),
+    ('pgc', const PgcPlaybackTarget('12', cid: '123')),
+    ('offline', const OfflinePlaybackTarget('local-task')),
+  ]) {
+    for (final mode in PlayerControlsMode.values) {
+      for (final (width, area) in [(320.0, .75), (800.0, 1.0)]) {
+        testWidgets(
+          'control visibility preserves all danmaku lanes for $content ${mode.name} width=$width',
+          (tester) async {
+            final engine = _FakeEngine();
+            final session = _session(engine, danmakuNow: () => Duration.zero);
+            addTearDown(session.close);
+            await tester.pumpWidget(
+              _app(
+                session,
+                _FakeWindowService(),
+                AppSettings(playerControlsMode: mode, danmakuArea: area),
+                width: width,
+                target: target,
+              ),
+            );
+            await _pumpFrames(tester);
+            await session.pause();
+            final controls = find.byKey(const ValueKey('player-controls'));
+            final mouse = await tester.createGesture(
+              kind: PointerDeviceKind.mouse,
+            );
+            await mouse.addPointer(location: const Offset(-10, -10));
+
+            Future<void> setControls(bool visible) async {
+              if (mode == PlayerControlsMode.dynamic) {
+                // Enter before exiting so the initial dynamic controls also hide.
+                await mouse.moveTo(_surfacePoint(tester));
+                await tester.pump();
+                if (!visible) {
+                  await mouse.moveTo(const Offset(-10, -10));
+                }
+              } else if (controls.evaluate().isNotEmpty != visible) {
+                await tester.tapAt(_surfacePoint(tester));
+              }
+              await _pumpSurfaceTap(tester);
+              expect(controls, visible ? findsOneWidget : findsNothing);
+            }
+
+            for (final fullscreen in [false, true]) {
+              if (fullscreen) {
+                await setControls(true);
+                await tester.tap(find.byTooltip('全屏（F）'));
+                await _pumpFrames(tester);
+              }
+              await setControls(false);
+              session.danmaku.replaceEvents([
+                for (final mode in DanmakuMode.values)
+                  for (var lane = 0; lane < 20; lane++)
+                    DanmakuEvent(
+                      id: '${mode.name}-$lane',
+                      at: Duration.zero,
+                      text: '${mode.name} $lane',
+                      mode: mode,
+                    ),
+              ]);
+              session.danmaku.seekConfirmed(const Duration(seconds: 1));
+              await _pumpFrames(tester);
+              final before = [
+                for (final item in session.danmaku.frame())
+                  (item.event.id, item.x, item.y),
+              ];
+              for (final mode in DanmakuMode.values) {
+                expect(
+                  before.where((item) => item.$1.startsWith(mode.name)).length,
+                  greaterThan(1),
+                );
+              }
+              final generation = session.sourceGeneration;
+              final pending = session.danmaku.pendingCount;
+              final dropped = session.danmaku.dropped;
+              for (final visible in [true, false, true, false]) {
+                await setControls(visible);
+                expect([
+                  for (final item in session.danmaku.frame())
+                    (item.event.id, item.x, item.y),
+                ], before);
+                expect(session.danmaku.pendingCount, pending);
+                expect(session.danmaku.dropped, dropped);
+                expect(session.sourceGeneration, generation);
+                expect(session.snapshots.value.desiredPlaying, isFalse);
+                expect(engine.opens, 1);
+                expect(engine.maxSurfaces, 1);
+              }
+            }
+            await mouse.removePointer();
+            await tester.pumpWidget(const SizedBox());
+            await _pumpFrames(tester);
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+  }
 
   for (final controlsVisible in [true, false]) {
     testWidgets(
@@ -10173,7 +10317,7 @@ void main() {
           expect(controls, controlsVisible ? findsOneWidget : findsNothing);
           final message = find.text('正在恢复播放…');
           void expectLoading({bool buffering = false}) {
-            final hint = buffering ? find.text('网络缓冲中…') : message;
+            final hint = buffering ? find.text('播放缓冲中…') : message;
             expect(hint, findsOneWidget);
             final centered = find
                 .ancestor(
@@ -10227,7 +10371,7 @@ void main() {
             ),
           );
           await tester.pump();
-          expect(find.text('网络缓冲中…'), findsNothing);
+          expect(find.text('播放缓冲中…'), findsNothing);
           await tester.pump(const Duration(milliseconds: 300));
           expectLoading(buffering: true);
           engine._emit(
@@ -10237,7 +10381,7 @@ void main() {
             ),
           );
           await tester.pump();
-          expect(find.text('网络缓冲中…'), findsNothing);
+          expect(find.text('播放缓冲中…'), findsNothing);
           expect(message, findsNothing);
 
           // The first automatic reload succeeds immediately. The next failure
@@ -10373,7 +10517,7 @@ void main() {
       );
       await _pumpFrames(tester);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('网络缓冲中…'), findsOneWidget);
+      expect(find.text('播放缓冲中…'), findsOneWidget);
 
       // Completion takes precedence even if a backend retains its last flag.
       engine._emit(
@@ -10384,14 +10528,14 @@ void main() {
         ),
       );
       await _pumpFrames(tester);
-      expect(find.text('网络缓冲中…'), findsNothing);
+      expect(find.text('播放缓冲中…'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.byTooltip('播放（空格）'), findsOneWidget);
 
       // A later position sample must not bring the completion spinner back.
       engine._emit(engine.currentSnapshot);
       await tester.pump(const Duration(seconds: 1));
-      expect(find.text('网络缓冲中…'), findsNothing);
+      expect(find.text('播放缓冲中…'), findsNothing);
 
       engine._emit(
         engine.currentSnapshot.copyWith(
@@ -10402,7 +10546,7 @@ void main() {
       );
       await _pumpFrames(tester);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('网络缓冲中…'), findsOneWidget);
+      expect(find.text('播放缓冲中…'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
@@ -10697,6 +10841,7 @@ Widget _app(
   bool showNavigationInPlayer = false,
   SettingsRepository? settingsRepository,
   VoidCallback? onToggleComments,
+  ContentLink link = const ContentLink(),
 }) => ProviderScope(
   overrides: [
     playbackSessionProvider.overrideWithValue(session),
@@ -10713,9 +10858,12 @@ Widget _app(
       child: MediaQuery(
         data: MediaQuery.of(context)
             .copyWith(textScaler: TextScaler.linear(textScale)),
-        child: WorkspaceActivity(
-          active: active,
-          child: child ?? const SizedBox(),
+        child: ContentLinkScope(
+          link: link,
+          child: WorkspaceActivity(
+            active: active,
+            child: child ?? const SizedBox(),
+          ),
         ),
       ),
     ),

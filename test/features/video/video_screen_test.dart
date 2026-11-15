@@ -30,6 +30,8 @@ import 'package:bilisail/features/video/presentation/video_author_header.dart';
 import 'package:bilisail/features/video/domain/video_repository.dart';
 import 'package:bilisail/features/video/presentation/video_screen.dart';
 import 'package:bilisail/domain/user.dart';
+import 'package:bilisail/domain/responsive_layout_settings.dart';
+import 'package:bilisail/shared/ui/responsive_layout_scope.dart';
 import 'package:bilisail/features/video/presentation/video_collection_panel.dart';
 import 'package:bilisail/features/video/domain/watch_later_queue.dart';
 import 'package:bilisail/features/video/presentation/watch_later_queue_panel.dart';
@@ -39,6 +41,7 @@ import 'package:bilisail/shared/ui/playback_page_commands.dart';
 import 'package:bilisail/features/video/application/video_card_preview_playback.dart';
 import 'package:bilisail/features/video/domain/video_card_interactions.dart';
 import 'package:bilisail/shared/ui/video_card_cover.dart';
+import 'package:bilisail/shared/ui/horizontal_video_card.dart';
 import 'package:bilisail/shared/ui/video_card_interaction_scope.dart';
 import 'package:bilisail/shared/ui/smooth_scroll_behavior.dart';
 import 'package:bilisail/shared/ui/paging_tab_strip.dart';
@@ -57,6 +60,298 @@ import 'package:bilisail/features/profile/domain/profile_repository.dart';
 import 'package:bilisail/features/video/application/watch_later_queue_registry.dart';
 
 void main() {
+  testWidgets(
+    'closing a queue cancels pending EOF paging and ignores its result',
+    (tester) async {
+      const id = VideoId('BV1abc123456');
+      final detail = await const _VideoRepository(includeCollection: false)
+          .loadDetail(id, cancellation: RequestCancellation());
+      final session = _ProfilePagingSession(detail);
+      addTearDown(session.snapshots.dispose);
+      final repository = _ProfilePagingRepository();
+      final registry = WatchLaterQueueRegistry();
+      WatchLaterQueue? queue = registry.capture(
+        scope: 'user:7',
+        sessionEpoch: 0,
+        items: [WatchLaterQueueItem(video: detail.summary)],
+        profileSource: const ProfileVideoQueueSource(
+          userId: UserId('7'),
+          name: '测试UP',
+          order: 'pubdate',
+        ),
+        hasMore: true,
+        nextPage: 2,
+      );
+      final opened = <VideoId>[];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playbackSessionProvider.overrideWithValue(session),
+            profileRepositoryProvider.overrideWithValue(repository),
+            watchLaterQueueRegistryProvider.overrideWithValue(registry),
+            authControllerProvider.overrideWith(_QueueSignedInAuth.new),
+            videoRepositoryProvider.overrideWithValue(
+              const _VideoRepository(includeCollection: false),
+            ),
+            videoExtrasRepositoryProvider.overrideWithValue(
+              _ExtrasRepository(),
+            ),
+          ],
+          child: InputTestApp(
+            home: Scaffold(
+              body: StatefulBuilder(
+                builder: (_, update) => VideoScreen(
+                  id: id,
+                  initialCid: detail.parts.last.cid,
+                  queue: queue,
+                  onCloseQueue: (_) => update(() => queue = null),
+                  onOpenQueueVideo: opened.add,
+                  playerBuilder: (_, _, _) => const SizedBox.expand(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      tester
+          .widget<PlaybackPageCommands>(find.byType(PlaybackPageCommands))
+          .onCompleted
+          ?.call();
+      await tester.pump();
+      expect(repository.reads, 1);
+      expect(repository.cancellation?.isCancelled, isFalse);
+      await tester.tap(find.byTooltip('关闭播放列表'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(FilledButton, '关闭'));
+      await tester.pumpAndSettle();
+      expect(find.byType(WatchLaterQueuePanel), findsNothing);
+      expect(repository.cancellation?.isCancelled, isTrue);
+      repository.pending.complete(
+        ProfilePage(
+          items: [
+            ProfileEntry(
+              id: 'BV2abc123456',
+              kind: ProfileEntryKind.video,
+              title: '迟到的下一条投稿',
+              video: const VideoSummary(
+                id: VideoId('BV2abc123456'),
+                title: '迟到的下一条投稿',
+                coverUrl: '',
+                author: 'UP',
+                duration: Duration(minutes: 1),
+              ),
+            ),
+          ],
+          hasMore: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty);
+      expect(session.advances, isEmpty);
+      expect(repository.reads, 1);
+      expect(find.byType(WatchLaterQueuePanel), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'custom layout threshold updates in place and retains the player',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(900, 800);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final layout = ValueNotifier(const ResponsiveLayoutSettings.defaults());
+      addTearDown(layout.dispose);
+      var created = 0, disposed = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(_GuestAuthController.new),
+            videoRepositoryProvider.overrideWithValue(_VideoRepository()),
+            videoExtrasRepositoryProvider.overrideWithValue(
+              _ExtrasRepository(),
+            ),
+          ],
+          child: InputTestApp(
+            home: ValueListenableBuilder(
+              valueListenable: layout,
+              builder: (context, value, child) =>
+                  ResponsiveLayoutScope(settings: value, child: child!),
+              child: Scaffold(
+                body: VideoScreen(
+                  id: const VideoId('BV1abc123456'),
+                  playerBuilder: (_, _, _) => _TrackedPlayer(
+                    onCreate: () => created++,
+                    onDispose: () => disposed++,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final state = tester.state(find.byType(_TrackedPlayer));
+      expect(tester.getSize(find.byType(_TrackedPlayer)).width, 900);
+      layout.value = ResponsiveLayoutSettings(playbackSideBySideWidth: 900);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(_TrackedPlayer)).width, 520);
+      tester.view.physicalSize = const Size(899, 800);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(_TrackedPlayer)).width, 899);
+      tester.view.physicalSize = const Size(900, 800);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(_TrackedPlayer)).width, 520);
+      layout.value = const ResponsiveLayoutSettings.defaults();
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(_TrackedPlayer)).width, 900);
+      expect(tester.state(find.byType(_TrackedPlayer)), same(state));
+      expect(created, 1);
+      expect(disposed, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('sidebar toggles reuse player and information builders', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1100, 800);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var playerBuilds = 0, actionBuilds = 0, menuBuilds = 0;
+    var created = 0, disposed = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_GuestAuthController.new),
+          videoRepositoryProvider.overrideWithValue(_VideoRepository()),
+          videoExtrasRepositoryProvider.overrideWithValue(_ExtrasRepository()),
+        ],
+        child: InputTestApp(
+          home: Scaffold(
+            body: VideoScreen(
+              id: const VideoId('BV1abc123456'),
+              playerBuilder: (_, _, _) {
+                playerBuilds++;
+                return _TrackedPlayer(
+                  onCreate: () => created++,
+                  onDispose: () => disposed++,
+                );
+              },
+              actionsBuilder: (_, _, _) {
+                actionBuilds++;
+                return const SizedBox();
+              },
+              menuBuilder: (_, _, _) {
+                menuBuilds++;
+                return const SizedBox();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final player = tester.state(find.byType(_TrackedPlayer));
+    final builds = (playerBuilds, actionBuilds, menuBuilds);
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(find.byTooltip('收起视频信息'));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(_TrackedPlayer)).width, 1100);
+      await tester.tap(find.byTooltip('展开视频信息'));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(_TrackedPlayer)).width, 720);
+    }
+    expect((playerBuilds, actionBuilds, menuBuilds), builds);
+    await tester.tap(find.text('展开'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('收起'));
+    await tester.pumpAndSettle();
+    expect(playerBuilds, builds.$1);
+    expect(tester.state(find.byType(_TrackedPlayer)), same(player));
+    expect(created, 1);
+    expect(disposed, 0);
+    await tester.pumpWidget(const SizedBox());
+    expect(disposed, 1);
+  });
+
+  testWidgets('cached player receives inherited, part and builder updates', (
+    tester,
+  ) async {
+    late StateSetter update;
+    var dark = false, replacement = false;
+    var created = 0, disposed = 0, replacementBuilds = 0;
+    Widget player(BuildContext context, VideoDetail video, VideoPart part) =>
+        Column(
+          children: [
+            Text('${part.cid}:${Theme.of(context).brightness.name}'),
+            Expanded(
+              child: _TrackedPlayer(
+                onCreate: () => created++,
+                onDispose: () => disposed++,
+              ),
+            ),
+          ],
+        );
+    Widget otherPlayer(
+      BuildContext context,
+      VideoDetail video,
+      VideoPart part,
+    ) {
+      replacementBuilds++;
+      return player(context, video, part);
+    }
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(_GuestAuthController.new),
+          videoRepositoryProvider.overrideWithValue(_VideoRepository()),
+          videoExtrasRepositoryProvider.overrideWithValue(_ExtrasRepository()),
+        ],
+        child: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return InputTestApp(
+              theme: dark ? BiliTheme.dark() : BiliTheme.light(),
+              home: Scaffold(
+                body: VideoScreen(
+                  id: const VideoId('BV1abc123456'),
+                  playerBuilder: replacement ? otherPlayer : player,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final state = tester.state(find.byType(_TrackedPlayer));
+    expect(find.text('1:light'), findsOneWidget);
+    update(() => dark = true);
+    await tester.pumpAndSettle();
+    expect(find.text('1:dark'), findsOneWidget);
+    final commands = tester.widget<PlaybackPageCommands>(
+      find.byType(PlaybackPageCommands),
+    );
+    commands.nextPart();
+    await tester.pumpAndSettle();
+    expect(find.text('2:dark'), findsOneWidget);
+    update(() => replacement = true);
+    await tester.pumpAndSettle();
+    expect(replacementBuilds, greaterThan(0));
+    expect(find.text('2:dark'), findsOneWidget);
+    expect(tester.state(find.byType(_TrackedPlayer)), same(state));
+    expect(created, 1);
+    expect(disposed, 0);
+    await tester.pumpWidget(const SizedBox());
+    expect(disposed, 1);
+  });
+
   for (final (dimensions, expandedHeight) in [
     (const VideoDimensions(1080, 1920), 520.0),
     (const VideoDimensions(1080, 1080), 390.0),
@@ -1823,6 +2118,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(VideoCardCover).evaluate().length, lessThan(20));
+      expect(find.byType(HorizontalVideoCard), findsWidgets);
       expect(find.text('推荐视频 39'), findsNothing);
       await tester.scrollUntilVisible(
         find.text('推荐视频 39'),
@@ -2669,6 +2965,7 @@ final class _ProfilePagingRepository extends Fake implements ProfileRepository {
   int get sessionEpoch => 0;
   final pending = Completer<ProfilePage>();
   int reads = 0;
+  RequestCancellation? cancellation;
   @override
   Future<ProfilePage> loadEntries(
     UserId id,
@@ -2688,6 +2985,7 @@ final class _ProfilePagingRepository extends Fake implements ProfileRepository {
     );
     expect(folderId, expectedFolderId);
     expect(page, 2);
+    this.cancellation = cancellation;
     reads++;
     return pending.future;
   }
@@ -2753,6 +3051,8 @@ final class _ProfilePagingSession extends Fake
     const PlaybackSnapshot(phase: PlaybackPhase.ended, generation: 1),
   );
   final advances = <({VideoId id, bool completed})>[];
+  @override
+  void discardNextVideo() {}
   @override
   bool prepareNextVideo(
     VideoId id,

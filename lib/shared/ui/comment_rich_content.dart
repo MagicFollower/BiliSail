@@ -39,10 +39,13 @@ class CommentRichContent extends StatefulWidget {
     this.onOpenLink,
     this.onSeek,
     this.onOpenUser,
+    this.layoutOnly = false,
   });
   final CommentEntry comment;
   final String prefix;
   final bool compact;
+  // Detached list measurement uses the same text and fixed-size media boxes.
+  final bool layoutOnly;
   final ValueChanged<Uri>? onOpenLink;
   final ValueChanged<Duration>? onSeek;
   final ValueChanged<UserId>? onOpenUser;
@@ -80,14 +83,16 @@ class _CommentRichContentState extends State<CommentRichContent> {
       emoteTokens: widget.comment.emotes.keys,
       mentionedUsers: widget.comment.mentionedUsers,
     );
-    for (var i = 0; i < _parts.length; i++) {
-      final part = _parts[i];
-      if (part.kind == CommentTextKind.link ||
-          part.kind == CommentTextKind.timestamp ||
-          part.kind == CommentTextKind.mention) {
-        _recognizers[i] = TapGestureRecognizer();
-      }
+  }
+
+  TapGestureRecognizer? _recognizer(int index, VoidCallback? onTap) {
+    // Dynamic comments have timecodes without a playback target. Allocate
+    // gesture state only for available actions, and release removed actions.
+    if (onTap == null) {
+      _recognizers.remove(index)?.dispose();
+      return null;
     }
+    return (_recognizers[index] ??= TapGestureRecognizer())..onTap = onTap;
   }
 
   void _disposeRecognizers() {
@@ -111,7 +116,6 @@ class _CommentRichContentState extends State<CommentRichContent> {
     for (var i = 0; i < _parts.length; i++) {
       final part = _parts[i];
       if (part.kind != CommentTextKind.emote) {
-        final recognizer = _recognizers[i];
         final url = part.url, position = part.position;
         final open = widget.onOpenLink, seek = widget.onSeek;
         final userId = part.userId, openUser = widget.onOpenUser;
@@ -122,16 +126,17 @@ class _CommentRichContentState extends State<CommentRichContent> {
             : userId != null && openUser != null
             ? () => openUser(userId)
             : null;
-        recognizer?.onTap = onTap;
+        final recognizer = _recognizer(i, widget.layoutOnly ? null : onTap);
         spans.add(
           TextSpan(
             text: part.text,
             style:
-                recognizer == null ||
-                    (part.kind == CommentTextKind.mention && onTap == null)
-                ? null
-                : TextStyle(color: styles.linkColor),
-            recognizer: onTap == null ? null : recognizer,
+                part.kind == CommentTextKind.link ||
+                    part.kind == CommentTextKind.timestamp ||
+                    (part.kind == CommentTextKind.mention && onTap != null)
+                ? TextStyle(color: styles.linkColor)
+                : null,
+            recognizer: recognizer,
             mouseCursor: onTap == null ? null : SystemMouseCursors.click,
           ),
         );
@@ -143,14 +148,20 @@ class _CommentRichContentState extends State<CommentRichContent> {
           alignment: PlaceholderAlignment.middle,
           child: Semantics(
             label: selected,
-            child: Image.network(
-              comment.emotes[selected].toString(),
-              cacheWidth: 84,
-              cacheHeight: 84,
-              width: 28,
-              height: 28,
-              errorBuilder: (_, error, stack) => Text(selected),
-            ),
+            child: widget.layoutOnly
+                ? const SizedBox(width: 28, height: 28)
+                : SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: AppNetworkImage(
+                      url: comment.emotes[selected].toString(),
+                      cacheWidth: 84,
+                      cacheHeight: 84,
+                      width: 28,
+                      height: 28,
+                      errorBuilder: (_, error, stack) => Text(selected),
+                    ),
+                  ),
           ),
         ),
       );
@@ -170,8 +181,6 @@ class _CommentRichContentState extends State<CommentRichContent> {
                 BiliLevelBadge(level: comment.level!),
               if (comment.verifyType == 0 || comment.verifyType == 1)
                 BiliVerifyBadge(type: comment.verifyType!),
-              if (comment.vipLabel != null)
-                Text(comment.vipLabel!, style: styles.badge),
               if (comment.medalName != null)
                 Text(
                   '${comment.medalName} ${comment.medalLevel ?? ''}',
@@ -179,16 +188,22 @@ class _CommentRichContentState extends State<CommentRichContent> {
                 ),
             ],
           ),
-        SelectionArea(
-          // 回复预览外层的 InkWell 会让正文继承按钮光标。
-          child: DefaultSelectionStyle.merge(
-            mouseCursor: SystemMouseCursors.text,
-            child: Text.rich(
-              TextSpan(children: spans),
-              style: widget.compact ? styles.previewBody : styles.body,
+        if (widget.layoutOnly)
+          Text.rich(
+            TextSpan(children: spans),
+            style: widget.compact ? styles.previewBody : styles.body,
+          )
+        else
+          SelectionArea(
+            // 回复预览外层的 InkWell 会让正文继承按钮光标。
+            child: DefaultSelectionStyle.merge(
+              mouseCursor: SystemMouseCursors.text,
+              child: Text.rich(
+                TextSpan(children: spans),
+                style: widget.compact ? styles.previewBody : styles.body,
+              ),
             ),
           ),
-        ),
         if (comment.pictures.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -205,25 +220,28 @@ class _CommentRichContentState extends State<CommentRichContent> {
                           showImageViewer(context, comment.pictures, index),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(5),
-                        child: AppNetworkImage(
-                          url: publicImageThumbnail(
-                            comment.pictures[index],
-                            width: 264,
-                            // Resizing decoded pixels alone still downloads the
-                            // full GIF, which can exceed the byte-cache limit.
-                            resizeAnimated: true,
-                          ).toString(),
-                          cacheWidth: 264,
-                          cacheHeight: 264,
-                          width: 88,
-                          height: 88,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, error, stack) => const SizedBox(
-                            width: 88,
-                            height: 88,
-                            child: Center(child: Text('图片加载失败')),
-                          ),
-                        ),
+                        child: widget.layoutOnly
+                            ? const SizedBox(width: 88, height: 88)
+                            : AppNetworkImage(
+                                url: publicImageThumbnail(
+                                  comment.pictures[index],
+                                  width: 264,
+                                  // Resizing decoded pixels alone still downloads the
+                                  // full GIF, which can exceed the byte-cache limit.
+                                  resizeAnimated: true,
+                                ).toString(),
+                                cacheWidth: 264,
+                                cacheHeight: 264,
+                                width: 88,
+                                height: 88,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, error, stack) =>
+                                    const SizedBox(
+                                      width: 88,
+                                      height: 88,
+                                      child: Center(child: Text('图片加载失败')),
+                                    ),
+                              ),
                       ),
                     ),
                   ),
@@ -264,9 +282,11 @@ class CommentAuthorHeader extends StatelessWidget {
     super.key,
     required this.comment,
     this.onOpenUser,
+    this.layoutOnly = false,
   });
   final CommentEntry comment;
   final ValueChanged<UserId>? onOpenUser;
+  final bool layoutOnly;
 
   // Body starts after the 30px avatar and 12px gap.
   static const contentIndent = 42.0;
@@ -306,15 +326,6 @@ class CommentAuthorHeader extends StatelessWidget {
               BiliLevelBadge(level: c.level!),
             if (c.verifyType == 0 || c.verifyType == 1)
               BiliVerifyBadge(type: c.verifyType!),
-            if (c.vipLabel != null)
-              Text(
-                c.vipLabel!,
-                style: styles.badge.copyWith(
-                  color: c.nicknameColor != null
-                      ? Color(0xFF000000 | c.nicknameColor!)
-                      : theme.colorScheme.primary,
-                ),
-              ),
             if (c.medalName != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -349,19 +360,23 @@ class CommentAuthorHeader extends StatelessWidget {
           onTap: c.authorId?.isValid == true && onOpenUser != null
               ? () => onOpenUser!(c.authorId!)
               : null,
-          child: NetworkAvatar(
-            url: c.avatarUrl,
-            pendantUrl: c.pendantUrl,
-            name: c.author,
-            radius: 15,
-          ),
+          child: layoutOnly
+              ? const SizedBox.square(dimension: 30)
+              : NetworkAvatar(
+                  url: c.avatarUrl,
+                  pendantUrl: c.pendantUrl,
+                  name: c.author,
+                  radius: 15,
+                ),
         ),
         const SizedBox(width: contentIndent - 30),
         Expanded(child: identity),
       ],
     );
     if (c.decorationImageUrl == null) return author;
-    final decoration = CommentAuthorDecoration(comment: c);
+    final decoration = layoutOnly
+        ? const SizedBox(width: 112, height: 52)
+        : CommentAuthorDecoration(comment: c);
     return LayoutBuilder(
       builder: (context, constraints) {
         final contentWidth = (constraints.maxWidth - contentIndent).clamp(

@@ -1,5 +1,13 @@
 # 参考项目、证据与采用边界
 
+2026-11-15 Android 直出 HDR 色彩修复，只读核对 PiliPlus `217fb54f51f6764176319bbdedab2a7522d75401` 的播放器创建入口及实际媒体 overrides／锁文件，并核对其锁定视频插件 `bggRGjQaUbCoE/media-kit` 的 `85f0a69ea66b100882b27a3375c72e5155375343` 中 Android 默认 `gpu` 输出。借鉴保留硬解并由 GPU 完成色彩映射的职责，独立实现本项目 HDR 媒体提示和按源规范化输出；未复制参考源码／资源，未修改相邻仓库、Pub 缓存或固定媒体依赖。见[原因、来源与验证](validation/hdr-direct-output-2026-11-15.md)。
+
+2026-11-14 Windows Release 正常输入 EOF 误判修复，只读核对 PiliPlus `217fb54f51f6764176319bbdedab2a7522d75401` 的 `lib/plugin/pl_player/controller.dart` 中 SDK 缓存／缓冲订阅、明确错误判断及当前位置重开职责。实际核心和库插件锁定 `My-Responsitories/media-kit` 的 `73771ec38176be2d984a3049c28177bce23b54a0`，视频锁定 `bggRGjQaUbCoE/media-kit` 的 `85f0a69ea66b100882b27a3375c72e5155375343`。借鉴正常播放交由原生、应用依据故障证据恢复的边界，独立删除本项目的 EOF 时间戳差值启发式；未复制 GPLv3 应用代码／资源或修改参考仓库、依赖及 Pub 缓存，见[专项记录](validation/windows-release-dash-eof-2026-11-14.md)。
+
+2026-11-14 历史续播和自动 CDN 选线只读核对同一 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/utils/storage_pref.dart`（默认 `CDNService.backupUrl`）、`lib/utils/video_utils.dart`（优先普通镜像，跳过 `os=mcdn`／302 节点）及 `lib/plugin/pl_player/controller.dart`（EDL 分轨与 `Media(start: seekTo)`）。核对实际 overrides／锁文件：核心及库插件 `My-Responsitories/media-kit` 固定 `73771ec38176be2d984a3049c28177bce23b54a0`，视频 `bggRGjQaUbCoE/media-kit` 固定 `85f0a69ea66b100882b27a3375c72e5155375343`。仅采用默认选线行为，独立实现返回地址的稳定排序；没有复制 GPLv3 应用代码／资源，没有引入相邻运行时依赖、修改媒体 fork／Pub 缓存或复制参考项目的代理及 host 改写回退。见[续播记录](validation/resume-startup-cdn-2026-11-14.md)。
+
+2026-11-14 点播预读断流恢复只读核对 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/plugin/pl_player/controller.dart` 中缓存订阅、错误处理与 `refreshPlayer`，以及 `lib/utils/storage_pref.dart` 的 `initBuffer`／`initLiveBuffer`。实际核心和库插件固定 `My-Responsitories/media-kit` 的 `73771ec38176be2d984a3049c28177bce23b54a0`，视频包固定 `bggRGjQaUbCoE/media-kit` 的 `85f0a69ea66b100882b27a3375c72e5155375343`。PiliPlus 的点播错误重试还要求 buffering 且缓冲值为零，没有覆盖缓存仍能播放的提前恢复；本项目独立实现错误触发的媒体线路探测和有限会话恢复，没有复制 GPLv3 应用源码／资源、修改相邻仓库或 Pub 缓存。见[专项记录](validation/prefetch-network-recovery-2026-11-14.md)。
+
 2026-11-13 B站扩展投屏只读核对 MIT 的 NeoBV `6c8ce4bbf82f43681cc6c5e46cd4f8c9b9b71bf6`、GPLv3 的 Danmu TV `d28b8aed03e6da6df47469ac22771dc40ae228f4`；直播地址投屏只读参考 GPLv3 的 Pure Live `1a60607cdd308132afcd85cd562f404109499633`。仅采用内容身份、压缩／编码格式、服务发现与控制的协议事实，独立实现领域模型、能力分流和仓储，无参考应用源码／资源／抓包凭据复制。精确源码路径、依赖许可和验证边界见 [DLNA 投屏](validation/dlna-casting.md)。
 
 2026-11-12：已移除 fvp／MDK，当前仅使用 media_kit。历史文档中的双后端实现、SDK、命令及测试记录保留当时事实，不再作为现行入口；清理与设置兼容见[移除记录](validation/fvp-removal-2026-11-12.md)。
@@ -230,6 +238,10 @@
 ### 统一 Web / App 登录（2026-10-28）
 
 继续只读参考 PiliPlus `936072449e82e3d90c28c728c0087bf5136fa441` 的 `lib/http/login.dart`、`lib/pages/login/controller.dart`、`lib/utils/accounts/account.dart`；核对 HD 扫码的顶层 token 和 Cookie 列表。Cookie 登录补齐 token 曾核对 bili-kernel `e26f6dbd071e20d4220806fcff7bd675f3c29fc5` 的 `Authorizers/Authorizers.Tv/Core/TvAuthorizeClient.cs` 中 SignInWithCookiesAsync；该路径在真实旧会话探测失败后已按用户要求删除，密码/短信仅保存 Web 会话。独立编写 Dart，未复制参考应用源码/资源或新增依赖。数据/许可及未验证项见[统一登录](unified-login-design.md)。
+
+### 密码／短信 App 登录（2026-11-15）
+
+按用户要求只读对照 PiliPlus `217fb54f51f6764176319bbdedab2a7522d75401`（2.2.1）的 `lib/http/login.dart`、`lib/pages/login/controller.dart`、`lib/common/constants.dart` 和 `lib/utils/login_utils.dart`，独立实现 App 密码／短信、极验、绑定手机号验证及授权码换取双凭据。未复制 GPLv3 应用代码／资源或修改参考仓库。bili_api 直接使用项目已有版本的 MIT `pointycastle 4.0.0`；验证码脚本来自极验官方 HTTPS 服务。来源、端点、许可与验证边界见[专项记录](validation/password-sms-app-login-2026-11-15.md)。
 
 ## 6. 尚待实测或决定的事项
 

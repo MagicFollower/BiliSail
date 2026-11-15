@@ -1,32 +1,39 @@
 # DLNA 投屏
 
-初版：2026-10-31；B站接收端兼容与直播扩展：2026-11-13。
+初版：2026-10-31；B站接收端兼容与直播扩展：2026-11-13；默认交接路径修复：2026-11-14。
+
+2026-11-14 用户实测反馈云视听小电视显示“加载失败（错误码：null）”。已撤回仅凭 `NirvanaControl` 声明自动切换身份投屏的判断，默认恢复完整媒体直链；电视弹幕保留为主动开启的实验模式。原因、失败用例与本轮验证见[兼容性回归修复](casting-compatibility-regression-2026-11-14.md)。
+
+同日后续：上一轮只恢复默认播放；针对云视听 **1.8.9** 主动开启弹幕后仍失败的问题，核对官方接收逻辑并补齐 `autoNext/an` 内容解析开关、`isOpen/io` 初始弹幕状态和 `mobileVersion/mv` 秒单位标识。身份模式也会启用接收端自身的连播。原因与验证见[1.8.9 弹幕模式修复](casting-danmaku-receiver-1.8.9-2026-11-14.md)，实际设备仍待复测。
 
 ## 功能与交互
+
+2026-11-14 补充兼容乐播旧 `controlURL`：仅对 `_urn:schemas-upnp-org:service:` 前缀按相对路径解析，保留 URLBase、端口、同主机限制及 IPv6 scope；原因、回归与验证边界见[旧控制地址修复](dlna-legacy-control-url-2026-11-14.md)。
 
 - 普通视频、分 P、番剧／影视与直播共用播放面板入口。投屏图标统一放在播放控件顶栏右侧、听视频和配置按钮之前；普通、全屏、窄屏与小窗均可直接点击，底栏和更多菜单不再重复显示。普通／全屏均使用调用窗口内的 `showAppDialog`。
 - 面板沿用晴湾主题、圆角卡片、主色与浅／深色配色，窄屏、横屏和放大文字通过滚动内容保留操作入口。
 - 发现同一局域网中启用 DLNA 的 MediaRenderer，显示名称和设备 IP，可重新搜索。普通接收端取得完整媒体地址后接收 `SetAVTransportURI`、`Play`，确认成功才暂停本地会话；点播从头播放，直播播放当前流。不伪造远端进度或上报云端观看进度。
-- 设备描述声明同主机的 Bilibili `NirvanaControl` 服务时，使用 B站扩展元数据交接内容身份：电视自行获取视频和弹幕，接收本地弹幕开关、清晰度和倍速，点播携带打开面板时的确认位置。普通接收端不接收扩展元数据，沿用原地址和 SOAP 控制。电视端账号与权益由接收应用管理，不向电视传送 Web Cookie、App token 或刷新凭据。
+- 所有接收端默认取得完整媒体地址，包括声明 Bilibili `NirvanaControl` 的云视听小电视，不再仅凭服务发现跳过取流。声明同主机 B站服务的设备可主动开启“电视弹幕（实验）”：电视自行获取视频和弹幕，接收本地弹幕开关、清晰度和倍速，点播携带打开面板时的确认位置。此模式每次打开面板默认关闭；电视端账号与权益由接收应用管理，不向电视传送 Web Cookie、App token 或刷新凭据。
+- 修改实验开关本身不发网络命令。已连接设备的目标模式改变时，显示“按当前设置重新投屏”，用户点击后串行停止旧交接并重新解析、设置和播放。加载失败后可关闭实验模式并显式重投，也可关闭后重开面板恢复默认兼容播放；不自动重放写命令。
 - 提供暂停、继续、停止。切换设备先等待旧设备 Stop 成功再交接，失败显示错误，不自动重放写命令。本机不会自动恢复播放。
 - 关闭面板取消搜索和未完成请求；已交接的电视继续播放，面板说明可用电视遥控器控制。重新打开面板可重新选择设备；普通点播从头交接，B站扩展按新打开面板时的位置交接。
 - 离线源和未完成解析的媒体不显示入口；iOS 暂不显示入口，尚未配置／验证受签名约束的 multicast entitlement。Web 不支持。
 
 ## B站扩展与直播（2026-11-13）
 
-- `CastMediaRequest` 区分点播身份与真实直播间 ID，直播不借用 `cid`。`CastMedia` 只在当前操作内保留解析后的 aid／规范房间 ID 和可选媒体地址。控制器按设备能力请求接收端自行解析或普通直链；切换设备仍先等待旧设备停止，失败不自动重放。
+- `CastMediaRequest` 区分点播身份与真实直播间 ID，直播不借用 `cid`。`CastMedia` 只在当前操作内保留解析后的 aid／规范房间 ID、可选媒体地址与显式交接模式。控制器只有在主动开启实验模式且设备声明 B站服务时才请求接收端自行解析；默认均请求普通直链。切换设备仍先等待旧设备停止，失败不自动重放。
 - 发现增加 B站服务搜索目标；设备能力来自同一 MediaRenderer 自己的 serviceList，不根据友好名称推断，也不借用嵌套设备的服务。扩展控制地址与设备描述必须同主机，非法扩展服务不影响普通 AVTransport 发现。
-- 对声明 B站服务的设备，`CurrentURI` 使用 `bilibili://projection?proj_source=bilibili&_nva_ext_=`，DIDL `upnp:longDescription` 携带原始 DEFLATE → AES-128-CBC／PKCS7 → 无填充 base64url 的内容信息。协议固定 key／IV 只用于兼容报文，不作为账号数据的加密保护；报文不包含账号凭据。
+- 仅在显式实验模式中，`CurrentURI` 使用 `bilibili://projection?proj_source=bilibili&_nva_ext_=`，DIDL `upnp:longDescription` 携带原始 DEFLATE → AES-128-CBC／PKCS7 → 无填充 base64url 的内容信息。协议固定 key／IV 只用于兼容报文，不作为账号数据的加密保护；报文不包含账号凭据。默认兼容模式使用原始签名 HTTP(S) 媒体地址，不附加身份投屏元数据或专用弹幕指令。
 - 点播携带 aid／cid 或剧集／季 ID，直播携带规范 `roomId`；保留协议短字段 `ct/eid/sid/sk` 和兼容接收端所用的长字段。已有暂停／继续／停止继续走该设备 AVTransport。交接确认并暂停本地后，独立向已声明的 Nirvana 服务发送 `SetDanmakuSwitch` 应用弹幕开关；设置失败保留已经成功的投屏，明确提示可用遥控器调整，不重发播放。当前实现覆盖 SOAP 扩展，没有新增旧式 TCP NVA 长连接客户端，也不会在写命令结果不明时自动退回普通投屏。
 - 普通直播投屏每次交接通过现有 `LiveClient.getPlayInfo` 重新解析签名地址，优先 AVC 的 MPEG-TS HLS，再选择 AVC fMP4 HLS、AVC HTTP-FLV。保留服务端地址及签名，不改写 CDN、不将本机播放器的 Cookie／Referer 转发给设备；无兼容流或下播时明确失败。接收端是否支持相应封装、是否可以直接拉流仍需设备验证。
-- B站接收端不依赖点播 TV `durl` 成功；UGC 缺少 aid 时仍用原详情接口补齐。直播交接前验证开播状态并取得规范房间 ID，接收端自行决定实际媒体流和弹幕显示。
+- 仅实验模式不依赖点播 TV `durl` 成功；默认兼容模式始终保留 TV 取流接口。UGC 缺少 aid 时仍用原详情接口补齐；直播交接前验证开播状态并取得规范房间 ID，兼容模式仍交接已解析的 AVC 流。
 
 ## 实现边界
 
 - [CastClient](../../packages/bili_api/lib/src/clients/cast_client.dart) 使用固定 `api.bilibili.com/x/tv/playurl` 端点及已有 App profile 签名。服务端权益仍生效，Web Cookie 不转换成 App token；没有有效 App token 时按游客请求。只接受单段 `durl`，拒绝 DASH 单轨、多段及显式试看；HTTP／业务错误沿用统一分类。
 - [ApiCastMediaRepository](../../lib/features/playback/data/api_cast_media_repository.dart) 在应用 data 层映射身份和安全存储中的现有 App 凭据，视频缺少 aid 时通过原有详情读取补齐；地址只保存在本次操作内存，不写数据库、设置或日志。
 - [CastingController](../../lib/features/playback/application/casting_controller.dart) 管理搜索、设备选择和命令串行化。源 generation 或账号变化使面板失效；账号 lifetime 与 HTTP 取消同步。晚到的 URL／Play 回复不能触发后续设备命令或暂停新源。关闭面板移除监听并释放网络资源。
-- [DlnaCastRepository](../../lib/features/playback/data/dlna_cast_repository.dart) 自行实现最小 SSDP／SOAP 适配：12 秒搜索窗口、最多 64 个描述地址及设备；HTTP 每次 5 秒、连接 3 秒、响应 256 KiB；设备描述错误不会阻止其他设备。按 UDN 去重，支持嵌套设备、相对 controlURL、URLBase 和带命名空间 XML。
+- [DlnaCastRepository](../../lib/features/playback/data/dlna_cast_repository.dart) 与 [dlna_network.dart](../../lib/features/playback/data/dlna_network.dart) 实现 SSDP／SOAP 适配：每次枚举所有候选接口的 IPv4／IPv6 地址，各自绑定并显式选择组播出口；共用 12 秒搜索窗口，最多 64 个描述任务及设备，同时最多 4 个描述请求。按 UDN 合并并保留多个可用端点，IPv6 链路本地 scope 贯穿描述和控制连接。HTTP 响应 256 KiB，连接最多 3 秒、单次控制总预算 5 秒；仅 TCP 尚未连接时允许切换端点，结果不明的 SOAP 不重放。详见[多网卡与双栈验证](dlna-multicast-dual-stack-2026-11-14.md)。
 - SSDP 描述地址必须与回复源 IP 一致，controlURL／URLBase 必须留在该主机；禁止跳转转发。设备 HTTP 通道不携带账号 header、Cookie、App token，不改变系统 TLS 校验。DIDL-Lite 和 SOAP 分层转义，保留带签名媒体地址与中文标题。
 - 初版增加直接依赖 `xml: 6.6.1`（MIT，原已作为传递依赖锁定），无新增原生播放器或 DLNA 插件。macOS Release 增加 UDP 应答所需的 network.server 沙盒权限和局域网用途说明，发布签名校验同步检查；Debug/Profile 原已有 server 权限。
 - 平台能力集中在 [casting_support.dart](../../lib/core/platform/casting_support.dart)。Android 使用既有 INTERNET 权限，SSDP 接收单播回复，不加入多播组；实际网络策略、Windows 防火墙、macOS 局域网权限和设备兼容性须实测。
@@ -47,6 +54,8 @@
 本项目独立实现领域模型、仓储、能力分流和协议编码，没有修改参考仓库或媒体／弹幕依赖。
 
 ## 验证
+
+当前默认行为和最新回归结果以 [2026-11-14 修复记录](casting-compatibility-regression-2026-11-14.md) 为准。下列 2026-11-13 的模拟器验证未覆盖真实云视听接收端的媒体加载，不作为自动身份投屏兼容性结论。
 
 2026-11-13 新增协议模拟器和数据层回归覆盖 UGC／PGC／直播扩展身份、位置／倍速／弹幕偏好、普通设备报文不变、跨主机扩展服务隔离、直播 AVC 流优先级／地址刷新／下播，以及取消、账号变化和设备切换。共享播放面板回归包含直播普通／小窗／全屏入口与离线隐藏。
 

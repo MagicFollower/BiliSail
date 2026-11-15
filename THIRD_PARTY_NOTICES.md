@@ -1,5 +1,11 @@
 # 第三方来源与分发检查
 
+## 2026-11-15 桌面滚轮平滑动画
+
+新增精确依赖 [scroll_animator 0.3.0](https://pub.dev/packages/scroll_animator/versions/0.3.0)（BSD-3-Clause，Copyright 2024 Kamil Szczęk），仅依赖 Flutter，无新增原生二进制。采用公共 `ChromiumEaseInOut`／`ScrollAnimation` 接口，包内原始 LICENSE 由 Flutter notices 收集；两个 Chromium 移植文件相同的原始 BSD-3-Clause 头部（Copyright 2015 The Chromium Authors）另存于 [Chromium 许可](assets/licenses/scroll_animator_chromium.txt)，随资产打包并登记到应用许可证页。归档 SHA-256、嵌套滚动适配与验证边界见[滚轮动画切换](docs/validation/scroll-animation-switch-2026-11-15.md)。没有复制 PureLive 应用源码或资源。
+
+多平台选项基于 [smooth_scroll_multiplatform 1.0.8](https://pub.dev/packages/smooth_scroll_multiplatform/versions/1.0.8) 的 MIT 源码，在仓库内维护固定 `1.0.8+bilisail.1` [兼容副本](third_party/smooth_scroll_multiplatform/UPSTREAM.md)。保留原始 [LICENSE](third_party/smooth_scroll_multiplatform/LICENSE)、来源摘要和包装实现，新增公共插值入口用于嵌套／保留列表；不修改 Pub 缓存。传递依赖 `provider 6.1.5+1`、`nested 1.0.0` 同为 MIT，包内原始许可证随 Flutter notices 收集；无新增原生二进制。
+
 ## 2026-11-13 B站扩展投屏与直播
 
 新增精确依赖 [pointycastle 4.0.0](https://pub.dev/packages/pointycastle/versions/4.0.0)（MIT，纯 Dart），用于标准 AES-CBC／PKCS7 编码；包内原始 LICENSE 由 Flutter notices 收集。B站投屏固定协议 key／IV 和报文格式只作为互通协议事实，不用于账号凭据传送或安全存储。
@@ -76,7 +82,7 @@ Windows MSI/EXE 打包使用固定 [WiX Toolset 6.0.2](https://github.com/wixtoo
 
 Windows 安装器的现代文件夹选择器另使用同版本的 `WixToolset.BootstrapperApplicationApi` 与 `WixToolset.WixStandardBootstrapperApplicationFunctionApi` 接口头文件；不链接新增 WiX 库。NuGet 归档 SHA-256 固定于[构建脚本](tool/windows-installer-native.ps1)，头文件保留 MS-RL 通知并连同辅助源码随 `data/licenses/wix/installer-ui` 分发；静态 CRT 的原生辅助 DLL 仅用于安装 UI。
 
-内嵌官网登录使用 [flutter_inappwebview 6.2.0-beta.3](https://pub.dev/packages/flutter_inappwebview/versions/6.2.0-beta.3)，Apache-2.0；选此固定预览版是因为工程 AGP 9 与其稳定版不兼容。官网页面与验证码按需通过 HTTPS 加载，未复制到应用资产。Windows 的 WebView2 SDK／Loader 使用 NuGet 包内 Microsoft BSD 类许可，WIL、CppWinRT 与 nlohmann.json 使用 MIT；这些原生许可另随 Windows 产物置于 `data/licenses/webview`。nlohmann.json 3.12.0 的 [原始许可](https://github.com/nlohmann/json/blob/v3.12.0/LICENSE.MIT)保留于 [本地许可](windows/licenses/nlohmann-json-LICENSE.txt)。平台 SDK 来源、锁定版本和实测边界见 [登录验证](docs/validation/password-sms-login.md)。
+内嵌官网登录统一使用 [webview_all 1.5.0](https://pub.dev/packages/webview_all/versions/1.5.0)（MIT），平台包另保留 Flutter 上游 BSD 通知。参考 [PiliPlus PR #3423](https://github.com/bggRGjQaUbCoE/PiliPlus/pull/3423) 的依赖选择，未复制其 GPLv3 应用源码。官网与验证码按需经 HTTPS 加载，不作为应用资产。Windows 使用包内固定 WebView2 SDK 1.0.3650.58／Loader 和 WIL 1.0.220914.1，其许可随产物放在 `data/licenses/webview`。Linux 使用发行版 WebKitGTK 4.1 及其辅助进程，版权和精确 binary/source 版本保留于包内 distro notices；辅助进程路径变换脚本及库修改前后 SHA-256 同包保留。迁移、来源与验证边界见[全平台 WebView 记录](docs/validation/webview-all-linux-2026-11-14.md)。
 
 应用默认内置 HarmonyOS Sans（简体中文 Regular/Medium/Bold），来源为用户提供的本机字体目录，文件未修改。随字体提供的 HarmonyOS Sans Fonts License Agreement、版权通知与 SHA-256 见 [资源来源](assets/README.md#harmonyos-sans)。完整许可证打包到应用，并通过“关于”中的许可证页展示；设置中可切换为系统默认字体。
 

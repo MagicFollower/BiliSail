@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_dialog.dart';
+import 'content_link_scope.dart';
+import '../../domain/content_link.dart';
 import '../../core/platform/external_links.dart';
 import '../../core/presentation/workspace_activity.dart';
 import '../../core/presentation/page_back_scope.dart';
@@ -17,6 +19,7 @@ import 'app_network_image.dart';
 import 'app_notice.dart';
 import 'emoticon_picker_dialog.dart';
 import 'scroll_collapsing_header.dart';
+import 'measured_list_view.dart';
 import 'bili_icons.dart';
 import 'comment_rich_content.dart';
 import 'comment_badge.dart';
@@ -73,8 +76,10 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
   var _replyStorage = PageStorageBucket();
   double _topOffset = 0;
   String? _shownRoot;
+  String? _shownFocus;
   bool _loadMoreScheduled = false;
   RequestCancellation? _linkCancellation;
+  ContentLink? _consumedLink;
   @override
   void initState() {
     super.initState();
@@ -102,6 +107,17 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (!WorkspaceActivity.isActive(context)) _linkCancellation?.cancel();
+    final link = ContentLinkScope.of(context);
+    final location = link.comment;
+    if (!widget.composerOnly && location != null && link != _consumedLink) {
+      _consumedLink = link;
+      final target = widget.target;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.target == target && _consumedLink == link) {
+          unawaited(ref.read(_provider.notifier).locate(location));
+        }
+      });
+    }
   }
 
   @override
@@ -381,8 +397,12 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
         ],
       );
     }
-    if (_shownRoot != rootId) {
+    final focusId = ref.watch(
+      _provider.select((state) => state.focusedCommentId),
+    );
+    if (_shownRoot != rootId || _shownFocus != focusId) {
       _shownRoot = rootId;
+      _shownFocus = focusId;
       _replyStorage = PageStorageBucket();
       final offset = rootId == null ? _topOffset : 0.0;
       final scroll = rootId == null ? _topScroll : _replyScroll;
@@ -856,28 +876,13 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                 ),
               ),
             ),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final stacked =
-                  constraints.maxWidth < 380 ||
-                  MediaQuery.textScalerOf(context).scale(1) > 1.3;
-              return stacked
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        tools,
-                        const SizedBox(height: 4),
-                        Align(alignment: Alignment.centerRight, child: submit),
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        Expanded(child: tools),
-                        const SizedBox(width: 8),
-                        submit,
-                      ],
-                    );
-            },
+          // Measure the current tools and scaled text before deciding to wrap.
+          OverflowBar(
+            alignment: MainAxisAlignment.spaceBetween,
+            spacing: 8,
+            overflowAlignment: OverflowBarAlignment.end,
+            overflowSpacing: 4,
+            children: [tools, submit],
           ),
         ],
       ),
@@ -888,20 +893,50 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
     CommentEntry comment, {
     required bool preview,
     bool root = false,
-  }) => _CommentTile(
+    bool layoutOnly = false,
+  }) => DecoratedBox(
     key: ValueKey((root ? 'comment-root' : 'comment', comment.id)),
-    provider: _provider,
-    comment: comment,
-    preview: preview,
-    onOpenUser: widget.onOpenUser,
-    onOpenLink: _handleOpenLink,
-    onSeek: widget.onSeek,
-    onLogin: _login,
-    onReplyFocus: _focus.requestFocus,
+    decoration: BoxDecoration(
+      color:
+          ref.watch(_provider.select((state) => state.focusedCommentId)) ==
+              comment.id
+          ? Theme.of(context).colorScheme.primaryContainer
+                .withValues(alpha: 0.4)
+          : null,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: _CommentTile(
+      provider: _provider,
+      comment: comment,
+      preview: preview,
+      layoutOnly: layoutOnly,
+      onOpenUser: widget.onOpenUser,
+      onOpenLink: _handleOpenLink,
+      onSeek: widget.onSeek,
+      onLogin: _login,
+      onReplyFocus: _focus.requestFocus,
+    ),
   );
 
-  void _scheduleLoadMore(BuildContext context) {
-    if (_loadMoreScheduled) return;
+  static const _loadMoreExtent = 240.0;
+
+  void _scheduleLoadMore(BuildContext context, {ScrollMetrics? metrics}) {
+    if (_loadMoreScheduled ||
+        (metrics != null && metrics.extentAfter > _loadMoreExtent) ||
+        widget.composerOnly ||
+        widget.target.oid.isEmpty ||
+        !WorkspaceActivity.isActive(context)) {
+      return;
+    }
+    final current = ref.read(_provider);
+    final inReplies = current.openRoot != null;
+    if (current.busy ||
+        (inReplies ? current.replyLoading : current.loading) ||
+        (inReplies ? current.replyLoadFailed : current.loadFailed) ||
+        !(inReplies ? current.replyHasMore : current.hasMore) ||
+        (inReplies ? current.replyPage : current.page) == 0) {
+      return;
+    }
     _loadMoreScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadMoreScheduled = false;
@@ -926,12 +961,12 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
       final scroll = replies ? _replyScroll : _topScroll;
       if (!scroll.hasClients ||
           !scroll.position.hasContentDimensions ||
-          scroll.position.extentAfter > 240) {
+          scroll.position.extentAfter > _loadMoreExtent) {
         return;
       }
       final controller = ref.read(_provider.notifier);
       unawaited(replies ? controller.loadReplies() : controller.load());
-    });
+    }, debugLabel: 'CommentsPanel.loadMore');
     // Metrics can arrive after layout. Request one check, without polling.
     WidgetsBinding.instance.ensureVisualUpdate();
   }
@@ -949,6 +984,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
             state.openRoot == null ? state.loadFailed : state.replyLoadFailed,
             state.message,
             state.openRoot == null ? state.totalCount : null,
+            state.focusedCommentId,
           ),
         ),
       );
@@ -961,10 +997,24 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
       _topScroll.configure(context, active: active && root == null);
       _replyScroll.configure(context, active: active && root != null);
       _scheduleLoadMore(context);
-      final comments = root == null ? state.items : state.replyItems;
+      final focused = root == null || root.id == state.focusedCommentId
+          ? null
+          : state.replyItems
+                .where((entry) => entry.id == state.focusedCommentId)
+                .firstOrNull;
+      final comments = root == null
+          ? state.items
+          : focused == null
+          ? state.replyItems
+          : state.replyItems.where((entry) => entry.id != focused.id).toList();
       final loading = root == null ? state.loading : state.replyLoading;
       final more = root == null ? state.hasMore : state.replyHasMore;
-      final prefix = root == null ? 0 : 2;
+      // Put the addressed reply first, so even a long root cannot hide it.
+      final prefix = root == null
+          ? 0
+          : focused == null
+          ? 2
+          : 4;
       if (!identical(_indexedComments, comments)) {
         _indexedComments = comments;
         _commentIndices = {
@@ -972,78 +1022,125 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
             comments[index].id: index,
         };
       }
-      final list = ListView.builder(
-        controller: root == null ? _topScroll : _replyScroll,
-        key: PageStorageKey(
-          'comments:${widget.target.type.name}:${widget.target.oid}:${root?.id ?? state.sort.name}',
-        ),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-        itemCount: prefix + comments.length + 1,
-        findChildIndexCallback: (key) {
-          if (key is! ValueKey<(String, String)>) return null;
-          if (key.value.$1 == 'comment-root') {
-            return root?.id == key.value.$2 ? 0 : null;
-          }
-          final index = _commentIndices[key.value.$2];
-          return index == null ? null : prefix + index;
-        },
-        itemBuilder: (context, index) {
-          if (root != null && index < prefix) {
+      Widget footer(BuildContext context) {
+        if (loading) {
+          return const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(
+              child: SizedBox.square(
+                dimension: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        if (comments.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              children: [
+                Text(
+                  state.message != null
+                      ? '暂时无法加载评论'
+                      : (root?.replyCount ?? state.totalCount ?? 0) > 0 ||
+                            (root == null && (widget.replyCount ?? 0) > 0)
+                      ? '当前会话未返回可展示的评论'
+                      : '还没有评论，来聊聊吧',
+                  style: CommentTextStyles(Theme.of(context)).empty,
+                ),
+                if (more) _loadMore(root),
+              ],
+            ),
+          );
+        }
+        if (more) return _loadMore(root);
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              comments.length >= 500 ? '已显示 500 条评论' : '没有更多了',
+              style: CommentTextStyles(Theme.of(context)).footer,
+            ),
+          ),
+        );
+      }
+
+      Widget row(BuildContext context, int index, {bool layoutOnly = false}) {
+        if (root != null && index < prefix) {
+          if (focused != null && index < 2) {
             return index == 0
-                ? _entry(root, preview: false, root: true)
+                ? _entry(focused, preview: false, layoutOnly: layoutOnly)
                 : Padding(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     child: Text(
-                      '全部回复 ${root.replyCount}',
+                      '原评论',
                       style: CommentTextStyles(Theme.of(context)).sectionTitle,
                     ),
                   );
           }
-          final commentIndex = index - prefix;
-          if (commentIndex < comments.length) {
-            return _entry(comments[commentIndex], preview: root == null);
-          }
-          if (loading) {
-            return const Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(
-                child: SizedBox.square(
-                  dimension: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            );
-          }
-          if (comments.isEmpty) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Column(
-                children: [
-                  Text(
-                    state.message != null
-                        ? '暂时无法加载评论'
-                        : (root?.replyCount ?? state.totalCount ?? 0) > 0 ||
-                              (root == null && (widget.replyCount ?? 0) > 0)
-                        ? '当前会话未返回可展示的评论'
-                        : '还没有评论，来聊聊吧',
-                    style: CommentTextStyles(Theme.of(context)).empty,
+          return index == (focused == null ? 0 : 2)
+              ? _entry(root, preview: false, root: true, layoutOnly: layoutOnly)
+              : Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    '全部回复 ${root.replyCount}',
+                    style: CommentTextStyles(Theme.of(context)).sectionTitle,
                   ),
-                  if (more) _loadMore(root),
-                ],
-              ),
-            );
-          }
-          if (more) return _loadMore(root);
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                comments.length >= 500 ? '已显示 500 条评论' : '没有更多了',
-                style: CommentTextStyles(Theme.of(context)).footer,
-              ),
-            ),
+                );
+        }
+        final commentIndex = index - prefix;
+        if (commentIndex < comments.length) {
+          return _entry(
+            comments[commentIndex],
+            preview: root == null,
+            layoutOnly: layoutOnly,
           );
+        }
+        return footer(context);
+      }
+
+      final list = MeasuredListView(
+        key: ValueKey((widget.target, root?.id, state.sort)),
+        controller: root == null ? _topScroll : _replyScroll,
+        storageKey: PageStorageKey(
+          'comments:${widget.target.type.name}:${widget.target.oid}:${root?.id ?? state.sort.name}',
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        identities: [
+          if (root != null) ...[
+            if (focused != null) ...[(focused, false), ('original',)],
+            (root, false),
+            ('replies', root.replyCount),
+          ],
+          for (final comment in comments) (comment, root == null),
+          (
+            'footer',
+            loading,
+            more,
+            comments.length,
+            state.message,
+            state.totalCount,
+            root?.replyCount,
+            widget.replyCount,
+          ),
+        ],
+        findChildIndexCallback: (key) {
+          if (key is! ValueKey<(String, String)>) return null;
+          if (key.value.$1 == 'comment-root') {
+            return root?.id == key.value.$2 ? (focused == null ? 0 : 2) : null;
+          }
+          if (focused?.id == key.value.$2) return 0;
+          final index = _commentIndices[key.value.$2];
+          return index == null ? null : prefix + index;
         },
+        itemBuilder: (context, index) => row(context, index),
+        layoutBuilder: (context, index) => UncontrolledProviderScope(
+          container: ProviderScope.containerOf(context, listen: false),
+          child: Material(
+            type: MaterialType.transparency,
+            child: row(context, index, layoutOnly: true),
+          ),
+        ),
       );
       // NestedScrollView creates positions with persistence enabled itself.
       // Bound reply storage to this one detail visit despite that default.
@@ -1051,7 +1148,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
         onNotification: (notification) {
           if (notification.depth == 0 &&
               notification.metrics.axis == Axis.vertical) {
-            _scheduleLoadMore(context);
+            _scheduleLoadMore(context, metrics: notification.metrics);
           }
           return false;
         },
@@ -1065,7 +1162,7 @@ class _CommentsPanelState extends ConsumerState<CommentsPanel> {
                   OverscrollNotification(:final overscroll) => overscroll > 0,
                   _ => false,
                 }) {
-              _scheduleLoadMore(context);
+              _scheduleLoadMore(context, metrics: notification.metrics);
             }
             return false;
           },
@@ -1164,12 +1261,12 @@ final class _CommentEmoteDialog extends ConsumerWidget {
 
 class _CommentTile extends ConsumerStatefulWidget {
   const _CommentTile({
-    super.key,
     required this.provider,
     required this.comment,
     required this.onLogin,
     required this.onReplyFocus,
     this.preview = true,
+    this.layoutOnly = false,
     this.onOpenUser,
     required this.onOpenLink,
     this.onSeek,
@@ -1180,6 +1277,7 @@ class _CommentTile extends ConsumerStatefulWidget {
   final ValueChanged<Uri> onOpenLink;
   final ValueChanged<Duration>? onSeek;
   final bool preview;
+  final bool layoutOnly;
   final VoidCallback onLogin, onReplyFocus;
 
   @override
@@ -1195,6 +1293,7 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
     if (oldWidget.provider != widget.provider ||
         !identical(oldWidget.comment, widget.comment) ||
         oldWidget.preview != widget.preview ||
+        oldWidget.layoutOnly != widget.layoutOnly ||
         oldWidget.onOpenUser != widget.onOpenUser ||
         oldWidget.onOpenLink != widget.onOpenLink ||
         oldWidget.onSeek != widget.onSeek) {
@@ -1241,6 +1340,11 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
   @override
   Widget build(BuildContext context) => _content ??= _buildContent(context);
 
+  Widget _preview({
+    required Widget Function(BuildContext, WidgetRef, Widget?) builder,
+    required Widget child,
+  }) => widget.layoutOnly ? child : Consumer(builder: builder, child: child);
+
   // Only mounted rows retain content. Busy/loading changes rebuild controls,
   // while pagination can reuse the rich text, images and author header.
   Widget _buildContent(BuildContext context) {
@@ -1254,7 +1358,11 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CommentAuthorHeader(comment: c, onOpenUser: onOpenUser),
+          CommentAuthorHeader(
+            comment: c,
+            onOpenUser: onOpenUser,
+            layoutOnly: widget.layoutOnly,
+          ),
           Padding(
             padding: const EdgeInsets.only(
               left: CommentAuthorHeader.contentIndent,
@@ -1268,26 +1376,35 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
                   onOpenUser: onOpenUser,
                   onOpenLink: onOpenLink,
                   onSeek: onSeek,
+                  layoutOnly: widget.layoutOnly,
                 ),
                 if (c.visibility == CommentVisibility.restricted)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text('暂未公开', style: styles.metadata),
                   ),
-                Consumer(
-                  builder: (context, ref, _) {
-                    final busy = _busy(ref);
-                    return CommentActions(
-                      comment: c,
-                      busy: busy,
-                      onLike: _like,
-                      onReply: _reply,
-                    );
-                  },
-                ),
+                if (widget.layoutOnly)
+                  CommentActions(
+                    comment: c,
+                    busy: true,
+                    onLike: _like,
+                    onReply: _reply,
+                  )
+                else
+                  Consumer(
+                    builder: (context, ref, _) {
+                      final busy = _busy(ref);
+                      return CommentActions(
+                        comment: c,
+                        busy: busy,
+                        onLike: _like,
+                        onReply: _reply,
+                      );
+                    },
+                  ),
                 if (widget.preview &&
                     (c.replyCount > 0 || c.replies.isNotEmpty))
-                  Consumer(
+                  _preview(
                     builder: (context, ref, child) => InkWell(
                       onTap: _busy(ref) ? null : _open,
                       borderRadius: BorderRadius.circular(5),
@@ -1375,6 +1492,7 @@ class _CommentTileState extends ConsumerState<_CommentTile> {
                                         compact: true,
                                         onOpenLink: onOpenLink,
                                         onSeek: onSeek,
+                                        layoutOnly: widget.layoutOnly,
                                       ),
                                       if (r.visibility ==
                                           CommentVisibility.restricted)

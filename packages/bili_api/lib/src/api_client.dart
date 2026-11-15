@@ -146,6 +146,28 @@ final class BiliApiClient {
     );
   }
 
+  /// Web IM reads use the same WBI key flight as other signed Web requests.
+  Future<Map<String, Object?>> requestMessageWbiJson(
+    String path,
+    Map<String, String> parameters,
+    String endpoint, {
+    ApiRequestContext? context,
+  }) {
+    if (!const {
+      '/session_svr/v1/session_svr/get_sessions',
+      '/svr_sync/v1/svr_sync/fetch_session_msgs',
+    }.contains(path)) {
+      throw ArgumentError('Unsupported message WBI endpoint');
+    }
+    return _wbiJson(
+      path,
+      parameters,
+      endpoint,
+      context,
+      origin: Uri.https('api.vc.bilibili.com', '/'),
+    );
+  }
+
   void close() {
     if (prepareWebRequests) _webDevice.close();
     _wbiInFlight?.cancellation.cancel();
@@ -322,6 +344,114 @@ final class BiliApiClient {
     }
     final value = _decodeJson(response, endpoint);
     return value == null ? const {} : _map(value, endpoint);
+  }
+
+  /// Passport login responses retain explicit captcha and verification states.
+  /// Every form submission is a single attempt, isolated from Web credentials.
+  Future<Map<String, Object?>> requestPasswordSmsJson(
+    String path,
+    Map<String, String> parameters, {
+    required String buvid,
+    required String endpoint,
+    bool post = true,
+    String? referer,
+    ApiRequestContext? context,
+  }) async {
+    const reads = {'/x/passport-login/web/key', '/x/safecenter/user/info'};
+    const writes = {
+      '/x/passport-login/oauth2/login',
+      '/x/passport-login/sms/send',
+      '/x/passport-login/login/sms',
+      '/x/safecenter/captcha/pre',
+      '/x/safecenter/common/sms/send',
+      '/x/safecenter/login/tel/verify',
+      '/x/passport-login/oauth2/access_token',
+    };
+    if (!(post ? writes : reads).contains(path) ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,128}$').hasMatch(buvid)) {
+      throw ArgumentError('Unsupported Passport request');
+    }
+    final active = boundedReadContext(context);
+    final epoch = _sessionProvider?.sessionEpoch;
+    void check() => _checkDecodeContext(
+      active,
+      epoch,
+      active.deadline!,
+      endpoint: endpoint,
+    );
+    check();
+    final uri = Uri.https('passport.bilibili.com', path);
+    final isCaptchaRegistration = path == '/x/safecenter/captcha/pre';
+    final headers = {
+      'Accept': 'application/json',
+      'User-Agent': isCaptchaRegistration ? webUserAgent : AppProfile.userAgent,
+      // This Web registration endpoint chooses Geetest 4 when given App buvid
+      // headers. Like the reference flow, request its Web/fullpage registration
+      // separately, then use that registration's token for the signed SMS form.
+      if (!isCaptchaRegistration) ...{
+        'buvid': buvid,
+        'env': 'prod',
+        'app-key': 'android_hd',
+        'x-bili-trace-id':
+            '11111111111111111111111111111111:1111111111111111:0:0',
+        'x-bili-aurora-eid': '',
+        'x-bili-aurora-zone': '',
+        'bili-http-engine': 'cronet',
+      },
+      'Referer': ?referer,
+    };
+    final budget = active.deadline!.difference(_clock());
+    ApiHttpResponse response;
+    try {
+      if (post) {
+        final transport = _transport;
+        if (transport is! ApiFormTransport) {
+          throw ApiFailure(ApiFailureCategory.unavailable, endpoint);
+        }
+        response = await (transport as ApiFormTransport)
+            .postForm(
+              uri,
+              fields: isCaptchaRegistration
+                  ? parameters
+                  : AppProfile.sign(parameters, _clock()),
+              headers: headers,
+              timeout: budget,
+              cancellation: active.cancellation,
+            )
+            .timeout(budget);
+      } else {
+        response = await _sendWithRetry(
+          uri.replace(queryParameters: parameters),
+          endpoint,
+          headers,
+          active,
+          epoch,
+          maxAttempts: 3,
+          maxBytes: 256 * 1024,
+        );
+      }
+    } on TimeoutException {
+      throw ApiFailure(ApiFailureCategory.timeout, endpoint);
+    }
+    check();
+    // Captcha registration is handled by this login flow, not feed cooldowns.
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiFailure(
+        ApiFailureCategory.http,
+        endpoint,
+        httpStatus: response.statusCode,
+      );
+    }
+    if (response.body.length > 256 * 1024) {
+      throw ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    try {
+      final Object? root = jsonDecode(utf8.decode(response.body));
+      if (root is Map<String, Object?> && root['code'] is int) return root;
+    } on FormatException {
+      throw ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    throw ApiFailure(ApiFailureCategory.protocol, endpoint);
   }
 
   /// Fixed TV projection endpoint. App credentials never share Web cookies.
@@ -995,6 +1125,141 @@ final class BiliApiClient {
       nextCursor: hasMore ? next as String : null,
       totalCount: _count(paging['all_count']),
     );
+  }
+
+  /// Resolves a comment ID to its exact reply page without scanning siblings.
+  Future<
+    ({ApiVideoComment root, ApiPage<ApiVideoComment> page, int pageNumber})
+  >
+  getVideoCommentLocation(
+    String aid,
+    String rootId, {
+    String? replyId,
+    int commentType = 1,
+    ApiRequestContext? context,
+  }) async {
+    _validateCommentId(aid);
+    _validateCommentId(rootId);
+    if (replyId != null) _validateCommentId(replyId);
+    _validateCommentType(commentType);
+    const endpoint = 'comment_location';
+    final focusId = replyId ?? rootId;
+    late final Map<String, Object?> data;
+    try {
+      data = await _json(
+        _api.replace(
+          path: '/x/v2/reply/jump',
+          queryParameters: {
+            'oid': aid,
+            'type': '$commentType',
+            'rpid': focusId,
+          },
+        ),
+        endpoint,
+        context,
+      );
+    } on ApiFailure catch (failure) {
+      if (const {12006, 12022}.contains(failure.businessCode)) {
+        throw ApiFailure(
+          ApiFailureCategory.notFound,
+          endpoint,
+          businessCode: failure.businessCode,
+        );
+      }
+      rethrow;
+    }
+    Map<String, Object?>? rawRoot;
+    for (final value in _list(
+      data['replies'] ?? const [],
+      endpoint,
+    ).take(100)) {
+      final entry = _map(value, endpoint);
+      if (_id(entry['rpid_str'] ?? entry['rpid'], endpoint) == rootId) {
+        rawRoot = entry;
+        break;
+      }
+    }
+    if (rawRoot == null) {
+      throw const ApiFailure(ApiFailureCategory.notFound, endpoint);
+    }
+    if (_id(rawRoot['oid_str'] ?? rawRoot['oid'], endpoint) != aid ||
+        _requiredInt(rawRoot['type'], endpoint) != commentType) {
+      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    final root = _comment(
+      rawRoot,
+      endpoint,
+      upperMid: _userMid(_commentMap(data['upper'])['mid']),
+    );
+    if (root.rootId != null && root.rootId != rootId) {
+      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    var pageNumber = 1;
+    if (focusId != rootId) {
+      final jumpPage = _requiredInt(
+        _map(data['page'], endpoint)['rt_num'],
+        endpoint,
+      );
+      if (jumpPage < 1 || jumpPage > 0x7fffffff) {
+        throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+      }
+      // Web jump's rt_num uses 10 replies per page, independently of the
+      // main list's page.size. Shared reply pagination uses 20 per page.
+      pageNumber = (jumpPage - 1) ~/ 2 + 1;
+    }
+    final page = await getVideoReplies(
+      aid,
+      rootId,
+      page: pageNumber,
+      commentType: commentType,
+      context: context,
+    );
+    if (focusId != rootId &&
+        !page.items.any(
+          (entry) => entry.id == focusId && entry.rootId == rootId,
+        )) {
+      throw const ApiFailure(ApiFailureCategory.notFound, endpoint);
+    }
+    return (root: root, page: page, pageNumber: pageNumber);
+  }
+
+  /// Reads a root even when it is absent from the main comment pages.
+  Future<ApiVideoComment> getVideoCommentRoot(
+    String aid,
+    String rootId, {
+    int commentType = 1,
+    ApiRequestContext? context,
+  }) async {
+    _validateCommentId(aid);
+    _validateCommentId(rootId);
+    _validateCommentType(commentType);
+    const endpoint = 'video_replies';
+    final data = await _json(
+      _api.replace(
+        path: '/x/v2/reply/reply',
+        queryParameters: {
+          'oid': aid,
+          'type': '$commentType',
+          'root': rootId,
+          'pn': '1',
+          'ps': '20',
+        },
+      ),
+      endpoint,
+      context,
+    );
+    if (data['root'] == null) {
+      throw const ApiFailure(ApiFailureCategory.notFound, endpoint);
+    }
+    final root = _comment(
+      _map(data['root'], endpoint),
+      endpoint,
+      upperMid: _userMid(_commentMap(data['upper'])['mid']),
+    );
+    if (root.id != rootId || root.rootId != null && root.rootId != rootId) {
+      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    return root;
   }
 
   Future<ApiPage<ApiVideoComment>> getVideoReplies(
@@ -1677,6 +1942,40 @@ final class BiliApiClient {
       'recommended',
       context,
     );
+    return _recommendedPage(data, page + 1);
+  }
+
+  /// Uses the desktop client's Web profile; [freshIndex] starts at zero.
+  /// Later first-page requests refresh, while [loadMore] selects pagination.
+  Future<ApiPage<ApiVideoSummary>> getDesktopRecommended({
+    required int freshIndex,
+    bool loadMore = false,
+    ApiRequestContext? context,
+  }) async {
+    if (freshIndex < 0) throw ArgumentError.value(freshIndex, 'freshIndex');
+    final data = await _wbiJson(
+      '/x/web-interface/wbi/index/top/feed/rcmd',
+      {
+        'plat': '1',
+        'feed_version': 'V1',
+        'ps': '30',
+        'fresh_idx': '$freshIndex',
+        'fresh_type': freshIndex == 0 ? '0' : (loadMore ? '4' : '3'),
+        'x_num': '3',
+        'y_num': '4',
+        'pc_wx_install': '0',
+        'pc_wx_gm_install': '0',
+      },
+      'recommended',
+      context,
+    );
+    return _recommendedPage(data, freshIndex + 1);
+  }
+
+  ApiPage<ApiVideoSummary> _recommendedPage(
+    Map<String, Object?> data,
+    int nextIndex,
+  ) {
     // Feed cards can also advertise non-video destinations.
     final items = _list(data['item'], 'recommended')
         .map((entry) => _map(entry, 'recommended'))
@@ -1686,7 +1985,7 @@ final class BiliApiClient {
     return ApiPage(
       items,
       hasMore: items.isNotEmpty,
-      nextCursor: items.isEmpty ? null : '${page + 1}',
+      nextCursor: items.isEmpty ? null : '$nextIndex',
     );
   }
 
@@ -1883,15 +2182,13 @@ final class BiliApiClient {
     final season = _map(value, endpoint);
     final entries = <ApiVideoCollectionEntry>[];
     final seen = <String>{};
-    for (final section in _list(
-      season['sections'] ?? const [],
-      endpoint,
-    ).take(50)) {
+    // View returns the complete collection, including videos beyond the 500th.
+    // Keep its order and identities; the HTTP response has a byte limit.
+    for (final section in _list(season['sections'] ?? const [], endpoint)) {
       for (final value in _list(
         _map(section, endpoint)['episodes'] ?? const [],
         endpoint,
-      ).take(500)) {
-        if (entries.length >= 500) break;
+      )) {
         final episode = _map(value, endpoint);
         final arc = _optionalMap(episode['arc']);
         final bvid = _requiredString(episode['bvid'] ?? arc?['bvid'], endpoint);
@@ -2619,6 +2916,7 @@ final class BiliApiClient {
       await _webDevice.ensure(context);
     }
     final spaceDetails = endpoint == 'profile_details';
+    final message = endpoint.startsWith('message_');
     final popularReferer = switch (endpoint) {
       'popular_weeks' => 'https://www.bilibili.com/v/popular/weekly',
       'popular_week' =>
@@ -2633,9 +2931,13 @@ final class BiliApiClient {
       'User-Agent': webUserAgent,
       'Referer': spaceDetails
           ? 'https://space.bilibili.com/${uri.queryParameters['mid']}/dynamic'
+          : message
+          ? 'https://message.bilibili.com/'
           : popularReferer ?? referer,
       'Origin': spaceDetails
           ? 'https://space.bilibili.com'
+          : message
+          ? 'https://message.bilibili.com'
           : 'https://www.bilibili.com',
     };
     final cookie = cookieJar.headerFor(uri, now: _clock());
