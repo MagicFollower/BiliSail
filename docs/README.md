@@ -1,5 +1,7 @@
 # BiliSail（哔帆）设计文档
 
+2026-11-12：已移除 fvp／MDK，当前仅使用 media_kit。历史文档中的双后端实现、SDK、命令及测试记录保留当时事实，不再作为现行入口；清理与设置兼容见[移除记录](validation/fvp-removal-2026-11-12.md)。
+
 设计与实现日期：2026-10-05。状态：已创建 0.1.0 Windows 预览工程；完整设计仍是后续路线，当前能力与验证边界见 [M0 实测记录](validation/m0-results.md) 和 [根 README](../README.md)。
 
 本项目采用 **Flutter + Dart 构建客户端，独立 API 包承接 Bilibili 协议，播放器与弹幕各自封装，Rust 按证据引入**。首批目标为 Android、Windows、macOS；参考 `biliuwp-lite` 的客户端能力和 `bili-kernel` 的 API 分层。
@@ -8,6 +10,39 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [Android 直出 HDR 色彩](validation/hdr-direct-output-2026-11-15.md) | HDR 源使用 GPU 色调映射并保留硬解、直出偏好恢复、PiliPlus 对照与未构建／实机边界 |
+| [点播提前截断错误恢复](validation/prefetch-read-error-coverage-2026-11-15.md) | 提前读断分类遗漏、TLS／分片错误审查、统一恢复入口及缓存耗尽前回归 |
+| [桌面滚轮动画与参数](validation/scroll-animation-switch-2026-11-15.md) | 弹簧／Chromium／多平台平滑、曲线与倍率、设置持久化、嵌套与标签状态及未构建边界 |
+| [密码／短信 App 登录](validation/password-sms-app-login-2026-11-15.md) | App 双凭据、真实 -105／fullpage 验证、注册刷新与取消、推荐设置提示移除 |
+| [Windows 有声停帧](validation/windows-video-freeze-2026-11-15.md) | 硬解 warning、音频进度掩盖视频故障、整对有界恢复及原生故障注入边界 |
+| [Android 缓冲与重加载排查](validation/android-rebuffer-reload-2026-11-15.md) | 小米 Android 16 日志、真实缓存暂停与充足缓存时重开、静默探测／回退缓存边界及归因限制 |
+| [全平台 WebView 与 Linux 登录](validation/webview-all-linux-2026-11-14.md) | webview_all 迁移、私有 Cookie、Linux 原生与 helper 打包验证 |
+| [Windows Release 正常预读 EOF](validation/windows-release-dash-eof-2026-11-14.md) | 分轨尾部差异导致误中断、PiliPlus 职责对照、删除 EOF 差值判错及原生复现／修复验证 |
+| [消息内容与评论定位](validation/message-content-navigation-2026-11-14.md) | 回复／点赞／@ 通知定位、视频时间／分 P、共享评论详情及验证边界 |
+| [桌面端推荐](validation/desktop-recommendation-2026-11-14.md) | Web／App／桌面端来源、PiliPlus PR #3463 参数对照、切换隔离、持久化与验证边界 |
+| [点播反复缓存暂停恢复](validation/repeated-rebuffer-recovery-2026-11-14.md) | 系统安装版现场、无错误少量补数循环、原生缓存暂停判断及有界备用线路恢复 |
+| [直播解码错误恢复](validation/live-decoder-recovery-2026-11-14.md) | 视频错误接入有界重开、反复短停顿、缓冲提示归因、脱敏原生状态和真实坏流自动恢复回归 |
+| [直播卡悬停预览](validation/live-card-hover-preview-2026-11-14.md) | 官网首页预览接口、视频／直播共享预览生命周期、静音与首帧淡入、自动回归及未构建／实机边界 |
+| [历史续播与默认 CDN](validation/resume-startup-cdn-2026-11-14.md) | Windows 历史续播等待、PiliPlus 默认选线对照、自动模式常规 CDN 优先及验证 |
+| [点播预读断流恢复](validation/prefetch-network-recovery-2026-11-14.md) | 缓存仍可播放时的网络恢复探测、提前重开、PiliPlus 对比与受控断流回归 |
+| [响应式布局阈值设置](validation/responsive-layout-settings-2026-11-14.md) | 卡片多滑块阈值、导航栏自动切换和视频／影视分栏宽度，默认兼容、持久化与布局状态验证 |
+| [视频侧栏重建与生命周期](validation/video-sidebar-lifecycle-2026-11-14.md) | 开关局部更新、播放器内容复用、隐藏态 Ticker／可见性边界及回归证据 |
+| [评论区滚动条拖动跳变](validation/comments-scrollbar-drag-2026-11-15.md) | 变高评论总长估算、逐行高度测量、鼠标滑块拖动及懒加载边界 |
+| [评论区滚动生命周期复查](validation/comments-scroll-lifecycle-2026-11-14.md) | 行内表情可见性与请求取消、分页无效调度、手势资源及 500 条列表释放回归 |
+| [iOS 播放期间闪退](validation/ios-video-playback-crash-2026-11-13.md) | 输出帧失败退出、Apple 渲染队列与销毁屏障、用户日志/PiliPlus 对照、受控回归及 SDK/实机边界 |
+| [移除 fvp 播放后端](validation/fvp-removal-2026-11-12.md) | 统一 media_kit、旧设置回退、原生／依赖／脚本清理及验证边界 |
+| [番剧、国创与放映厅追番](validation/pgc-follow.md) | 追番／追剧与取消、登录和状态核对、账号隔离及离线验证 |
+| [视频合集定位与播放顺序](validation/video-collection-controls-2026-11-12.md) | 顶部／底部／当前分 P 定位、显示排序与倒序播放、队列边界及回归验证 |
+| [fvp 倍速暂停后继续](validation/fvp-pause-resume-synchronization-2026-11-12.md) | 视频停住而音频推进的现场日志、同管线目标确认及单元回归边界 |
+| [fvp HTTP 断流与有界续读](validation/fvp-http-read-recovery-2026-11-11.md) | 现场音频提前 EOF、socket 断开／无响应复现、Range 续读及归因边界 |
+| [请求风控与设备上下文](validation/api-risk-control-2026-11-11.md) | 热门 WBI、共享 buvid、风控／验证码识别、冷却与未实机边界 |
+| [动态投票查看与参与](validation/dynamic-poll-viewing-2026-11-11.md) | 卡片／正文／转发的应用内投票、选项与结果、匿名参与及验证边界 |
+| [动态发布能力与自适应编辑器](validation/dynamic-publishing-parity-2026-11-11.md) | B站表情、@用户、18图与裁剪、权限／定时、投票／直播预约及验证边界 |
+| [Windows ARM64 EGL 表面修复](validation/windows-arm64-egl-surface-2026-11-12.md) | #100 生产者采样绑定与绘制冲突、resize 生命周期、受控回归及实机边界 |
+| [Windows ARM64 黑屏与 MDK 过期提示](validation/windows-arm64-black-video-2026-11-10.md) | #100 前期保留 GPU 默认路径、撤回统一降级、ARM64 SDK 刷新与当时定位边界 |
+| [macOS 前台冷启动停滞](validation/macos-foreground-startup-2026-11-10.md) | headless 激活与窗口可见性同步、禁帧生命周期回放及首帧后正常刷新检查 |
+| [fvp 缓冲条小幅回缩](validation/fvp-buffer-timeline-2026-11-09.md) | 未解码包队列与呈现时钟差异、双轨端点换算、显示抖动容差和原生回归 |
+| [fvp 恢复后反复停帧](validation/fvp-resume-clock-2026-11-09.md) | 本机 Release 中断日志、首次时钟窗口锁死、PiliPlus 职责对照及原生回归 |
 | [Windows ARM64 悬停预览闪退](validation/windows-arm64-preview-crash-2026-11-09.md) | #100 的 OpenGL 能力错配、SDK 替换、原生降级与初始化错误传播、离线验证及实机边界 |
 | [官方客户端文字排版对齐](validation/official-client-typography-2026-11-09.md) | HarmonyOS 字体核对、文字层级与频道字号、评论各部分样式及昵称色、楼中楼详情返回 |
 | [动态页 UP 主筛选](validation/dynamic-author-filter-2026-11-08.md) | 动态／视频动态共享作者目录、宽窄布局、请求与滚动生命周期、离线回归和实机边界 |
@@ -44,6 +79,7 @@
 | [项目宣传视频脚本](marketing/promotional-video-script.md) | 2026-10-30 第三版，按使用场景介绍发现、导航、播放、听视频、互动与离线，含分镜、素材和导出记录 |
 | [推荐流设置](recommendation-settings-design.md) | PiliPlus 11 项对应、查询级过滤与刷新保留、性能约束及验证 |
 | [App 推荐接入](app-recommendation-design.md) | Web/App 来源、独立设备标识、扫码授权、安全凭据及服务端反馈 |
+| [App 推荐有效性调查](validation/app-recommendation-investigation-2026-11-10.md) | #107 的实际接口与身份、PiliPlus 空参数签名差异、其他客户端对照及游客验证边界 |
 | [界面改版候选方案](ui-redesign/proposals.md) | 晴湾／素白／映厅三套视觉与用户最终选择，功能保留清单及双标签设计 |
 | [晴湾与双标签实施](ui-redesign/implementation.md) | 共享外观、桌面分组与窄屏四项导航、双标签会话及状态保留、验证边界 |
 | [晴湾第二轮调整](ui-redesign/refinement-plan.md) | 桌面独立播放窗口、正式图标、侧栏底部入口、页面工具栏与独立我的页 |
@@ -76,6 +112,7 @@
 | [搜索历史与热搜](validation/search-discovery-2026-11-01.md) | 居中搜索动效、宽窄屏入口、账号历史存储、热搜协议与自动验证边界 |
 | [密码、短信与移动登录窗口](validation/password-sms-login.md) | 三种 Web 登录、交互验证码、安全会话与小屏/键盘布局 |
 | [播放、直播与弹幕](playback-and-danmaku.md) | DASH 分轨、播放状态机、直播连接、渲染时钟与性能 |
+| [PiliPlus 播放入口与双后端换源复用](validation/player-source-reuse-2026-11-12.md) | EDL、SDK 事件、取消额外音频轮询、兼容实例复用与 fvp 平台边界 |
 | [media_kit 与 fvp 播放后端重构方案](player-backend-refactor-design.md) | 共享状态机、原生适配接口、两端行为差异、迁移顺序与验收矩阵；[实施与验证](validation/player-backend-refactor-2026-11-08.md) |
 | [播放器实时播放信息](validation/player-information-tab-2026-11-07.md) | 设置内实时参数、当前后端、解码／输出／缓存／同步观测与采样生命周期 |
 | [缓冲充足时的播放冻结检测](validation/buffered-playback-stall-2026-11-06.md) | #83 非阻塞时钟采样、静默停滞、抖动保护与恢复验证 |
@@ -87,7 +124,10 @@
 | [1080P60 播放请求对照](validation/playurl-quality-2026-11-01.md) | PiliPlus 请求上下文、最高档发现／缺档补取、普通账号在线证据与大会员验收边界 |
 | [播放地址内容不可用重试](validation/playurl-unavailable-retry-2026-11-05.md) | DASH 缺失／未分类业务错误恢复、网络与 WBI 共享次数预算、取消／账号／超时边界 |
 | [无音轨视频播放](validation/silent-video-playback-2026-11-08.md) | BV1fTnZ6LEvr 的明确无音轨响应、完整播放契约和 Windows 两后端在线验证 |
-| [DLNA 投屏](validation/dlna-casting.md) | 视频／影视 TV 地址、设备发现与控制、生命周期及平台验收边界 |
+| [DLNA 投屏](validation/dlna-casting.md) | 视频／影视／直播、默认兼容播放、可选电视弹幕、生命周期及设备验收边界 |
+| [DLNA 多网卡与 IPv4／IPv6](validation/dlna-multicast-dual-stack-2026-11-14.md) | 每接口组播出口、链路本地 scope、多端点回退、搜索资源与自动测试边界 |
+| [云视听投屏加载失败修复](validation/casting-compatibility-regression-2026-11-14.md) | 自动身份投屏导致的回归、恢复直链默认路径、显式实验模式与回归验证 |
+| [云视听 1.8.9 弹幕模式修复](validation/casting-danmaku-receiver-1.8.9-2026-11-14.md) | 官方接收逻辑核对、身份取流开关缺失、初始弹幕与进度单位修复及实机边界 |
 | [系统媒体通知与控制](validation/system-media-controls.md) | Android 通知、Apple 正在播放、Windows SMTC、Linux MPRIS、会话目标与验证边界 |
 | [PiliPlus 播放器与弹幕依赖切换](validation/piliplus-dependencies-2026-11-01.md) | 精确提交、库插件打包、异步 API、headers、首帧与原生回归 |
 | [Predidit 弹幕与播放器切换](predidit-media-migration.md) | 固定源码、Canvas 绘制适配、D3D11／Native Assets、打包及逐平台验证 |
@@ -110,6 +150,7 @@
 | [真实首页视频 GPU 复测](validation/windows-real-video-gpu-2026-10-13.md) | 正式播放页面、真实弹幕、持久偏好与完整采样 |
 | [弹幕高刷合成实验（已撤回）](validation/danmaku-frame-cadence-2026-10-13.md) | 历史候选测量、撤回记录与随屏幕刷新率运行的 Ticker |
 | [倍速 seek 供帧缓冲实验](validation/video-frame-queue-experiment-2026-10-13.md) | 构建开关、小容量解码帧队列、Windows 原生兼容性及手动对照方法 |
+| [长按与松开倍速回归修复](validation/hold-rate-regression-2026-11-13.md) | 对比 1.2.9+0、音频输出与时钟配置、最新后端跨源复用及验证边界 |
 | [性能热点第一批优化结果](validation/performance-hotspots-results-2026-10-11.md) | 九项 P1 的图片任务、局部订阅、弹幕窗口、影视懒创建修复与验证边界 |
 | [性能热点 P2 优化结果](validation/performance-p2-results-2026-10-11.md) | 图片连接复用、分页索引、启动并发、字幕与评论、影视缓存／解码、直播对账及待实机测量项 |
 | [连续播放与下一集](validation/continuous-playback.md) | 分 P／合集／影视顺序、完播推进、设置持久化与全屏控件 |
@@ -207,6 +248,11 @@
 | [账号菜单与消息](validation/account-messages.md) | 头像资料/入口、五类收件箱、私信分页/发送/已读、账号隔离与 Windows 只读实测 |
 | [主页卡片与富动态](validation/profile-dynamic-style.md) | UWP 横向投稿卡、居中动态列表、行内表情与转发内容、验证边界 |
 | [动态分享、评论与点赞](validation/dynamic-interactions.md) | Web 评论身份、共用评论区、复制/转发、单次写与会话隔离 |
+| [动态操作菜单与投票](validation/dynamic-operations-and-voting-2026-11-11.md) | 置顶／编辑／删除／举报、共享屏蔽与状态、Web IM 分享、应用内投票及响应式验证 |
+| [动态内容与详情重构](validation/dynamic-content-redesign-2026-11-09.md) | PiliPlus 类型对照、话题／商品／附加卡片、宽屏分栏与窄屏滚动、草稿保留及离线验证 |
+| [应用内话题与动态展示修复](validation/dynamic-topics-and-text-2026-11-09.md) | 话题简介／排序／分页／折叠、内部导航与名称搜索、右上角详情、真实排版截断及预约状态 |
+| [动态话题外跳与顶部栏修复](validation/dynamic-topic-navigation-2026-11-10.md) | 移动端话题链接、ID 优先与名称回退、协议到点击回归、工作区顶部栏去重 |
+| [独立话题页与动态发布](validation/dynamic-publishing-and-topic-page-2026-11-10.md) | 页内返回／发起人、菜单收藏与原生举报、响应式发布入口、排序吸顶与账号隔离 |
 | [用户页、倍速与标签播放](validation/profile-playback-rates.md) | 紧凑资料/工具条、固定倍速档位和普通标签继续播放 |
 | [应用会话内继承倍速与音量](validation/session-playback-rate.md) | 后续播放继承调速／音量、全局音量记忆开关、重启恢复与验证边界 |
 | [触摸长按临时倍速](validation/touch-hold-playback-rate.md) | 画面长按使用已有延迟／倍速、松开恢复、全屏与取消边界 |
@@ -231,6 +277,7 @@
 | [收藏子标签与视频卡片](validation/favorites-tabs.md) | 五类收藏入口、公共视频卡、自建收藏夹状态/日期与信息编辑、Windows 验证边界 |
 | [收藏夹播放全部](validation/favorite-playback-queue.md) | 收藏夹/合集有序播放、独立分页、播放页列表、账号隔离与容量边界 |
 | [收藏与订阅取消操作](validation/favorites-unsubscribe.md) | 卡片三点菜单、取消前确认、CSRF 单次提交与分页/账号竞态 |
+| [收藏视频移除与收藏夹删除](validation/favorite-management-2026-11-12.md) | 长按/更多菜单、指定收藏夹取消收藏、自建收藏夹删除与账号/分页隔离 |
 | [媒体包验证](validation/media-packages.md) | 包契约、限制、原生资产来源 |
 | [播放器预读窗口](validation/player-buffer-ahead.md) | 普通播放最多 5 分钟、悬停预览 5 秒、内存限额和 Windows 原生验证 |
 | [弹幕顶部距离](validation/danmaku-top-margin.md) | 默认 0、两处配置入口、点播／直播区域计算和旧设置兼容 |

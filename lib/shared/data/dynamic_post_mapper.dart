@@ -11,16 +11,56 @@ import '../../domain/video.dart';
 DynamicPost mapDynamicPost(ApiDynamicPost p) {
   final v = p.video;
   final original = p.original;
+  final topic = p.topic;
   return DynamicPost(
     id: p.id,
+    pinned: p.pinned,
+    onlySelf: p.onlySelf,
+    editable: p.editable,
     title: p.title,
     authorName: p.authorName,
     authorId: UserId.tryParse(p.authorId),
     authorAvatarUrl: p.authorAvatarUrl,
+    authorPendantUrl: p.authorPendantUrl,
     publishedAt: p.publishedAt,
     publishText: p.publishText,
     actionText: p.actionText,
     text: p.text,
+    topic: topic == null
+        ? null
+        : DynamicTopic(name: topic.name, id: topic.id, url: topic.url),
+    badge: p.badge,
+    notice: p.notice,
+    contentCards: p.contentCards
+        .map(
+          (card) => DynamicContentCard(
+            kind: DynamicCardKind.values.byName(card.kind.name),
+            title: card.title,
+            description: card.description,
+            detail: card.detail,
+            badge: card.badge,
+            coverUrl: card.coverUrl,
+            url: card.url,
+            actionLabel: card.actionLabel,
+            actionUrl: card.actionUrl,
+            reservation: switch (card.reservation) {
+              final r? => DynamicReservation(
+                id: r.id,
+                status: r.status,
+                type: r.type,
+                total: r.total,
+                description: r.description,
+                checkedText: r.checkedText,
+                uncheckedText: r.uncheckedText,
+                disabled: r.disabled,
+                ended: r.ended,
+                hasJump: r.hasJump,
+              ),
+              _ => null,
+            },
+          ),
+        )
+        .toList(),
     spans: p.spans
         .map(
           (s) => DynamicTextSpan(

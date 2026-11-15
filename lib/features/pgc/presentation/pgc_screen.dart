@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../domain/content_link.dart';
+import '../../../shared/ui/content_link_scope.dart';
+
 import '../../../core/input/input_stroke.dart';
 import '../../../domain/video.dart';
 import '../../../domain/playback_mode.dart';
@@ -15,6 +18,7 @@ import '../../playback/application/playback_session.dart';
 import '../../../shared/ui/playback_page_commands.dart';
 import '../../../shared/ui/playback_layout_builder.dart';
 import '../../../shared/ui/width_layout_builder.dart';
+import '../../../shared/ui/responsive_layout_scope.dart';
 import '../../../core/presentation/workspace_activity.dart';
 import '../../settings/domain/shortcut_settings.dart';
 import '../../../shared/ui/app_cover_image.dart';
@@ -27,9 +31,11 @@ import '../../../domain/comment_target.dart';
 import '../../../shared/ui/state_view.dart';
 import '../../../shared/ui/video_card.dart';
 import '../application/pgc_controller.dart';
+import '../application/pgc_follow_controller.dart';
 import '../domain/pgc_repository.dart';
 import '../domain/pgc_playback_sequence.dart';
 import 'pgc_episode_panel.dart';
+import 'pgc_follow_button.dart';
 
 typedef PgcPlayerBuilder = Widget Function(
   BuildContext context,
@@ -53,6 +59,7 @@ final class PgcScreen extends ConsumerStatefulWidget {
     this.onOpenSeason,
     this.commentsBuilder,
     this.onDownload,
+    this.onLogin,
   });
 
   final String? seasonId, episodeId;
@@ -62,6 +69,7 @@ final class PgcScreen extends ConsumerStatefulWidget {
   final ValueChanged<PgcSeasonSummary>? onOpenSeason;
   final PgcCommentsBuilder? commentsBuilder;
   final void Function(PgcSeason season, PgcEpisode? selected)? onDownload;
+  final VoidCallback? onLogin;
 
   @override
   ConsumerState<PgcScreen> createState() => _PgcScreenState();
@@ -71,6 +79,21 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
   late PgcLocator _locator;
   int? _tab;
   bool _infoVisible = true;
+  ContentLink? _contentLink;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final link = ContentLinkScope.of(context);
+    if (link != _contentLink) {
+      _contentLink = link;
+      if (link.comment != null) {
+        _tab = 1;
+        _infoVisible = true;
+      }
+    }
+  }
+
   final _introScroll = HeaderScrollController();
   PgcSeason? _playerSeason;
   PgcEpisode? _playerEpisode;
@@ -155,7 +178,7 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
         ? ref.read(playbackSessionProvider)
         : null;
     final generation = session?.sourceGeneration;
-    await ref.read(provider.notifier).load();
+    await _reload();
     if (!mounted ||
         locator != _locator ||
         !WorkspaceActivity.isActive(context)) {
@@ -212,7 +235,9 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
       toggleInfo: () => setState(() => _infoVisible = !_infoVisible),
       child: WidthLayoutBuilder(
         builder: (context, width) {
-          final wide = width >= 1000;
+          final wide =
+              width >=
+              ResponsiveLayoutScope.of(context).playbackSideBySideWidth;
           final showInfo = _infoVisible;
           void toggleInfo() => setState(() => _infoVisible = !_infoVisible);
           final info = Material(
@@ -449,7 +474,7 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
         if (action == 'download') {
           widget.onDownload?.call(season, episode);
         } else if (action == 'refresh') {
-          unawaited(ref.read(pgcControllerProvider(_locator).notifier).load());
+          unawaited(_reload());
         } else if (action == 'copy') {
           final url = episode == null
               ? 'https://www.bilibili.com/bangumi/play/ss${_locator.seasonId?.value ?? ''}'
@@ -479,6 +504,15 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
     }
   }
 
+  Future<void> _reload() async {
+    final season = ref.read(pgcControllerProvider(_locator)).season;
+    await Future.wait([
+      ref.read(pgcControllerProvider(_locator).notifier).load(),
+      if (season != null)
+        ref.read(pgcFollowControllerProvider(season.id).notifier).refresh(),
+    ]);
+  }
+
   Widget _details(
     BuildContext context,
     PgcSeason season,
@@ -489,13 +523,31 @@ final class _PgcScreenState extends ConsumerState<PgcScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SelectionArea(
-          child: Text(
-            season.title,
-            style: text.titleMedium?.copyWith(
-              fontWeight: FontWeight.w500,
-              height: 32 / 16,
-            ),
+        LayoutBuilder(
+          builder: (context, constraints) => Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: SelectionArea(
+                  child: Text(
+                    season.title,
+                    style: text.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                      height: 32 / 16,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: constraints.maxWidth / 2),
+                child: PgcFollowButton(
+                  seasonId: season.id,
+                  seasonType: season.type,
+                  onLogin: widget.onLogin,
+                ),
+              ),
+            ],
           ),
         ),
         if (season.publishText?.isNotEmpty == true) ...[

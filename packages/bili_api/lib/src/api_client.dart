@@ -9,12 +9,15 @@ import 'cookies.dart';
 import 'decoding/pgc_season_decoder.dart';
 import 'models.dart';
 import 'models/popular_models.dart';
+import 'models/dynamic_composer_models.dart';
 import 'models/pgc_models.dart';
 import 'mappers/video_access_parser.dart';
 import 'mappers/dash_audio_parser.dart';
 import 'transport.dart';
 import 'wbi.dart';
 import 'app_profile.dart';
+import 'risk_control.dart';
+import 'web_device_context.dart';
 
 final class _WbiKeyFlight {
   _WbiKeyFlight(this.epoch);
@@ -40,6 +43,9 @@ final class BiliApiClient {
     ApiSessionProvider? sessionProvider,
     ApiCookieJar? cookieJar,
     this.onCookiesChanged,
+    this.prepareWebRequests = false,
+    this.loadWebDevice,
+    this.saveWebDevice,
     this.timeout = const Duration(seconds: 12),
     DateTime Function()? clock,
     Future<List<ApiDanmakuItem>> Function(Uint8List)? danmakuDecoder,
@@ -57,6 +63,20 @@ final class BiliApiClient {
   final ApiSessionProvider? _sessionProvider;
   final ApiCookieJar cookieJar;
   final Future<void> Function()? onCookiesChanged;
+  final bool prepareWebRequests;
+  final Future<Map<String, String>?> Function()? loadWebDevice;
+  final Future<void> Function(Map<String, String>)? saveWebDevice;
+  final _riskControl = ApiRiskControl();
+  late final _webDevice = WebDeviceContext(
+    transport: _transport,
+    cookies: cookieJar,
+    epoch: () => _sessionProvider?.sessionEpoch,
+    clock: _clock,
+    riskControl: _riskControl,
+    timeout: timeout,
+    load: loadWebDevice,
+    save: saveWebDevice,
+  );
   final Duration timeout;
   final DateTime Function() _clock;
   final Future<List<ApiDanmakuItem>> Function(Uint8List) _danmakuDecoder;
@@ -76,6 +96,12 @@ final class BiliApiClient {
         deadline: context?.deadline ?? _clock().add(timeout),
         sessionEpoch: context?.sessionEpoch ?? _sessionProvider?.sessionEpoch,
       );
+
+  /// Establish the same Web identity before non-HTTP connection discovery.
+  Future<void> prepareWebContext({ApiRequestContext? context}) =>
+      prepareWebRequests
+      ? _webDevice.ensure(boundedReadContext(context))
+      : Future<void>.value();
 
   /// Registered Web reads share WBI keys and bounded re-signing.
   Future<Map<String, Object?>> requestWbiJson(
@@ -120,7 +146,30 @@ final class BiliApiClient {
     );
   }
 
+  /// Web IM reads use the same WBI key flight as other signed Web requests.
+  Future<Map<String, Object?>> requestMessageWbiJson(
+    String path,
+    Map<String, String> parameters,
+    String endpoint, {
+    ApiRequestContext? context,
+  }) {
+    if (!const {
+      '/session_svr/v1/session_svr/get_sessions',
+      '/svr_sync/v1/svr_sync/fetch_session_msgs',
+    }.contains(path)) {
+      throw ArgumentError('Unsupported message WBI endpoint');
+    }
+    return _wbiJson(
+      path,
+      parameters,
+      endpoint,
+      context,
+      origin: Uri.https('api.vc.bilibili.com', '/'),
+    );
+  }
+
   void close() {
+    if (prepareWebRequests) _webDevice.close();
     _wbiInFlight?.cancellation.cancel();
     if (_ownsTransport && _transport is DioApiTransport) {
       (_transport).close();
@@ -136,8 +185,14 @@ final class BiliApiClient {
     if (uri.scheme != 'https' ||
         uri.userInfo.isNotEmpty ||
         uri.port != 443 ||
+        (uri.host == 'app.bilibili.com' &&
+            !const {
+              '/x/topic/web/details/top',
+              '/x/topic/pub/search',
+            }.contains(uri.path)) ||
         !const {
           'api.bilibili.com',
+          'app.bilibili.com',
           'api.live.bilibili.com',
           'api.vc.bilibili.com',
           'message.bilibili.com',
@@ -226,6 +281,7 @@ final class BiliApiClient {
       passport ? 'passport.bilibili.com' : 'app.bilibili.com',
       path,
     );
+    _riskControl.check(uri, endpoint, epoch, _clock());
     ApiHttpResponse response;
     if (passport) {
       final transport = _transport;
@@ -259,6 +315,7 @@ final class BiliApiClient {
       );
     }
     check();
+    _riskControl.inspect(uri, endpoint, response, epoch, _clock());
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiFailure(
         response.statusCode == 429
@@ -287,6 +344,114 @@ final class BiliApiClient {
     }
     final value = _decodeJson(response, endpoint);
     return value == null ? const {} : _map(value, endpoint);
+  }
+
+  /// Passport login responses retain explicit captcha and verification states.
+  /// Every form submission is a single attempt, isolated from Web credentials.
+  Future<Map<String, Object?>> requestPasswordSmsJson(
+    String path,
+    Map<String, String> parameters, {
+    required String buvid,
+    required String endpoint,
+    bool post = true,
+    String? referer,
+    ApiRequestContext? context,
+  }) async {
+    const reads = {'/x/passport-login/web/key', '/x/safecenter/user/info'};
+    const writes = {
+      '/x/passport-login/oauth2/login',
+      '/x/passport-login/sms/send',
+      '/x/passport-login/login/sms',
+      '/x/safecenter/captcha/pre',
+      '/x/safecenter/common/sms/send',
+      '/x/safecenter/login/tel/verify',
+      '/x/passport-login/oauth2/access_token',
+    };
+    if (!(post ? writes : reads).contains(path) ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,128}$').hasMatch(buvid)) {
+      throw ArgumentError('Unsupported Passport request');
+    }
+    final active = boundedReadContext(context);
+    final epoch = _sessionProvider?.sessionEpoch;
+    void check() => _checkDecodeContext(
+      active,
+      epoch,
+      active.deadline!,
+      endpoint: endpoint,
+    );
+    check();
+    final uri = Uri.https('passport.bilibili.com', path);
+    final isCaptchaRegistration = path == '/x/safecenter/captcha/pre';
+    final headers = {
+      'Accept': 'application/json',
+      'User-Agent': isCaptchaRegistration ? webUserAgent : AppProfile.userAgent,
+      // This Web registration endpoint chooses Geetest 4 when given App buvid
+      // headers. Like the reference flow, request its Web/fullpage registration
+      // separately, then use that registration's token for the signed SMS form.
+      if (!isCaptchaRegistration) ...{
+        'buvid': buvid,
+        'env': 'prod',
+        'app-key': 'android_hd',
+        'x-bili-trace-id':
+            '11111111111111111111111111111111:1111111111111111:0:0',
+        'x-bili-aurora-eid': '',
+        'x-bili-aurora-zone': '',
+        'bili-http-engine': 'cronet',
+      },
+      'Referer': ?referer,
+    };
+    final budget = active.deadline!.difference(_clock());
+    ApiHttpResponse response;
+    try {
+      if (post) {
+        final transport = _transport;
+        if (transport is! ApiFormTransport) {
+          throw ApiFailure(ApiFailureCategory.unavailable, endpoint);
+        }
+        response = await (transport as ApiFormTransport)
+            .postForm(
+              uri,
+              fields: isCaptchaRegistration
+                  ? parameters
+                  : AppProfile.sign(parameters, _clock()),
+              headers: headers,
+              timeout: budget,
+              cancellation: active.cancellation,
+            )
+            .timeout(budget);
+      } else {
+        response = await _sendWithRetry(
+          uri.replace(queryParameters: parameters),
+          endpoint,
+          headers,
+          active,
+          epoch,
+          maxAttempts: 3,
+          maxBytes: 256 * 1024,
+        );
+      }
+    } on TimeoutException {
+      throw ApiFailure(ApiFailureCategory.timeout, endpoint);
+    }
+    check();
+    // Captcha registration is handled by this login flow, not feed cooldowns.
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiFailure(
+        ApiFailureCategory.http,
+        endpoint,
+        httpStatus: response.statusCode,
+      );
+    }
+    if (response.body.length > 256 * 1024) {
+      throw ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    try {
+      final Object? root = jsonDecode(utf8.decode(response.body));
+      if (root is Map<String, Object?> && root['code'] is int) return root;
+    } on FormatException {
+      throw ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    throw ApiFailure(ApiFailureCategory.protocol, endpoint);
   }
 
   /// Fixed TV projection endpoint. App credentials never share Web cookies.
@@ -401,9 +566,13 @@ final class BiliApiClient {
       '/x/web-interface/archive/like',
       '/x/web-interface/coin/add',
       '/x/v3/fav/resource/deal',
+      '/x/v3/fav/resource/batch-deal',
+      '/x/v3/fav/folder/del',
       '/x/v3/fav/folder/unfav',
       '/x/v3/fav/season/unfav',
       '/x/v3/fav/season/fav',
+      '/pgc/web/follow/add',
+      '/pgc/web/follow/del',
       '/x/v3/fav/folder/edit',
       '/x/v2/history/toview/add',
       '/x/v2/history/toview/del',
@@ -421,6 +590,9 @@ final class BiliApiClient {
       '/x/relation/tag/update',
       '/x/relation/tag/del',
       '/x/relation/tags/update_sort',
+      '/x/topic/fav/sub/add',
+      '/x/topic/fav/sub/cancel',
+      '/x/topic/report',
     }.contains(path)) {
       throw ArgumentError('Unsupported mutation');
     }
@@ -561,22 +733,121 @@ final class BiliApiClient {
   }) {
     if (!const {
       '/x/dynamic/feed/dyn/thumb',
+      '/x/dynamic/feed/reserve/click',
       '/x/dynamic/feed/create/dyn',
+      '/x/vote/create',
+      '/x/vote/do_vote',
+      '/x/dynamic/feed/operate/remove',
+      '/x/dynamic/feed/dyn/private_pub_setting',
+      '/x/dynamic/feed/space/set_top',
+      '/x/dynamic/feed/space/rm_top',
     }.contains(path)) {
       throw ArgumentError('Unsupported dynamic mutation');
     }
+    final uri = _api.replace(path: path);
+    final voteCsrf = path == '/x/vote/do_vote'
+        ? _mutationCredentials(uri, endpoint).csrf
+        : null;
     return _submitForm(
       _api.replace(
         path: path,
-        queryParameters: path == '/x/dynamic/feed/create/dyn'
+        queryParameters:
+            const {
+              '/x/dynamic/feed/create/dyn',
+              '/x/dynamic/feed/operate/remove',
+              '/x/dynamic/feed/dyn/private_pub_setting',
+            }.contains(path)
             ? const {'platform': 'web'}
             : null,
       ),
       endpoint,
       const {},
       context,
+      jsonBody: voteCsrf == null
+          ? body
+          : {...body, 'csrf': voteCsrf, 'csrf_token': voteCsrf},
+    );
+  }
+
+  Future<Object?> createDynamicReserve(
+    Map<String, String> fields, {
+    ApiRequestContext? context,
+  }) => _submitForm(
+    _api.replace(path: '/x/new-reserve/up/reserve/create'),
+    'dynamic_reserve_create',
+    fields,
+    context,
+  );
+
+  Future<Object?> submitDynamicForm(
+    String path,
+    String endpoint,
+    Map<String, String> fields, {
+    ApiRequestContext? context,
+  }) {
+    if (!const {
+      '/x/dynamic/feed/space/set_top',
+      '/x/dynamic/feed/space/rm_top',
+      '/x/dynamic/feed/dynamic_report/add',
+      '/x/v2/reply/subject/modify',
+    }.contains(path)) {
+      throw ArgumentError('Unsupported dynamic form');
+    }
+    return _submitForm(_api.replace(path: path), endpoint, fields, context);
+  }
+
+  Future<void> editDynamic(
+    Map<String, Object?> body, {
+    required String uploadId,
+    ApiRequestContext? context,
+  }) async {
+    const endpoint = 'dynamic_edit';
+    final uri = _api.replace(path: '/x/dynamic/feed/edit/dyn');
+    final credentials = _mutationCredentials(uri, endpoint);
+    final parameters = await _signed({
+      'platform': 'web',
+      'csrf': credentials.csrf,
+      'x-bili-device-req-json':
+          '{"platform":"web","device":"pc","spmid":"333.1368"}',
+      'w_dyn_req.upload_id': uploadId,
+      'w_dyn_req.meta':
+          '{"app_meta":{"from":"create.dynamic.web","mobi_app":"web"}}',
+    }, context);
+    // Signing reads may refresh their key; the mutation itself is attempted once.
+    await _submitForm(
+      uri.replace(queryParameters: parameters),
+      endpoint,
+      const {},
+      context,
       jsonBody: body,
     );
+  }
+
+  Future<Map<String, Object?>> publicDynamicDetail(
+    String id, {
+    ApiRequestContext? context,
+  }) async {
+    if (!RegExp(r'^[1-9][0-9]{0,18}$').hasMatch(id)) {
+      throw ArgumentError('Invalid dynamic identity');
+    }
+    final publicApi = BiliApiClient(
+      transport: _transport,
+      sessionProvider: _sessionProvider,
+      timeout: timeout,
+      clock: _clock,
+    );
+    try {
+      return await publicApi.requestJson(
+        Uri.https('api.bilibili.com', '/x/polymer/web-dynamic/v1/detail', {
+          'id': id,
+          'features': 'itemOpusStyle',
+        }),
+        'dynamic_public_check',
+        context: context,
+      );
+    } finally {
+      publicApi.close();
+    }
   }
 
   ({String cookie, String csrf}) _mutationCredentials(
@@ -624,6 +895,11 @@ final class BiliApiClient {
     }
 
     check();
+    context = boundedReadContext(context);
+    _mutationCredentials(uri, endpoint);
+    _riskControl.check(uri, endpoint, epoch, _clock());
+    if (prepareWebRequests) await _webDevice.ensure(context);
+    check();
     final credentials = _mutationCredentials(uri, endpoint);
     final cookie = credentials.cookie, csrf = credentials.csrf;
     final transport = _transport;
@@ -634,7 +910,7 @@ final class BiliApiClient {
         : transport is! ApiJsonTransport) {
       throw ApiFailure(ApiFailureCategory.unavailable, endpoint);
     }
-    final remaining = context?.deadline?.difference(_clock()) ?? timeout;
+    final remaining = context.deadline!.difference(_clock());
     if (remaining <= Duration.zero) {
       throw ApiFailure(ApiFailureCategory.timeout, endpoint);
     }
@@ -643,7 +919,7 @@ final class BiliApiClient {
     try {
       final headers = <String, String>{
         'Accept': 'application/json',
-        'User-Agent': 'BiliSail/0.1',
+        'User-Agent': webUserAgent,
         'Referer': message
             ? 'https://message.bilibili.com/'
             : live
@@ -668,7 +944,7 @@ final class BiliApiClient {
               mimeType: upload.mimeType,
               headers: headers,
               timeout: budget,
-              cancellation: context?.cancellation,
+              cancellation: context.cancellation,
             )
           : jsonBody == null
           ? (transport as ApiFormTransport).postForm(
@@ -680,7 +956,7 @@ final class BiliApiClient {
               },
               headers: headers,
               timeout: budget,
-              cancellation: context?.cancellation,
+              cancellation: context.cancellation,
             )
           : (transport as ApiJsonTransport).postJson(
               uri.replace(
@@ -689,13 +965,14 @@ final class BiliApiClient {
               body: jsonBody,
               headers: headers,
               timeout: budget,
-              cancellation: context?.cancellation,
+              cancellation: context.cancellation,
             );
       response = await operation.timeout(budget);
     } on TimeoutException {
       throw ApiFailure(ApiFailureCategory.timeout, endpoint);
     }
     check();
+    _riskControl.inspect(uri, endpoint, response, epoch, _clock());
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiFailure(
         response.statusCode == 429
@@ -827,21 +1104,11 @@ final class BiliApiClient {
       endpoint,
       context,
     );
-    final values = <Object?>[
-      if (cursor == null) ...[
-        ..._list(data['top_replies'] ?? const [], endpoint),
-        if (_optionalMap(data['upper'])?['top']
-            case final Map<String, Object?> top)
-          top,
-      ],
-      ..._list(data['replies'] ?? const [], endpoint),
-    ];
-    final items = <ApiVideoComment>[];
-    final seen = <String>{};
-    for (final value in values.take(100)) {
-      final entry = _comment(_map(value, endpoint), endpoint);
-      if (seen.add(entry.id)) items.add(entry);
-    }
+    final items = _commentPageItems(
+      data,
+      endpoint,
+      includePinned: cursor == null,
+    );
     final paging = _map(data['cursor'], endpoint);
     final isEnd = _bool(paging['is_end']);
     if (isEnd == null) {
@@ -858,6 +1125,141 @@ final class BiliApiClient {
       nextCursor: hasMore ? next as String : null,
       totalCount: _count(paging['all_count']),
     );
+  }
+
+  /// Resolves a comment ID to its exact reply page without scanning siblings.
+  Future<
+    ({ApiVideoComment root, ApiPage<ApiVideoComment> page, int pageNumber})
+  >
+  getVideoCommentLocation(
+    String aid,
+    String rootId, {
+    String? replyId,
+    int commentType = 1,
+    ApiRequestContext? context,
+  }) async {
+    _validateCommentId(aid);
+    _validateCommentId(rootId);
+    if (replyId != null) _validateCommentId(replyId);
+    _validateCommentType(commentType);
+    const endpoint = 'comment_location';
+    final focusId = replyId ?? rootId;
+    late final Map<String, Object?> data;
+    try {
+      data = await _json(
+        _api.replace(
+          path: '/x/v2/reply/jump',
+          queryParameters: {
+            'oid': aid,
+            'type': '$commentType',
+            'rpid': focusId,
+          },
+        ),
+        endpoint,
+        context,
+      );
+    } on ApiFailure catch (failure) {
+      if (const {12006, 12022}.contains(failure.businessCode)) {
+        throw ApiFailure(
+          ApiFailureCategory.notFound,
+          endpoint,
+          businessCode: failure.businessCode,
+        );
+      }
+      rethrow;
+    }
+    Map<String, Object?>? rawRoot;
+    for (final value in _list(
+      data['replies'] ?? const [],
+      endpoint,
+    ).take(100)) {
+      final entry = _map(value, endpoint);
+      if (_id(entry['rpid_str'] ?? entry['rpid'], endpoint) == rootId) {
+        rawRoot = entry;
+        break;
+      }
+    }
+    if (rawRoot == null) {
+      throw const ApiFailure(ApiFailureCategory.notFound, endpoint);
+    }
+    if (_id(rawRoot['oid_str'] ?? rawRoot['oid'], endpoint) != aid ||
+        _requiredInt(rawRoot['type'], endpoint) != commentType) {
+      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    final root = _comment(
+      rawRoot,
+      endpoint,
+      upperMid: _userMid(_commentMap(data['upper'])['mid']),
+    );
+    if (root.rootId != null && root.rootId != rootId) {
+      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    var pageNumber = 1;
+    if (focusId != rootId) {
+      final jumpPage = _requiredInt(
+        _map(data['page'], endpoint)['rt_num'],
+        endpoint,
+      );
+      if (jumpPage < 1 || jumpPage > 0x7fffffff) {
+        throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+      }
+      // Web jump's rt_num uses 10 replies per page, independently of the
+      // main list's page.size. Shared reply pagination uses 20 per page.
+      pageNumber = (jumpPage - 1) ~/ 2 + 1;
+    }
+    final page = await getVideoReplies(
+      aid,
+      rootId,
+      page: pageNumber,
+      commentType: commentType,
+      context: context,
+    );
+    if (focusId != rootId &&
+        !page.items.any(
+          (entry) => entry.id == focusId && entry.rootId == rootId,
+        )) {
+      throw const ApiFailure(ApiFailureCategory.notFound, endpoint);
+    }
+    return (root: root, page: page, pageNumber: pageNumber);
+  }
+
+  /// Reads a root even when it is absent from the main comment pages.
+  Future<ApiVideoComment> getVideoCommentRoot(
+    String aid,
+    String rootId, {
+    int commentType = 1,
+    ApiRequestContext? context,
+  }) async {
+    _validateCommentId(aid);
+    _validateCommentId(rootId);
+    _validateCommentType(commentType);
+    const endpoint = 'video_replies';
+    final data = await _json(
+      _api.replace(
+        path: '/x/v2/reply/reply',
+        queryParameters: {
+          'oid': aid,
+          'type': '$commentType',
+          'root': rootId,
+          'pn': '1',
+          'ps': '20',
+        },
+      ),
+      endpoint,
+      context,
+    );
+    if (data['root'] == null) {
+      throw const ApiFailure(ApiFailureCategory.notFound, endpoint);
+    }
+    final root = _comment(
+      _map(data['root'], endpoint),
+      endpoint,
+      upperMid: _userMid(_commentMap(data['upper'])['mid']),
+    );
+    if (root.id != rootId || root.rootId != null && root.rootId != rootId) {
+      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+    }
+    return root;
   }
 
   Future<ApiPage<ApiVideoComment>> getVideoReplies(
@@ -903,19 +1305,11 @@ final class BiliApiClient {
       endpoint,
       context,
     );
-    final values = <Object?>[
-      if (page == 1 &&
-          rootId == null &&
-          _optionalMap(data['upper'])?['top'] is Map)
-        _optionalMap(data['upper'])?['top'],
-      ..._list(data['replies'] ?? const [], endpoint),
-    ];
-    final seen = <String>{};
-    final items = <ApiVideoComment>[];
-    for (final value in values.take(100)) {
-      final comment = _comment(_map(value, endpoint), endpoint);
-      if (seen.add(comment.id)) items.add(comment);
-    }
+    final items = _commentPageItems(
+      data,
+      endpoint,
+      includePinned: page == 1 && rootId == null,
+    );
     final paging = _map(data['page'], endpoint);
     final count = _requiredInt(paging['count'], endpoint);
     final size = _requiredInt(paging['size'], endpoint);
@@ -936,11 +1330,52 @@ final class BiliApiClient {
     );
   }
 
+  List<ApiVideoComment> _commentPageItems(
+    Map<String, Object?> data,
+    String endpoint, {
+    required bool includePinned,
+  }) {
+    final upper = _commentMap(data['upper']);
+    final upperMid = _userMid(upper['mid']);
+    final top = _commentMap(data['top']);
+    final pinned = <Object?>[
+      if (includePinned) ...[
+        ..._list(data['top_replies'] ?? const [], endpoint).take(100),
+        if (upper['top'] is Map<String, Object?>) upper['top'],
+        for (final key in ['admin', 'upper', 'vote'])
+          if (top[key] is Map<String, Object?>) top[key],
+      ],
+    ];
+    // Parse pinned copies first so de-duplication retains their marker.
+    final values = [
+      for (final value in pinned) (value, true),
+      for (final value in _list(
+        data['replies'] ?? const [],
+        endpoint,
+      ).take(100))
+        (value, false),
+    ];
+    final seen = <String>{};
+    final items = <ApiVideoComment>[];
+    for (final (value, isPinned) in values.take(100)) {
+      final comment = _comment(
+        _map(value, endpoint),
+        endpoint,
+        isPinned: isPinned,
+        upperMid: upperMid,
+      );
+      if (seen.add(comment.id)) items.add(comment);
+    }
+    return items;
+  }
+
   ApiVideoComment _comment(
     Map<String, Object?> entry,
     String endpoint, {
     int depth = 0,
     String? submissionMessage,
+    bool isPinned = false,
+    String? upperMid,
   }) {
     final member = _map(entry['member'], endpoint);
     final content = _map(entry['content'], endpoint);
@@ -957,6 +1392,10 @@ final class BiliApiClient {
     )?.trim();
     final card = _commentMap(_commentMap(member['user_sailing'])['cardbg']);
     final fan = _commentMap(card['fan']);
+    final pendant = _commentMap(member['pendant']);
+    final authorMid =
+        _userMid(member['mid']) ?? _userMid(entry['mid_str'] ?? entry['mid']);
+    final upAction = _commentMap(entry['up_action']);
     String? optionalId(Object? value) =>
         value == null || value == 0 || value == '0'
         ? null
@@ -964,7 +1403,13 @@ final class BiliApiClient {
     return ApiVideoComment(
       id: _id(entry['rpid_str'] ?? entry['rpid'], endpoint),
       author: _requiredString(member['uname'], endpoint),
-      authorMid: _userMid(member['mid']),
+      authorMid: authorMid,
+      isPinned:
+          isPinned ||
+          _bool(_commentMap(entry['reply_control'])['is_up_top']) == true,
+      isUpAuthor: upperMid != null && authorMid == upperMid,
+      upLiked: _bool(upAction['like']) ?? false,
+      upReplied: _bool(upAction['reply']) ?? false,
       state: _int(entry['state']),
       invisible: _bool(entry['invisible']) ?? false,
       submissionMessage: submissionMessage,
@@ -982,7 +1427,11 @@ final class BiliApiClient {
           : null,
       medalName: _text(_commentMap(member['fans_detail'])['medal_name']),
       medalLevel: _int(_commentMap(member['fans_detail'])['level']),
-      decorationImageUrl: _commentImage(card['image']),
+      pendantUrl:
+          _commentImage(pendant['image_enhance']) ??
+          _commentImage(pendant['image']),
+      decorationImageUrl:
+          _commentImage(card['image_enhance']) ?? _commentImage(card['image']),
       decorationName: _text(card['name']),
       decorationFanNumber: _text(fan['num_desc']),
       decorationFanColor: _commentColor(fan['color']),
@@ -1013,6 +1462,7 @@ final class BiliApiClient {
                       _map(value, endpoint),
                       endpoint,
                       depth: depth + 1,
+                      upperMid: upperMid,
                     ),
                   ),
             ),
@@ -1245,18 +1695,46 @@ final class BiliApiClient {
     Uint8List bytes,
     String mimeType, {
     ApiRequestContext? context,
+  }) => _uploadDailyPicture(bytes, mimeType, 'comment_picture_upload', context);
+
+  Future<ApiDynamicPicture> uploadDynamicPicture(
+    Uint8List bytes,
+    String mimeType, {
+    bool forPoll = false,
+    ApiRequestContext? context,
+  }) async {
+    final picture = await _uploadDailyPicture(
+      bytes,
+      mimeType,
+      'dynamic_picture_upload',
+      context,
+      biz: forPoll ? 'vote' : 'new_dyn',
+    );
+    return ApiDynamicPicture(
+      picture.url,
+      picture.width,
+      picture.height,
+      picture.sizeKiB,
+    );
+  }
+
+  Future<ApiCommentPicture> _uploadDailyPicture(
+    Uint8List bytes,
+    String mimeType,
+    String endpoint,
+    ApiRequestContext? context, {
+    String biz = 'new_dyn',
   }) async {
     if (bytes.isEmpty ||
         bytes.length > 10 * 1024 * 1024 ||
         !const {'image/jpeg', 'image/png', 'image/gif'}.contains(mimeType)) {
       throw ArgumentError('Invalid comment image');
     }
-    const endpoint = 'comment_picture_upload';
     final data = _map(
       await _submitForm(
         _api.replace(path: '/x/dynamic/feed/draw/upload_bfs'),
         endpoint,
-        {'category': 'daily', 'biz': 'new_dyn'},
+        {'category': 'daily', 'biz': biz},
         context,
         upload: (bytes: bytes, mimeType: mimeType),
       ),
@@ -1268,13 +1746,20 @@ final class BiliApiClient {
     if (url == null ||
         url.scheme != 'https' ||
         url.userInfo.isNotEmpty ||
+        url.port != 443 ||
         url.hasQuery ||
-        !(url.host == 'hdslb.com' || url.host.endsWith('.hdslb.com')) ||
+        url.hasFragment ||
+        !(url.host == 'hdslb.com' ||
+            url.host.endsWith('.hdslb.com') ||
+            url.host.endsWith('.biliimg.com')) ||
         width == null ||
         width <= 0 ||
         height == null ||
-        height <= 0) {
-      throw const ApiFailure(ApiFailureCategory.protocol, endpoint);
+        height <= 0 ||
+        width > 20000 ||
+        height > 20000 ||
+        width * height > 40000000) {
+      throw ApiFailure(ApiFailureCategory.protocol, endpoint);
     }
     return ApiCommentPicture(url, width, height, bytes.length / 1024);
   }
@@ -1357,8 +1842,9 @@ final class BiliApiClient {
     ApiRequestContext? context,
   }) async {
     const endpoint = 'popular_weeks';
-    final data = await _json(
-      _api.replace(path: '/x/web-interface/popular/series/list'),
+    final data = await _wbiJson(
+      '/x/web-interface/popular/series/list',
+      const {'web_location': '333.934'},
       endpoint,
       context,
     );
@@ -1416,8 +1902,9 @@ final class BiliApiClient {
     String endpoint,
     ApiRequestContext? context,
   ) async {
-    final data = await _json(
-      _api.replace(path: path, queryParameters: parameters),
+    final data = await _wbiJson(
+      path,
+      {...parameters, 'web_location': '333.934'},
       endpoint,
       context,
     );
@@ -1455,6 +1942,40 @@ final class BiliApiClient {
       'recommended',
       context,
     );
+    return _recommendedPage(data, page + 1);
+  }
+
+  /// Uses the desktop client's Web profile; [freshIndex] starts at zero.
+  /// Later first-page requests refresh, while [loadMore] selects pagination.
+  Future<ApiPage<ApiVideoSummary>> getDesktopRecommended({
+    required int freshIndex,
+    bool loadMore = false,
+    ApiRequestContext? context,
+  }) async {
+    if (freshIndex < 0) throw ArgumentError.value(freshIndex, 'freshIndex');
+    final data = await _wbiJson(
+      '/x/web-interface/wbi/index/top/feed/rcmd',
+      {
+        'plat': '1',
+        'feed_version': 'V1',
+        'ps': '30',
+        'fresh_idx': '$freshIndex',
+        'fresh_type': freshIndex == 0 ? '0' : (loadMore ? '4' : '3'),
+        'x_num': '3',
+        'y_num': '4',
+        'pc_wx_install': '0',
+        'pc_wx_gm_install': '0',
+      },
+      'recommended',
+      context,
+    );
+    return _recommendedPage(data, freshIndex + 1);
+  }
+
+  ApiPage<ApiVideoSummary> _recommendedPage(
+    Map<String, Object?> data,
+    int nextIndex,
+  ) {
     // Feed cards can also advertise non-video destinations.
     final items = _list(data['item'], 'recommended')
         .map((entry) => _map(entry, 'recommended'))
@@ -1464,7 +1985,7 @@ final class BiliApiClient {
     return ApiPage(
       items,
       hasMore: items.isNotEmpty,
-      nextCursor: items.isEmpty ? null : '${page + 1}',
+      nextCursor: items.isEmpty ? null : '$nextIndex',
     );
   }
 
@@ -1661,15 +2182,13 @@ final class BiliApiClient {
     final season = _map(value, endpoint);
     final entries = <ApiVideoCollectionEntry>[];
     final seen = <String>{};
-    for (final section in _list(
-      season['sections'] ?? const [],
-      endpoint,
-    ).take(50)) {
+    // View returns the complete collection, including videos beyond the 500th.
+    // Keep its order and identities; the HTTP response has a byte limit.
+    for (final section in _list(season['sections'] ?? const [], endpoint)) {
       for (final value in _list(
         _map(section, endpoint)['episodes'] ?? const [],
         endpoint,
-      ).take(500)) {
-        if (entries.length >= 500) break;
+      )) {
         final episode = _map(value, endpoint);
         final arc = _optionalMap(episode['arc']);
         final bvid = _requiredString(episode['bvid'] ?? arc?['bvid'], endpoint);
@@ -2273,7 +2792,19 @@ final class BiliApiClient {
     Uri? origin,
     _ReadAttemptBudget? attemptBudget,
   }) async {
+    context = boundedReadContext(context);
+    _checkWbiContext(
+      context,
+      _sessionProvider?.sessionEpoch,
+      context.deadline!,
+    );
     final base = origin ?? _api;
+    _riskControl.check(
+      base.replace(path: path),
+      endpoint,
+      _sessionProvider?.sessionEpoch,
+      _clock(),
+    );
     var signed = await _signed(parameters, context);
     try {
       return await _json(
@@ -2283,7 +2814,9 @@ final class BiliApiClient {
         attemptBudget: attemptBudget,
       );
     } on ApiFailure catch (failure) {
-      if (failure.businessCode != -403 || attemptBudget?.isExhausted == true) {
+      if (failure.category == ApiFailureCategory.rateLimited ||
+          failure.businessCode != -403 ||
+          attemptBudget?.isExhausted == true) {
         rethrow;
       }
       _wbi = null;
@@ -2332,6 +2865,14 @@ final class BiliApiClient {
     }
     final root = _map(decoded, endpoint);
     if (endpoint == 'subtitle_body') return root;
+    if (hasRiskVoucher(root)) {
+      throw ApiFailure(
+        ApiFailureCategory.rateLimited,
+        endpoint,
+        requiresVerification: true,
+        retryAfter: const Duration(seconds: 30),
+      );
+    }
     final code = _int(root['code']);
     if (code == null) throw ApiFailure(ApiFailureCategory.protocol, endpoint);
     // Guest nav returns -101 while still carrying the public WBI image keys.
@@ -2342,7 +2883,7 @@ final class BiliApiClient {
       final category = switch (code) {
         -101 || -111 || -400 => ApiFailureCategory.authentication,
         -403 || -404 => ApiFailureCategory.permission,
-        -412 || -352 => ApiFailureCategory.rateLimited,
+        -412 || -352 || -509 || -799 => ApiFailureCategory.rateLimited,
         62002 || 62004 => ApiFailureCategory.notFound,
         _ => ApiFailureCategory.unavailable,
       };
@@ -2367,23 +2908,37 @@ final class BiliApiClient {
     if (context?.sessionEpoch != null && context!.sessionEpoch != epoch) {
       throw ApiFailure(ApiFailureCategory.cancelled, endpoint);
     }
-    final spaceDetails =
-        endpoint == 'profile_details' &&
-        uri.host == 'api.bilibili.com' &&
-        uri.path == '/x/space/wbi/acc/info';
+    context = boundedReadContext(context);
+    _riskControl.check(uri, endpoint, epoch, _clock());
+    if (prepareWebRequests &&
+        uri.host.endsWith('.bilibili.com') &&
+        uri.path != '/x/frontend/finger/spi') {
+      await _webDevice.ensure(context);
+    }
+    final spaceDetails = endpoint == 'profile_details';
+    final message = endpoint.startsWith('message_');
+    final popularReferer = switch (endpoint) {
+      'popular_weeks' => 'https://www.bilibili.com/v/popular/weekly',
+      'popular_week' =>
+        'https://www.bilibili.com/v/popular/weekly?num=${uri.queryParameters['number']}',
+      'popular_precious' => 'https://www.bilibili.com/v/popular/history',
+      _ => null,
+    };
     final headers = <String, String>{
       'Accept': endpoint == 'danmaku_segment'
           ? 'application/octet-stream'
           : 'application/json',
-      'User-Agent': spaceDetails
-          ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
-          : endpoint == 'video_storyboard'
-          ? 'Mozilla/5.0'
-          : 'BiliSail/0.1',
+      'User-Agent': webUserAgent,
       'Referer': spaceDetails
           ? 'https://space.bilibili.com/${uri.queryParameters['mid']}/dynamic'
-          : referer,
-      if (spaceDetails) 'Origin': 'https://space.bilibili.com',
+          : message
+          ? 'https://message.bilibili.com/'
+          : popularReferer ?? referer,
+      'Origin': spaceDetails
+          ? 'https://space.bilibili.com'
+          : message
+          ? 'https://message.bilibili.com'
+          : 'https://www.bilibili.com',
     };
     final cookie = cookieJar.headerFor(uri, now: _clock());
     if (cookie != null) headers['Cookie'] = cookie;
@@ -2400,7 +2955,7 @@ final class BiliApiClient {
       readOnly: readOnly,
     );
     if (epoch != null && _sessionProvider?.sessionEpoch != epoch ||
-        context?.cancellation?.isCancelled == true) {
+        context.cancellation?.isCancelled == true) {
       throw ApiFailure(ApiFailureCategory.cancelled, endpoint);
     }
     if (response.statusCode >= 300 && response.statusCode < 400) {
@@ -2583,6 +3138,7 @@ final class BiliApiClient {
       if (remaining <= Duration.zero) {
         throw ApiFailure(ApiFailureCategory.timeout, endpoint);
       }
+      _riskControl.check(uri, endpoint, epoch, _clock());
       attemptBudget?.consume();
       final retryIndex = attemptBudget == null
           ? attempt
@@ -2600,6 +3156,11 @@ final class BiliApiClient {
           context?.cancellation,
           maxBytes: maxBytes,
         );
+        if (context?.cancellation?.isCancelled == true ||
+            (epoch != null && _sessionProvider?.sessionEpoch != epoch)) {
+          throw ApiFailure(ApiFailureCategory.cancelled, endpoint);
+        }
+        _riskControl.inspect(uri, endpoint, response, epoch, _clock());
         if (canRetry(attempt) &&
             const [500, 502, 503, 504].contains(response.statusCode)) {
           await _retryDelay(retryIndex, deadline, context?.cancellation);
@@ -2618,7 +3179,9 @@ final class BiliApiClient {
             failure.category,
             endpoint,
             httpStatus: failure.httpStatus,
+            businessCode: failure.businessCode,
             retryAfter: failure.retryAfter,
+            requiresVerification: failure.requiresVerification,
           );
         }
       }

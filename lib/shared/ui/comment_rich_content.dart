@@ -10,6 +10,9 @@ import '../../features/comments/domain/comment_text.dart';
 import '../../features/comments/domain/comment_time.dart';
 import '../../features/comments/domain/comments_repository.dart';
 import 'comment_text_styles.dart';
+import 'user_decoration_image.dart';
+import 'comment_badge.dart';
+import 'network_avatar.dart';
 
 TextEditingValue insertCommentEmote(TextEditingValue value, String token) {
   final selection = value.selection;
@@ -36,10 +39,13 @@ class CommentRichContent extends StatefulWidget {
     this.onOpenLink,
     this.onSeek,
     this.onOpenUser,
+    this.layoutOnly = false,
   });
   final CommentEntry comment;
   final String prefix;
   final bool compact;
+  // Detached list measurement uses the same text and fixed-size media boxes.
+  final bool layoutOnly;
   final ValueChanged<Uri>? onOpenLink;
   final ValueChanged<Duration>? onSeek;
   final ValueChanged<UserId>? onOpenUser;
@@ -77,14 +83,16 @@ class _CommentRichContentState extends State<CommentRichContent> {
       emoteTokens: widget.comment.emotes.keys,
       mentionedUsers: widget.comment.mentionedUsers,
     );
-    for (var i = 0; i < _parts.length; i++) {
-      final part = _parts[i];
-      if (part.kind == CommentTextKind.link ||
-          part.kind == CommentTextKind.timestamp ||
-          part.kind == CommentTextKind.mention) {
-        _recognizers[i] = TapGestureRecognizer();
-      }
+  }
+
+  TapGestureRecognizer? _recognizer(int index, VoidCallback? onTap) {
+    // Dynamic comments have timecodes without a playback target. Allocate
+    // gesture state only for available actions, and release removed actions.
+    if (onTap == null) {
+      _recognizers.remove(index)?.dispose();
+      return null;
     }
+    return (_recognizers[index] ??= TapGestureRecognizer())..onTap = onTap;
   }
 
   void _disposeRecognizers() {
@@ -108,7 +116,6 @@ class _CommentRichContentState extends State<CommentRichContent> {
     for (var i = 0; i < _parts.length; i++) {
       final part = _parts[i];
       if (part.kind != CommentTextKind.emote) {
-        final recognizer = _recognizers[i];
         final url = part.url, position = part.position;
         final open = widget.onOpenLink, seek = widget.onSeek;
         final userId = part.userId, openUser = widget.onOpenUser;
@@ -119,16 +126,17 @@ class _CommentRichContentState extends State<CommentRichContent> {
             : userId != null && openUser != null
             ? () => openUser(userId)
             : null;
-        recognizer?.onTap = onTap;
+        final recognizer = _recognizer(i, widget.layoutOnly ? null : onTap);
         spans.add(
           TextSpan(
             text: part.text,
             style:
-                recognizer == null ||
-                    (part.kind == CommentTextKind.mention && onTap == null)
-                ? null
-                : TextStyle(color: styles.linkColor),
-            recognizer: onTap == null ? null : recognizer,
+                part.kind == CommentTextKind.link ||
+                    part.kind == CommentTextKind.timestamp ||
+                    (part.kind == CommentTextKind.mention && onTap != null)
+                ? TextStyle(color: styles.linkColor)
+                : null,
+            recognizer: recognizer,
             mouseCursor: onTap == null ? null : SystemMouseCursors.click,
           ),
         );
@@ -140,14 +148,20 @@ class _CommentRichContentState extends State<CommentRichContent> {
           alignment: PlaceholderAlignment.middle,
           child: Semantics(
             label: selected,
-            child: Image.network(
-              comment.emotes[selected].toString(),
-              cacheWidth: 84,
-              cacheHeight: 84,
-              width: 28,
-              height: 28,
-              errorBuilder: (_, error, stack) => Text(selected),
-            ),
+            child: widget.layoutOnly
+                ? const SizedBox(width: 28, height: 28)
+                : SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: AppNetworkImage(
+                      url: comment.emotes[selected].toString(),
+                      cacheWidth: 84,
+                      cacheHeight: 84,
+                      width: 28,
+                      height: 28,
+                      errorBuilder: (_, error, stack) => Text(selected),
+                    ),
+                  ),
           ),
         ),
       );
@@ -167,8 +181,6 @@ class _CommentRichContentState extends State<CommentRichContent> {
                 BiliLevelBadge(level: comment.level!),
               if (comment.verifyType == 0 || comment.verifyType == 1)
                 BiliVerifyBadge(type: comment.verifyType!),
-              if (comment.vipLabel != null)
-                Text(comment.vipLabel!, style: styles.badge),
               if (comment.medalName != null)
                 Text(
                   '${comment.medalName} ${comment.medalLevel ?? ''}',
@@ -176,16 +188,22 @@ class _CommentRichContentState extends State<CommentRichContent> {
                 ),
             ],
           ),
-        SelectionArea(
-          // 回复预览外层的 InkWell 会让正文继承按钮光标。
-          child: DefaultSelectionStyle.merge(
-            mouseCursor: SystemMouseCursors.text,
-            child: Text.rich(
-              TextSpan(children: spans),
-              style: widget.compact ? styles.previewBody : styles.body,
+        if (widget.layoutOnly)
+          Text.rich(
+            TextSpan(children: spans),
+            style: widget.compact ? styles.previewBody : styles.body,
+          )
+        else
+          SelectionArea(
+            // 回复预览外层的 InkWell 会让正文继承按钮光标。
+            child: DefaultSelectionStyle.merge(
+              mouseCursor: SystemMouseCursors.text,
+              child: Text.rich(
+                TextSpan(children: spans),
+                style: widget.compact ? styles.previewBody : styles.body,
+              ),
             ),
           ),
-        ),
         if (comment.pictures.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -202,26 +220,53 @@ class _CommentRichContentState extends State<CommentRichContent> {
                           showImageViewer(context, comment.pictures, index),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(5),
-                        child: AppNetworkImage(
-                          url: publicImageThumbnail(
-                            comment.pictures[index],
-                            width: 264,
-                            // Resizing decoded pixels alone still downloads the
-                            // full GIF, which can exceed the byte-cache limit.
-                            resizeAnimated: true,
-                          ).toString(),
-                          cacheWidth: 264,
-                          cacheHeight: 264,
-                          width: 88,
-                          height: 88,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, error, stack) => const SizedBox(
-                            width: 88,
-                            height: 88,
-                            child: Center(child: Text('图片加载失败')),
-                          ),
-                        ),
+                        child: widget.layoutOnly
+                            ? const SizedBox(width: 88, height: 88)
+                            : AppNetworkImage(
+                                url: publicImageThumbnail(
+                                  comment.pictures[index],
+                                  width: 264,
+                                  // Resizing decoded pixels alone still downloads the
+                                  // full GIF, which can exceed the byte-cache limit.
+                                  resizeAnimated: true,
+                                ).toString(),
+                                cacheWidth: 264,
+                                cacheHeight: 264,
+                                width: 88,
+                                height: 88,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, error, stack) =>
+                                    const SizedBox(
+                                      width: 88,
+                                      height: 88,
+                                      child: Center(child: Text('图片加载失败')),
+                                    ),
+                              ),
                       ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        if (comment.upLiked || comment.upReplied)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 4,
+              children: [
+                if (comment.upLiked)
+                  Text(
+                    'UP 主觉得很赞',
+                    style: styles.badge.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                if (comment.upReplied)
+                  Text(
+                    'UP 主回复过',
+                    style: styles.badge.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
               ],
@@ -237,9 +282,14 @@ class CommentAuthorHeader extends StatelessWidget {
     super.key,
     required this.comment,
     this.onOpenUser,
+    this.layoutOnly = false,
   });
   final CommentEntry comment;
   final ValueChanged<UserId>? onOpenUser;
+  final bool layoutOnly;
+
+  // Body starts after the 30px avatar and 12px gap.
+  static const contentIndent = 42.0;
 
   @override
   Widget build(BuildContext context) {
@@ -249,6 +299,7 @@ class CommentAuthorHeader extends StatelessWidget {
     final location = c.ipLocation?.trim();
     final hasLocation = location != null && location.isNotEmpty;
     final identity = Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
@@ -269,19 +320,12 @@ class CommentAuthorHeader extends StatelessWidget {
                 ),
               ),
             ),
+            if (c.isUpAuthor) const CommentBadge(label: 'UP'),
+            if (c.isPinned) const CommentBadge(label: '置顶', outlined: true),
             if (c.level != null && c.level! >= 0 && c.level! <= 6)
               BiliLevelBadge(level: c.level!),
             if (c.verifyType == 0 || c.verifyType == 1)
               BiliVerifyBadge(type: c.verifyType!),
-            if (c.vipLabel != null)
-              Text(
-                c.vipLabel!,
-                style: styles.badge.copyWith(
-                  color: c.nicknameColor != null
-                      ? Color(0xFF000000 | c.nicknameColor!)
-                      : theme.colorScheme.primary,
-                ),
-              ),
             if (c.medalName != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -310,25 +354,58 @@ class CommentAuthorHeader extends StatelessWidget {
           ),
       ],
     );
-    if (c.decorationImageUrl == null) return identity;
-    final decoration = CommentAuthorDecoration(comment: c);
+    final author = Row(
+      children: [
+        InkWell(
+          onTap: c.authorId?.isValid == true && onOpenUser != null
+              ? () => onOpenUser!(c.authorId!)
+              : null,
+          child: layoutOnly
+              ? const SizedBox.square(dimension: 30)
+              : NetworkAvatar(
+                  url: c.avatarUrl,
+                  pendantUrl: c.pendantUrl,
+                  name: c.author,
+                  radius: 15,
+                ),
+        ),
+        const SizedBox(width: contentIndent - 30),
+        Expanded(child: identity),
+      ],
+    );
+    if (c.decorationImageUrl == null) return author;
+    final decoration = layoutOnly
+        ? const SizedBox(width: 112, height: 52)
+        : CommentAuthorDecoration(comment: c);
     return LayoutBuilder(
-      builder: (context, constraints) => constraints.maxWidth >= 220
-          ? Row(
-              children: [
-                Expanded(child: identity),
-                const SizedBox(width: 8),
-                decoration,
-              ],
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                identity,
-                const SizedBox(height: 2),
-                Align(alignment: Alignment.centerRight, child: decoration),
-              ],
+      builder: (context, constraints) {
+        final contentWidth = (constraints.maxWidth - contentIndent).clamp(
+          0.0,
+          double.infinity,
+        );
+        final spacing = contentWidth.clamp(0.0, 8.0);
+        final decorationWidth = ((contentWidth - spacing) * .4).clamp(
+          0.0,
+          112.0,
+        );
+        return Row(
+          children: [
+            // Keep the avatar, name and metadata on one center with the card.
+            Expanded(child: author),
+            SizedBox(width: spacing),
+            // Keep the art beside the avatar and leave most of the row for
+            // readable author metadata, scaling the art and serial together.
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: decorationWidth),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: decoration,
+              ),
             ),
+          ],
+        );
+      },
     );
   }
 }
@@ -353,48 +430,42 @@ class CommentAuthorDecoration extends StatelessWidget {
       excludeSemantics: true,
       child: SizedBox(
         width: 112,
-        height: 40,
-        child: ClipRect(
-          child: Stack(
-            children: [
-              // 装扮画布右侧带留白；平移画布并裁剪，让可见图案靠右。
+        height: 52,
+        child: Stack(
+          // Wide canvases include transparent left margins. Keep their natural
+          // width instead of shrinking the character to fit the reserved slot.
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: UserDecorationImage(url: url, height: 52),
+            ),
+            if (number != null && number.isNotEmpty)
               Positioned(
-                left: 40,
-                right: -40,
+                right: 0,
                 top: 0,
                 bottom: 0,
-                child: AppNetworkImage(
-                  url: publicImageThumbnail(
-                    url,
-                    width: 336,
-                    height: 120,
-                  ).toString(),
-                  cacheWidth: 336,
-                  cacheHeight: 120,
-                  fit: BoxFit.cover,
+                width: 92,
+                child: Align(
                   alignment: Alignment.centerRight,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                ),
-              ),
-              if (number != null && number.isNotEmpty)
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 60,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'NO.\n$number',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textScaler: TextScaler.noScaling,
-                      style: TextStyle(fontSize: 10, height: 1.1, color: color),
+                  child: Text(
+                    'NO.\n$number',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textScaler: TextScaler.noScaling,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.1,
+                      fontWeight: FontWeight.bold,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: color,
                     ),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );

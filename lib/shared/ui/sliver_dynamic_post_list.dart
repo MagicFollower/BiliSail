@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../features/dynamic/application/dynamic_content_state.dart';
 
 import '../../domain/dynamic_post.dart';
 import '../../domain/user.dart';
 import '../../domain/video.dart';
 import 'dynamic_post_card.dart';
 import 'dynamic_post_interactions.dart';
+import 'widget_measurement.dart';
 
 /// Natural-height, lazy dynamic cards with a known extent for every loaded post.
 /// SliverList's visible-row average is unsuitable for heterogeneous dynamic
 /// cards: it changes the scrollbar range whenever a different row is visible.
-class SliverDynamicPostList extends StatefulWidget {
+class SliverDynamicPostList extends ConsumerWidget {
   const SliverDynamicPostList({
     super.key,
     required this.posts,
@@ -19,6 +23,7 @@ class SliverDynamicPostList extends StatefulWidget {
     this.onOpenVideo,
     this.onOpenLink,
     this.onLogin,
+    this.pinnedFirst = false,
   });
 
   final List<DynamicPost> posts;
@@ -27,12 +32,63 @@ class SliverDynamicPostList extends StatefulWidget {
   final ValueChanged<VideoSummary>? onOpenVideo;
   final ValueChanged<Uri>? onOpenLink;
   final VoidCallback? onLogin;
+  final bool pinnedFirst;
 
   @override
-  State<SliverDynamicPostList> createState() => _SliverDynamicPostListState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final content = ref.watch(dynamicContentProvider);
+    final pinned = {
+      for (final p in content.posts.values)
+        if (p.pinned && p.authorId != null) p.authorId!.value: p.id,
+    };
+    final visible = [
+      for (final post in posts)
+        if (!content.hidden(post)) content.posts[post.id] ?? post,
+    ];
+    for (var i = 0; i < visible.length; i++) {
+      final p = visible[i], chosen = pinned[p.authorId?.value];
+      if (p.pinned && chosen != null && chosen != p.id) {
+        visible[i] = p.withManagement(pinned: false);
+      }
+    }
+    final ordered = pinnedFirst
+        ? [
+            ...visible.where((p) => p.pinned),
+            ...visible.where((p) => !p.pinned),
+          ]
+        : visible;
+    return _RetainedDynamicPostList(
+      posts: ordered,
+      spacing: spacing,
+      onOpenUser: onOpenUser,
+      onOpenVideo: onOpenVideo,
+      onOpenLink: onOpenLink,
+      onLogin: onLogin,
+    );
+  }
 }
 
-class _SliverDynamicPostListState extends State<SliverDynamicPostList> {
+class _RetainedDynamicPostList extends StatefulWidget {
+  const _RetainedDynamicPostList({
+    required this.posts,
+    required this.spacing,
+    this.onOpenUser,
+    this.onOpenVideo,
+    this.onOpenLink,
+    this.onLogin,
+  });
+  final List<DynamicPost> posts;
+  final double spacing;
+  final ValueChanged<UserId>? onOpenUser;
+  final ValueChanged<VideoSummary>? onOpenVideo;
+  final ValueChanged<Uri>? onOpenLink;
+  final VoidCallback? onLogin;
+  @override
+  State<_RetainedDynamicPostList> createState() =>
+      _SliverDynamicPostListState();
+}
+
+class _SliverDynamicPostListState extends State<_RetainedDynamicPostList> {
   final _extents = <String, (DynamicPost, double)>{};
   final _pendingSizes = <String, (DynamicPost, double)>{};
   final _expansionState = DynamicPostExpansionState();
@@ -86,7 +142,7 @@ class _SliverDynamicPostListState extends State<SliverDynamicPostList> {
   }
 
   @override
-  void didUpdateWidget(SliverDynamicPostList oldWidget) {
+  void didUpdateWidget(_RetainedDynamicPostList oldWidget) {
     super.didUpdateWidget(oldWidget);
     _sliver = null;
     if (oldWidget.spacing != widget.spacing ||
@@ -158,7 +214,7 @@ class _SliverDynamicPostListState extends State<SliverDynamicPostList> {
         (post) => !identical(_extents[post.id]?.$1, post),
       );
       if (missing.isNotEmpty) {
-        final measurement = _CardMeasurement(
+        final measurement = WidgetMeasurement(
           context,
           constraints.crossAxisExtent,
         );
@@ -252,95 +308,6 @@ class _KnownExtentDelegate extends SliverChildBuilderDelegate {
     double leadingScrollOffset,
     double trailingScrollOffset,
   ) => extent;
-}
-
-/// Layout one inert card at a time, then dispose its entire detached tree.
-/// Pagination measures only new/changed posts; scrolling reuses cached extents.
-/// Images are fixed-size placeholders, and no interactive providers are mounted.
-class _CardMeasurement {
-  _CardMeasurement(this.context, this.width) {
-    final ratio = MediaQuery.devicePixelRatioOf(context);
-    _view = RenderView(
-      view: View.of(context),
-      configuration: ViewConfiguration(
-        logicalConstraints: BoxConstraints.tight(Size(width, 1)),
-        physicalConstraints: BoxConstraints.tight(Size(width, 1) * ratio),
-        devicePixelRatio: ratio,
-      ),
-      child: _root,
-    );
-    _pipeline.rootNode = _view;
-    _view.prepareInitialFrame();
-  }
-
-  final BuildContext context;
-  final double width;
-  // A secondary BuildOwner must not register a second global key handler.
-  final _owner = BuildOwner(focusManager: FocusManager());
-  final _pipeline = PipelineOwner();
-  late final RenderView _view;
-  double? _height;
-  final _root = RenderPositionedBox(
-    alignment: Alignment.topLeft,
-    heightFactor: 1,
-  );
-  RenderObjectToWidgetElement<RenderBox>? _element;
-
-  double height(Widget card) {
-    _height = null;
-    final child = InheritedTheme.captureAll(
-      context,
-      MediaQuery(
-        data: MediaQuery.of(context),
-        child: Directionality(
-          textDirection: Directionality.of(context),
-          child: Localizations.override(
-            context: context,
-            child: DefaultTextStyle(
-              style: DefaultTextStyle.of(context).style,
-              child: TooltipVisibility(
-                visible: false,
-                child: TickerMode(
-                  enabled: false,
-                  child: UnconstrainedBox(
-                    constrainedAxis: Axis.horizontal,
-                    child: _ObserveHeight(
-                      onHeight: (height) => _height = height,
-                      child: card,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    _element = RenderObjectToWidgetAdapter<RenderBox>(
-      container: _root,
-      child: child,
-    ).attachToRenderTree(_owner, _element);
-    _owner.buildScope(_element!);
-    _pipeline.flushLayout();
-    _owner.finalizeTree();
-    return _height ?? (throw StateError('Dynamic card did not lay out'));
-  }
-
-  void dispose() {
-    final element = _element;
-    if (element != null) {
-      RenderObjectToWidgetAdapter<RenderBox>(container: _root)
-          .attachToRenderTree(_owner, element);
-      _owner.buildScope(element);
-      _owner.finalizeTree();
-    }
-    _pipeline.rootNode = null;
-    _view.child = null;
-    _root.dispose();
-    _view.dispose();
-    _pipeline.dispose();
-    _owner.focusManager.dispose();
-  }
 }
 
 class _ObserveHeight extends SingleChildRenderObjectWidget {

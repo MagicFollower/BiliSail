@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../shared/ui/app_dialog.dart';
+import '../../../shared/ui/content_section_tabs.dart';
 import '../../../core/platform/external_links.dart';
 import '../../../core/network/api_requests.dart';
 import '../../../domain/app_failure.dart';
@@ -71,6 +72,7 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   Set<String>? _bodyWatchLaterPending;
   bool? _bodyHasLogin;
   bool? _bodyCanUnsubscribe;
+  bool? _bodyCanFavorite;
   Widget? _bodySliver;
   FavoriteQueueRequest? _favoriteRequest;
   UserId? _dynamicAuthor;
@@ -83,6 +85,7 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
     _bodyWatchLaterPending = null;
     _bodyHasLogin = null;
     _bodyCanUnsubscribe = null;
+    _bodyCanFavorite = null;
     _bodySliver = null;
   }
 
@@ -234,32 +237,29 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
             controller: scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
+              if (liveBrowse && areas != null)
+                SliverToBoxAdapter(
+                  child: areas.items.when(
+                    loading: () => const LinearProgressIndicator(),
+                    error: (error, _) => StateView.error(
+                      message: _message(error),
+                      onAction: ref
+                          .read(homeControllerProvider(areasQuery).notifier)
+                          .refresh,
+                    ),
+                    data: (items) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _areaRow(items, parent: true),
+                        if (_liveParent != null)
+                          _areaRow(_liveParent!.children, parent: false),
+                      ],
+                    ),
+                  ),
+                ),
               SliverCardGridPadding(
                 sliver: SliverMainAxisGroup(
                   slivers: [
-                    if (liveBrowse && areas != null)
-                      SliverToBoxAdapter(
-                        child: areas.items.when(
-                          loading: () => const LinearProgressIndicator(),
-                          error: (error, _) => StateView.error(
-                            message: _message(error),
-                            onAction: ref
-                                .read(
-                                  homeControllerProvider(areasQuery).notifier,
-                                )
-                                .refresh,
-                          ),
-                          data: (items) => Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _areaRow(items, parent: true),
-                              if (_liveParent != null)
-                                _areaRow(_liveParent!.children, parent: false),
-                              const SizedBox(height: 12),
-                            ],
-                          ),
-                        ),
-                      ),
                     if ((_folder != null || favoriteRequest != null) &&
                         !liveBrowse)
                       SliverToBoxAdapter(
@@ -373,6 +373,8 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   }) {
     final canUnsubscribe =
         ref.read(homeRepositoryProvider) is HomeSubscriptionRepository;
+    final canFavorite =
+        ref.read(homeRepositoryProvider) is HomeFavoriteRepository;
     final cached = _bodySliver;
     if (cached != null &&
         identical(items, _bodyItems) &&
@@ -380,7 +382,8 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
         setEquals(feed.unsubscribing, _bodyUnsubscribing) &&
         setEquals(watchLaterActions?.pending, _bodyWatchLaterPending) &&
         (widget.onLogin != null) == _bodyHasLogin &&
-        canUnsubscribe == _bodyCanUnsubscribe) {
+        canUnsubscribe == _bodyCanUnsubscribe &&
+        canFavorite == _bodyCanFavorite) {
       return cached;
     }
     // Pagination status only changes the footer. Preserve the child delegate
@@ -388,6 +391,7 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
     _bodyItems = items;
     _bodyQuery = query;
     _bodyUnsubscribing = feed.unsubscribing;
+    _bodyCanFavorite = canFavorite;
     _bodyWatchLaterPending = watchLaterActions?.pending;
     _bodyHasLogin = widget.onLogin != null;
     _bodyCanUnsubscribe = canUnsubscribe;
@@ -424,7 +428,9 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
         if (widget.channel == HomeChannel.favorites ||
             widget.channel == HomeChannel.watchLater) {
           if (item.kind == HomeEntryKind.video &&
-              (item.bvid != null || widget.channel == HomeChannel.watchLater)) {
+              (item.bvid != null ||
+                  item.aid != null ||
+                  widget.channel == HomeChannel.watchLater)) {
             return HomeVideoCard(
               key: key,
               entry: item,
@@ -435,6 +441,17 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
                       busy:
                           watchLaterActions?.pending.contains(item.id) == true,
                       onSelected: (_) => _removeWatchLater(item, query.scope),
+                    )
+                  : canFavorite && controller.canRemoveFavorite(item)
+                  ? VideoCardMenu(
+                      actions: const [VideoCardMenuAction.removeFavorite],
+                      busy: feed.unsubscribing.contains((item.kind, item.id)),
+                      onSelected: (_) => _removeFavoriteEntry(
+                        controller,
+                        item,
+                        query,
+                        deleteFolder: false,
+                      ),
                     )
                   : null,
               onOpenUser: (id) => context.go('/user/${id.value}'),
@@ -454,6 +471,18 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
                   widget.section == '我创建的收藏夹' &&
                       item.kind == HomeEntryKind.folder
                   ? () => _editFolder(item, query.scope)
+                  : null,
+              onDelete:
+                  widget.section == '我创建的收藏夹' &&
+                      query.folderId == null &&
+                      item.kind == HomeEntryKind.folder &&
+                      canFavorite
+                  ? () => _removeFavoriteEntry(
+                      controller,
+                      item,
+                      query,
+                      deleteFolder: true,
+                    )
                   : null,
               unsubscribing: feed.unsubscribing.contains((item.kind, item.id)),
               onUnsubscribe:
@@ -498,54 +527,44 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   }
 
   Widget _areaRow(List<HomeEntry> items, {required bool parent}) {
-    final choices = <Widget>[
-      ChoiceChip(
-        label: const Text('全部'),
-        selected: parent ? _liveParent == null : _folder?.id == _liveParent?.id,
-        onSelected: (_) => setState(() {
-          if (parent) {
-            _liveParent = null;
-            _folder = null;
-          } else {
-            _folder = _liveParent;
-          }
-        }),
-      ),
-      for (final item in items)
-        ChoiceChip(
-          label: Text(item.title),
-          selected: parent
-              ? _liveParent?.id == item.id
-              : _folder?.id == item.id,
-          onSelected: (_) => setState(() {
-            if (parent) _liveParent = item;
-            _folder = item;
-          }),
-        ),
-    ];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: _expandedAreas
-                ? Wrap(spacing: 8, runSpacing: 8, children: choices)
-                : SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(spacing: 8, children: choices),
-                  ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: ContentSectionTabs<String>(
+            entries: [
+              ('', '全部'),
+              for (final item in items) (item.id, item.title),
+            ],
+            value: parent
+                ? _liveParent?.id ?? ''
+                : _folder?.id == _liveParent?.id
+                ? ''
+                : _folder?.id,
+            wrap: _expandedAreas,
+            onSelected: (id) {
+              final item = id.isEmpty
+                  ? null
+                  : items.firstWhere((item) => item.id == id);
+              setState(() {
+                if (parent) _liveParent = item;
+                _folder = item ?? _liveParent;
+              });
+            },
           ),
-          if (parent)
-            IconButton(
+        ),
+        if (parent)
+          SizedBox.square(
+            dimension: 44,
+            child: IconButton(
               tooltip: _expandedAreas ? '收起分区' : '展开分区',
               onPressed: () => setState(() => _expandedAreas = !_expandedAreas),
               icon: Icon(
                 _expandedAreas ? Icons.expand_less : Icons.expand_more,
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -646,6 +665,94 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
                 error.kind != AppFailureKind.timeout
             ? error.message
             : '取消订阅结果未确认，请刷新列表查看',
+      );
+    }
+  }
+
+  Future<void> _removeFavoriteEntry(
+    HomeController controller,
+    HomeEntry entry,
+    HomeQuery query, {
+    required bool deleteFolder,
+  }) async {
+    final epoch = ref.read(sessionEpochProvider)();
+    bool current() =>
+        mounted &&
+        widget.active &&
+        widget.isSignedIn &&
+        WorkspaceActivity.isActive(context) &&
+        _bodyQuery == query &&
+        ref.read(homeRepositoryProvider).accountScope == query.scope &&
+        ref.read(sessionEpochProvider)() == epoch;
+    if (!current()) return;
+    final label = deleteFolder ? '删除收藏夹' : '取消收藏';
+    final confirmed = await showAppDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        scrollable: true,
+        title: Text(label),
+        content: Text(
+          deleteFolder
+              ? '确定删除收藏夹“${entry.title}”吗？夹内的收藏记录也会一并删除，此操作不可恢复。'
+              : '确定将“${entry.title}”从当前收藏夹中移除吗？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(deleteFolder ? '确认删除' : '确认取消'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || !current()) return;
+    try {
+      final removed = deleteFolder
+          ? await controller.deleteFavoriteFolder(entry)
+          : await controller.removeFavorite(entry);
+      if (!mounted || !current() || !removed) return;
+      showAppNotice(context, deleteFolder ? '收藏夹已删除' : '已取消收藏');
+      if (deleteFolder) {
+        final children = _visitedQueries
+            .where((q) => q.scope == query.scope && q.folderId == entry.id)
+            .toList();
+        for (final child in children) {
+          _visitedQueries.remove(child);
+          ref.invalidate(homeControllerProvider(child));
+        }
+      } else {
+        if (_favoriteRequest case final request?) {
+          ref.invalidate(favoritePlaybackQueueProvider(request));
+        }
+        if (query.folderId != null) {
+          await ref
+              .read(
+                homeControllerProvider((
+                  channel: HomeChannel.favorites,
+                  section: '我创建的收藏夹',
+                  scope: query.scope,
+                  folderId: null,
+                )).notifier,
+              )
+              .refresh();
+        }
+      }
+    } catch (error) {
+      if (!mounted ||
+          !current() ||
+          error is AppFailure && error.kind == AppFailureKind.cancelled) {
+        return;
+      }
+      showAppNotice(
+        context,
+        error is UnknownWriteOutcome
+            ? '$label结果未确认，请刷新列表查看'
+            : error is AppFailure
+            ? error.message
+            : '$label失败，请重试',
       );
     }
   }
@@ -757,12 +864,40 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   }
 
   Future<void> _openDynamicLink(Uri uri) async {
+    final query = dynamicSearchQuery(uri);
+    if (query != null) {
+      context.go(
+        Uri(path: '/search', queryParameters: {'q': query}).toString(),
+      );
+      return;
+    }
+    final topic = dynamicTopicId(uri);
+    if (topic != null) {
+      context.go('/topic/$topic');
+      return;
+    }
+    final video = dynamicVideo(uri);
+    if (video != null) {
+      context.go('/video/${video.value}');
+      return;
+    }
+    final pgc = dynamicPgcRoute(uri);
+    if (pgc != null) {
+      context.go(pgc);
+      return;
+    }
     final room = dynamicLiveRoom(uri);
     if (room != null) {
       context.go('/live/${room.value}');
       return;
     }
-    await _openLink(uri);
+    var opened = false;
+    try {
+      opened = await ref.read(webLinkOpenerProvider)(uri);
+    } on PlatformException {
+      opened = false;
+    }
+    if (mounted && !opened) showAppNotice(context, '无法打开链接，请稍后重试');
   }
 
   Future<void> _openLink(Uri uri) async {
@@ -783,8 +918,8 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
   }) async {
     final provider = favoritePlaybackQueueProvider(request);
     if (ref.read(provider).isLoading) return;
-    final ({int page, String? cursor})? origin = initial == null
-        ? (page: 1, cursor: null)
+    final origin = initial == null
+        ? (page: 1, cursor: null, reconcile: false)
         : ref
               .read(homeControllerProvider(request.query).notifier)
               .queuePageFor(initial);
@@ -794,7 +929,12 @@ final class _HomeContentState extends ConsumerState<HomeContent> {
     }
     final queue = await ref
         .read(provider.notifier)
-        .capture(page: origin.page, cursor: origin.cursor, initial: initial);
+        .capture(
+          page: origin.page,
+          cursor: origin.cursor,
+          initial: initial,
+          reconcile: origin.reconcile,
+        );
     if (!mounted ||
         !widget.active ||
         !WorkspaceActivity.isActive(context) ||

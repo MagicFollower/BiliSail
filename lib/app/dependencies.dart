@@ -12,6 +12,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/network/api_requests.dart';
+import '../core/network/web_device_store.dart';
 import '../domain/media_cdn.dart';
 import '../domain/audio_quality.dart';
 import '../core/logging/playback_diagnostic_log.dart';
@@ -26,6 +27,8 @@ import '../core/platform/system_media_controls.dart';
 import '../core/platform/detached_playback_window.dart';
 import '../core/platform/file_access_service.dart';
 import '../features/comments/data/comment_image_picker.dart';
+import '../features/dynamic/application/dynamic_topic_controller.dart';
+import '../features/dynamic/data/api_dynamic_topic_repository.dart';
 import '../features/downloads/application/download_controller.dart';
 import '../features/downloads/data/api_download_source_repository.dart';
 import '../features/downloads/data/sqlite_download_repository.dart';
@@ -82,6 +85,9 @@ import '../features/comments/application/comment_link_resolver.dart';
 import '../features/comments/data/public_comment_video_link_repository.dart';
 import '../features/dynamic/application/dynamic_actions_controller.dart';
 import '../features/dynamic/data/api_dynamic_repository.dart';
+import '../features/dynamic/application/dynamic_composer_controller.dart';
+import '../features/dynamic/data/api_dynamic_composer_repository.dart';
+import '../core/platform/local_image_picker.dart';
 import '../features/playback/data/api_sponsor_repository.dart';
 import '../features/video/data/api_video_repository.dart';
 import '../features/video/application/video_extras_controller.dart';
@@ -99,6 +105,8 @@ import '../features/playback/data/api_video_preview_repository.dart';
 import '../features/playback/data/api_playback_history_repository.dart';
 import '../features/playback/data/api_content_playback_repository.dart';
 import '../features/pgc/application/pgc_controller.dart';
+import '../features/pgc/application/pgc_follow_controller.dart';
+import '../features/pgc/data/api_pgc_follow_repository.dart';
 import '../features/pgc/data/api_pgc_repository.dart';
 import '../features/pgc/data/local_pgc_resume_repository.dart';
 import '../features/pgc/application/pgc_danmaku_controller.dart';
@@ -107,6 +115,7 @@ import '../features/live/application/live_danmaku_controller.dart';
 import '../features/live/data/api_live_danmaku_repository.dart';
 import '../features/live/application/live_controller.dart';
 import '../features/live/data/api_live_repository.dart';
+import '../features/live/application/live_card_preview_controller.dart';
 import '../features/playback/data/local_progress_store.dart';
 import '../features/settings/application/settings_controller.dart';
 import '../features/settings/application/cdn_speed_test_controller.dart';
@@ -250,7 +259,15 @@ class AppDependencies {
         },
       ),
     );
-    final api = BiliApiClient(sessionProvider: requests);
+    final webDevice = WebDeviceStore(
+      SystemCredentialStore(keyPrefix: 'bilisail.web_device.v1'),
+    );
+    final api = BiliApiClient(
+      sessionProvider: requests,
+      prepareWebRequests: true,
+      loadWebDevice: webDevice.load,
+      saveWebDevice: webDevice.save,
+    );
     late final SessionRepository session;
     late final AppDependencies dependencies;
     final library = SqliteLibraryRepository(
@@ -299,18 +316,11 @@ class AppDependencies {
             const FileAccessService().trustedDownloadDocumentsDirectory,
       ),
     );
-    PlayerEngine createPlayerEngine() => ConfigurablePlayerEngine(
-      createEngine: () async {
-        final saved = await settings.load();
-        return switch (saved.playbackBackend) {
-          PlaybackBackendPreference.mediaKit => MediaKitEngine(
-            onDiagnostic: playbackLog?.record,
-          ),
-          PlaybackBackendPreference.fvp => FvpEngine(
-            onDiagnostic: (event) => playbackLog?.record(event, backend: 'fvp'),
-          ),
-        };
-      },
+    PlayerEngine createPlayerEngine() => ConfigurablePlayerEngine.select(
+      selectEngine: () async => PlayerEngineSelection(
+        PlaybackBackendPreference.mediaKit,
+        () async => MediaKitEngine(onDiagnostic: playbackLog?.record),
+      ),
     );
     final cardPreviews = VideoCardPreviewPlayback(
       createEngine: createPlayerEngine,
@@ -401,6 +411,11 @@ class AppDependencies {
       },
     );
     session = SessionRepository(
+      loginClientFactory: () => BiliApiClient(
+        prepareWebRequests: true,
+        loadWebDevice: webDevice.load,
+        saveWebDevice: webDevice.save,
+      ),
       loadAppDevice: () => dependencies.appRecommendationIdentity.deviceId(),
       api: api,
       requests: requests,
@@ -538,6 +553,13 @@ class AppDependencies {
             accountScope: () => session.accountScope,
           ),
         ),
+        pgcFollowRepositoryProvider.overrideWithValue(
+          ApiPgcFollowRepository(
+            PgcClient(api),
+            requests,
+            accountScope: () => session.accountScope,
+          ),
+        ),
         pgcResumeRepositoryProvider.overrideWithValue(
           LocalPgcResumeRepository(
             resumeEnabled: () async => (await settings.load()).resumePlayback,
@@ -552,6 +574,7 @@ class AppDependencies {
           ),
         ),
         liveRepositoryProvider.overrideWithValue(live),
+        livePreviewRepositoryProvider.overrideWithValue(live),
         liveViewerRepositoryProvider.overrideWithValue(live),
         liveChatRepositoryProvider.overrideWithValue(live),
         liveDanmakuRepositoryProvider.overrideWithValue(
@@ -694,6 +717,27 @@ class AppDependencies {
         dynamicRepositoryProvider.overrideWithValue(
           ApiDynamicRepository(
             DynamicClient(api),
+            requests,
+            accountScope: () => session.accountScope,
+          ),
+        ),
+        dynamicImagePickerProvider.overrideWithValue(
+          (remaining) => pickLocalImages(
+            remaining,
+            label: '动态图片',
+            maxCount: DynamicComposerState.maxImages,
+          ),
+        ),
+        dynamicComposerRepositoryProvider.overrideWithValue(
+          ApiDynamicComposerRepository(
+            DynamicPublishClient(api),
+            requests,
+            accountScope: () => session.accountScope,
+          ),
+        ),
+        dynamicTopicRepositoryProvider.overrideWithValue(
+          ApiDynamicTopicRepository(
+            DynamicTopicClient(api),
             requests,
             accountScope: () => session.accountScope,
           ),

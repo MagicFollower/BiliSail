@@ -1,5 +1,41 @@
 # 参考项目、证据与采用边界
 
+2026-11-15 Android 直出 HDR 色彩修复，只读核对 PiliPlus `217fb54f51f6764176319bbdedab2a7522d75401` 的播放器创建入口及实际媒体 overrides／锁文件，并核对其锁定视频插件 `bggRGjQaUbCoE/media-kit` 的 `85f0a69ea66b100882b27a3375c72e5155375343` 中 Android 默认 `gpu` 输出。借鉴保留硬解并由 GPU 完成色彩映射的职责，独立实现本项目 HDR 媒体提示和按源规范化输出；未复制参考源码／资源，未修改相邻仓库、Pub 缓存或固定媒体依赖。见[原因、来源与验证](validation/hdr-direct-output-2026-11-15.md)。
+
+2026-11-14 Windows Release 正常输入 EOF 误判修复，只读核对 PiliPlus `217fb54f51f6764176319bbdedab2a7522d75401` 的 `lib/plugin/pl_player/controller.dart` 中 SDK 缓存／缓冲订阅、明确错误判断及当前位置重开职责。实际核心和库插件锁定 `My-Responsitories/media-kit` 的 `73771ec38176be2d984a3049c28177bce23b54a0`，视频锁定 `bggRGjQaUbCoE/media-kit` 的 `85f0a69ea66b100882b27a3375c72e5155375343`。借鉴正常播放交由原生、应用依据故障证据恢复的边界，独立删除本项目的 EOF 时间戳差值启发式；未复制 GPLv3 应用代码／资源或修改参考仓库、依赖及 Pub 缓存，见[专项记录](validation/windows-release-dash-eof-2026-11-14.md)。
+
+2026-11-14 历史续播和自动 CDN 选线只读核对同一 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/utils/storage_pref.dart`（默认 `CDNService.backupUrl`）、`lib/utils/video_utils.dart`（优先普通镜像，跳过 `os=mcdn`／302 节点）及 `lib/plugin/pl_player/controller.dart`（EDL 分轨与 `Media(start: seekTo)`）。核对实际 overrides／锁文件：核心及库插件 `My-Responsitories/media-kit` 固定 `73771ec38176be2d984a3049c28177bce23b54a0`，视频 `bggRGjQaUbCoE/media-kit` 固定 `85f0a69ea66b100882b27a3375c72e5155375343`。仅采用默认选线行为，独立实现返回地址的稳定排序；没有复制 GPLv3 应用代码／资源，没有引入相邻运行时依赖、修改媒体 fork／Pub 缓存或复制参考项目的代理及 host 改写回退。见[续播记录](validation/resume-startup-cdn-2026-11-14.md)。
+
+2026-11-14 点播预读断流恢复只读核对 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/plugin/pl_player/controller.dart` 中缓存订阅、错误处理与 `refreshPlayer`，以及 `lib/utils/storage_pref.dart` 的 `initBuffer`／`initLiveBuffer`。实际核心和库插件固定 `My-Responsitories/media-kit` 的 `73771ec38176be2d984a3049c28177bce23b54a0`，视频包固定 `bggRGjQaUbCoE/media-kit` 的 `85f0a69ea66b100882b27a3375c72e5155375343`。PiliPlus 的点播错误重试还要求 buffering 且缓冲值为零，没有覆盖缓存仍能播放的提前恢复；本项目独立实现错误触发的媒体线路探测和有限会话恢复，没有复制 GPLv3 应用源码／资源、修改相邻仓库或 Pub 缓存。见[专项记录](validation/prefetch-network-recovery-2026-11-14.md)。
+
+2026-11-13 B站扩展投屏只读核对 MIT 的 NeoBV `6c8ce4bbf82f43681cc6c5e46cd4f8c9b9b71bf6`、GPLv3 的 Danmu TV `d28b8aed03e6da6df47469ac22771dc40ae228f4`；直播地址投屏只读参考 GPLv3 的 Pure Live `1a60607cdd308132afcd85cd562f404109499633`。仅采用内容身份、压缩／编码格式、服务发现与控制的协议事实，独立实现领域模型、能力分流和仓储，无参考应用源码／资源／抓包凭据复制。精确源码路径、依赖许可和验证边界见 [DLNA 投屏](validation/dlna-casting.md)。
+
+2026-11-12：已移除 fvp／MDK，当前仅使用 media_kit。历史文档中的双后端实现、SDK、命令及测试记录保留当时事实，不再作为现行入口；清理与设置兼容见[移除记录](validation/fvp-removal-2026-11-12.md)。
+
+2026-11-12 评论装扮对齐只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/pages/video/reply/widgets/reply_item_grpc.dart` 和 `lib/common/widgets/translucent_row.dart`，核对实际 overrides／锁文件。借鉴头像与作者信息共同排版、装扮靠右的职责，结合本项目 52 像素装扮实现整组垂直居中；未复制 GPLv3 源码／资源、修改相邻仓库或依赖，见[评论样式与验证](validation/official-client-typography-2026-11-09.md)。
+
+2026-11-12 追番只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/http/api.dart`、`lib/http/video.dart` 和 `lib/http/pgc.dart`，核对状态读取及追番／取消端点、季编号与 CSRF。仅采用协议事实，独立实现本项目仓储、控制器和主题按钮，未复制 GPLv3 应用源码／资源或修改依赖，见[PGC 追番](validation/pgc-follow.md)。
+
+2026-11-12 视频合集工具栏只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的 `lib/pages/episode_panel/view.dart` 和 `lib/pages/video/view.dart`，核对实际 overrides／锁文件。仅借鉴定位、显示排序与倒序播放职责，独立实现合集卡片与领域播放顺序，未复制 GPLv3 应用源码／资源、修改相邻仓库或依赖，见[来源与验证](validation/video-collection-controls-2026-11-12.md)。
+
+2026-11-11 风控处理只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的热门精选、设备 SPI／激活及 Gaia 验证职责。独立实现共享请求策略、设备上下文和测试，未复制 GPLv3 应用代码、随机指纹或资源，未修改相邻仓库或依赖；精确路径、采用边界与未线上验收项见[请求风控](validation/api-risk-control-2026-11-11.md)。
+
+2026-11-11 动态菜单与投票只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的动态作者菜单、详情、保存、投票和 HTTP／模型职责；核对实际 overrides／锁文件，独立实现本项目管理端口、状态覆盖、编辑草稿及响应式投票，无源码／资源复制或依赖变化。路径、采用限制和验证见[动态操作菜单与投票](validation/dynamic-operations-and-voting-2026-11-11.md)。
+
+2026-11-11 动态投票查看只读参考 PiliPlus `cab0114a21ce7fad5b90b9a4d788d35d313d25f9` 的投票卡片／正文、详情、模型及 HTTP 端点；核对实际 overrides／锁文件，仅采用协议事实与交互职责，独立实现。未复制 GPLv3 应用代码／资源或修改参考仓库、媒体依赖，详见[投票来源与验证](validation/dynamic-poll-viewing-2026-11-11.md)。
+
+2026-11-11 动态投稿继续只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的发布／富文本、表情、用户选择、投票及直播预约页面与HTTP协议。核对其实际overrides和锁文件，仅借鉴能力和协议事实，独立实现本项目的自适应表单与账号草稿，没有复制GPLv3应用源码／资源、修改相邻仓库或增加依赖；精确路径、采用范围及验证见[动态发布能力](validation/dynamic-publishing-parity-2026-11-11.md)。
+
+2026-11-10 独立话题页与动态发布只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的话题、发布、图片上传和话题选择职责，并核对官方话题举报 H5 的公开请求格式。独立实现应用内收藏／举报、共享草稿与发布流程，没有复制应用源码／资源或修改相邻仓库；协议、公开脚本摘要和验收边界见[独立话题页与动态发布](validation/dynamic-publishing-and-topic-page-2026-11-10.md)。
+
+2026-11-10 动态话题外跳定位只读核对 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/utils/app_scheme.dart` 中移动端 `/topic-detail` 与 app URI 分发，以及动态独立话题与富文本入口。独立实现身份优先、已知链接识别和应用内名称回退，未复制 GPLv3 应用源码／资源、修改相邻仓库或依赖。复现与验证见[动态话题外跳修复](validation/dynamic-topic-navigation-2026-11-10.md)。
+
+2026-11-09 应用内话题和动态展示修复继续只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/pages/dynamics_topic/`、`lib/http/{api,dynamics,constants}.dart`、话题 top／feed 模型、`lib/common/widgets/text_more/` 和 `lib/pages/dynamics/widgets/additional_panel.dart`。借鉴话题 GET、排序／折叠职责、实际文本溢出检测和预约的 `status == type` 规则；独立编写 API、领域、控制器、页面与排版测量，没有复制 GPLv3 应用源码或资源，没有修改相邻仓库、依赖或媒体 fork。来源、协议、行为与离线验证见[应用内话题与动态展示修复](validation/dynamic-topics-and-text-2026-11-09.md)。
+
+2026-11-09 动态内容重构只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/models/dynamics/result.dart`、`lib/pages/dynamics/widgets/{content_panel,module_panel,additional_panel,rich_node_panel,video_panel}.dart`、`lib/pages/dynamics_detail/view.dart` 及 `lib/utils/app_scheme.dart`。核对实际 overrides／锁文件后，只借鉴内容字段、信息层次和宽窄屏职责，独立实现解析与 Flutter UI；未复制 GPLv3 应用源码或资源，未修改相邻仓库或更换媒体依赖。逐类功能对照、官方目标动作边界与验证见[动态内容与详情重构](validation/dynamic-content-redesign-2026-11-09.md)。
+
+2026-11-09 fvp 恢复后停帧定位只读核对 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/plugin/pl_player/controller.dart` 及实际 overrides／锁文件。借鉴原生时钟同步、直接控制和原生缓冲事件的职责划分，独立修复本项目 MDK 桥的首次时钟接入窗口；未复制 GPLv3 应用源码／资源、修改相邻仓库或更换媒体依赖。实际日志、精确依赖与验证见[专项记录](validation/fvp-resume-clock-2026-11-09.md)。
+
 2026-11-09 番剧续播只读参考 PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` 的 `lib/utils/page_utils.dart`、`lib/models_new/pgc/pgc_info_model/{result,user_status,user_progress}.dart`、`lib/http/{search,video}.dart` 和 `lib/pages/video/controller.dart`。借鉴明确剧集／最近观看剧集／首集的选择顺序，以及 PGC 独立进度职责；独立实现本地优先、Web season 秒数读取和账号／取消边界，未复制 GPLv3 应用源码、资源或引入依赖，未修改相邻仓库。字段单位另核对本地 bili-kernel `PgcDetailResponse.cs`。精确来源和离线验证见[番剧续播修复](validation/pgc-resume-2026-11-09.md)。
 
 2026-11-08 Android fvp 音频定位修复继续只读参考 PiliPlus `265f879fa85973b4bf885bde2562f1007f1013b8` 的 `lib/plugin/pl_player/controller.dart`，借鉴原生同步／缓存和薄控制器职责，独立处理 MDK 暂停音频 seek 的平台限制。Windows 对照、实际 SDK 产物偏差、GPLv3／SDK 范围及回归见[音频定位记录](validation/android-fvp-seek-audio-2026-11-08.md)。
@@ -202,6 +238,10 @@
 ### 统一 Web / App 登录（2026-10-28）
 
 继续只读参考 PiliPlus `936072449e82e3d90c28c728c0087bf5136fa441` 的 `lib/http/login.dart`、`lib/pages/login/controller.dart`、`lib/utils/accounts/account.dart`；核对 HD 扫码的顶层 token 和 Cookie 列表。Cookie 登录补齐 token 曾核对 bili-kernel `e26f6dbd071e20d4220806fcff7bd675f3c29fc5` 的 `Authorizers/Authorizers.Tv/Core/TvAuthorizeClient.cs` 中 SignInWithCookiesAsync；该路径在真实旧会话探测失败后已按用户要求删除，密码/短信仅保存 Web 会话。独立编写 Dart，未复制参考应用源码/资源或新增依赖。数据/许可及未验证项见[统一登录](unified-login-design.md)。
+
+### 密码／短信 App 登录（2026-11-15）
+
+按用户要求只读对照 PiliPlus `217fb54f51f6764176319bbdedab2a7522d75401`（2.2.1）的 `lib/http/login.dart`、`lib/pages/login/controller.dart`、`lib/common/constants.dart` 和 `lib/utils/login_utils.dart`，独立实现 App 密码／短信、极验、绑定手机号验证及授权码换取双凭据。未复制 GPLv3 应用代码／资源或修改参考仓库。bili_api 直接使用项目已有版本的 MIT `pointycastle 4.0.0`；验证码脚本来自极验官方 HTTPS 服务。来源、端点、许可与验证边界见[专项记录](validation/password-sms-app-login-2026-11-15.md)。
 
 ## 6. 尚待实测或决定的事项
 

@@ -1,4 +1,8 @@
 import 'dart:async';
+
+import 'package:bilisail/domain/content_link.dart';
+import 'package:bilisail/shared/ui/content_link_scope.dart';
+
 import 'dart:ui' show ViewFocusDirection, ViewFocusEvent, ViewFocusState;
 
 import 'package:bilisail/app/shell.dart';
@@ -13,6 +17,7 @@ import 'package:bilisail/features/auth/domain/auth_repository.dart';
 import 'package:bilisail/features/comments/application/comments_controller.dart';
 import 'package:bilisail/features/comments/domain/comments_repository.dart';
 import 'package:bilisail/features/pgc/application/pgc_controller.dart';
+import 'package:bilisail/features/pgc/application/pgc_follow_controller.dart';
 import 'package:bilisail/features/pgc/domain/pgc_repository.dart';
 import 'package:bilisail/features/pgc/presentation/pgc_screen.dart';
 import 'package:bilisail/features/settings/domain/app_settings.dart';
@@ -31,6 +36,7 @@ import 'package:go_router/go_router.dart';
 
 import '../support/detached_window_fake.dart';
 import '../support/input_test_app.dart';
+import '../support/pgc_follow_fake.dart';
 
 const _id = VideoId('BV1ab411c7mD');
 const _target = CommentTarget('42', CommentTargetType.video);
@@ -77,6 +83,24 @@ final _season = PgcSeason(
 );
 
 void main() {
+  for (final pgc in [false, true]) {
+    testWidgets(
+      '${pgc ? 'PGC' : 'video'} content link opens comments without selecting the tab',
+      (tester) async {
+        final harness = await _mount(
+          tester,
+          pgc: pgc,
+          link: const ContentLink(
+            comment: CommentLocation('10', replyId: '11'),
+          ),
+        );
+        expect(find.text('评论详情'), findsOneWidget);
+        expect(find.text('二级回复').hitTestable(), findsOneWidget);
+        expect(harness.repo.locates, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   for (final platform in [TargetPlatform.android, TargetPlatform.windows]) {
     for (final pgc in [false, true]) {
       testWidgets(
@@ -336,6 +360,7 @@ _mount(
   TargetPlatform platform = TargetPlatform.windows,
   bool pgc = false,
   bool detached = false,
+  ContentLink link = const ContentLink(),
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(
@@ -392,22 +417,25 @@ _mount(
                   child: child,
                 )
               : null,
-          pageBuilder: (_, tab) => switch (tab.location.path) {
-            '/video/BV1ab411c7mD' => VideoScreen(
-              id: _id,
-              playerBuilder: (_, _, _) =>
-                  const SizedBox.expand(key: ValueKey('test-player')),
-            ),
-            '/pgc/1' => PgcScreen(
-              seasonId: '1',
-              playerBuilder: (_, _, _) =>
-                  const SizedBox.expand(key: ValueKey('test-player')),
-              commentsBuilder: (_, _, _) =>
-                  const CommentsPanel(target: _target),
-            ),
-            '/search' => const Text('搜索内容'),
-            _ => const Text('首页内容'),
-          },
+          pageBuilder: (_, tab) => ContentLinkScope(
+            link: link,
+            child: switch (tab.location.path) {
+              '/video/BV1ab411c7mD' => VideoScreen(
+                id: _id,
+                playerBuilder: (_, _, _) =>
+                    const SizedBox.expand(key: ValueKey('test-player')),
+              ),
+              '/pgc/1' => PgcScreen(
+                seasonId: '1',
+                playerBuilder: (_, _, _) =>
+                    const SizedBox.expand(key: ValueKey('test-player')),
+                commentsBuilder: (_, _, _) =>
+                    const CommentsPanel(target: _target),
+              ),
+              '/history' => const Text('历史内容'),
+              _ => const Text('首页内容'),
+            },
+          ),
           child: child,
         ),
         routes: [
@@ -427,6 +455,7 @@ _mount(
         relatedVideosProvider(_id).overrideWith((_) async => []),
         videoTagsProvider(_id).overrideWith((_) async => []),
         pgcRepositoryProvider.overrideWithValue(_Pgc()),
+        pgcFollowRepositoryProvider.overrideWithValue(PgcFollowFake()),
       ],
       child: InputTestApp.router(routerConfig: router),
     ),
@@ -444,8 +473,10 @@ _mount(
     );
     await tester.pumpAndSettle();
   }
-  await tester.tap(find.text('评论'));
-  await tester.pumpAndSettle();
+  if (link.comment == null) {
+    await tester.tap(find.text('评论'));
+    await tester.pumpAndSettle();
+  }
   return (router: router, repo: repo, windows: windows);
 }
 
@@ -486,7 +517,23 @@ class _Guest extends AuthController {
   AuthState build() => const AuthState(status: AuthStatus.signedIn, mid: '7');
 }
 
-class _Comments extends Fake implements CommentsRepository {
+class _Comments extends Fake
+    implements CommentsRepository, CommentLocationRepository {
+  int locates = 0;
+  @override
+  Future<LocatedCommentThread> locate(
+    String oid,
+    CommentLocation location,
+    RequestCancellation cancellation,
+  ) async {
+    locates++;
+    return const LocatedCommentThread(
+      root: _root,
+      page: CommentPage(items: [_reply], hasMore: false),
+      pageNumber: 1,
+    );
+  }
+
   Completer<CommentPage>? pending;
   RequestCancellation? replyCancellation;
   @override

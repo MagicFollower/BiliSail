@@ -18,7 +18,17 @@ final class MessageClient {
     Map<String, String> query,
     ApiRequestContext? context,
   ) =>
-      api.requestJson(Uri.https(host, path, query), endpoint, context: context);
+      host == _vc &&
+          const {
+            '/session_svr/v1/session_svr/get_sessions',
+            '/svr_sync/v1/svr_sync/fetch_session_msgs',
+          }.contains(path)
+      ? api.requestMessageWbiJson(path, query, endpoint, context: context)
+      : api.requestJson(
+          Uri.https(host, path, query),
+          endpoint,
+          context: context,
+        );
 
   Future<Map<ApiInboxSection, int>> unread({ApiRequestContext? context}) async {
     const e = 'message_unread';
@@ -65,19 +75,31 @@ final class MessageClient {
         .toSet();
     final users = <String, Map<String, Object?>>{};
     if (mids.isNotEmpty) {
-      final cards = await _get(
-        'api.bilibili.com',
-        '/x/polymer/pc-electron/v1/user/cards',
-        'message_users',
-        {'uids': mids.join(',')},
-        context,
-      );
-      final values = cards['list'] is List<Object?>
-          ? _list(cards['list'], 'message_users')
-          : cards.values.toList();
-      for (final value in values) {
-        final user = _map(value, 'message_users');
-        users[_decimal(user['mid'], 'message_users')] = user;
+      try {
+        final cards = await _get(
+          'api.bilibili.com',
+          '/x/polymer/pc-electron/v1/user/cards',
+          'message_users',
+          {'uids': mids.join(','), 'build': '0', 'mobi_app': 'web'},
+          context,
+        );
+        final values = cards['list'] is List<Object?>
+            ? _list(cards['list'], 'message_users')
+            : cards.values.toList();
+        for (final value in values) {
+          final user = _map(value, 'message_users');
+          users[_decimal(user['mid'], 'message_users')] = user;
+        }
+      } on ApiFailure catch (failure) {
+        // Names and avatars are auxiliary. Keep the verified session page when
+        // this separate read is transiently unavailable; its cooldown remains.
+        if (!const {
+          ApiFailureCategory.rateLimited,
+          ApiFailureCategory.network,
+          ApiFailureCategory.timeout,
+        }.contains(failure.category)) {
+          rethrow;
+        }
       }
     }
     final entries = rows
@@ -139,7 +161,7 @@ final class MessageClient {
         await _get(_vc, '/svr_sync/v1/svr_sync/fetch_session_msgs', e, {
           'talker_id': mid,
           'session_type': '$type',
-          'size': '30',
+          'size': '20',
           'sender_device_id': '1',
           'build': '0',
           'mobi_app': 'web',
@@ -292,7 +314,7 @@ final class MessageClient {
         userMid: mid,
         avatarUrl: _uri(user['avatar'] ?? user['face']),
         time: _time(row['${name}_time']),
-        targetUrl: _targetUri(item['uri'] ?? item['native_uri']),
+        targetUrl: _notificationTarget(item, section),
       );
     }
     final c = _map(total['cursor'], e);
@@ -320,6 +342,53 @@ final class MessageClient {
       'msg[msg_type]': '1',
       'msg[msg_status]': '0',
       'msg[content]': jsonEncode({'content': text}),
+      'msg[timestamp]': '${DateTime.now().millisecondsSinceEpoch ~/ 1000}',
+      'msg[dev_id]': '0',
+      'msg[new_face_version]': '1',
+      'from_firework': '0',
+      'build': '0',
+      'mobi_app': 'web',
+    }, context: context);
+  }
+
+  Future<void> shareDynamic(
+    String sender,
+    String receiver, {
+    required String id,
+    required String title,
+    required String author,
+    required String authorId,
+    required int source,
+    Uri? thumbnail,
+    ApiRequestContext? context,
+  }) async {
+    const endpoint = 'message_share_dynamic';
+    _decimal(sender, endpoint);
+    _decimal(receiver, endpoint);
+    _decimal(id, endpoint);
+    _decimal(authorId, endpoint);
+    if (!const {2, 6, 11}.contains(source) ||
+        title.runes.length > 32768 ||
+        author.length > 200 ||
+        (thumbnail != null &&
+            (thumbnail.scheme != 'https' || thumbnail.userInfo.isNotEmpty))) {
+      throw ArgumentError('Invalid dynamic share');
+    }
+    await api.submitMessageForm('/web_im/v1/web_im/send_msg', endpoint, {
+      'msg[sender_uid]': sender,
+      'msg[receiver_id]': receiver,
+      'msg[receiver_type]': '1',
+      'msg[msg_type]': '7',
+      'msg[msg_status]': '0',
+      'msg[content]': jsonEncode({
+        'id': id,
+        'title': title.substring(0, title.length.clamp(0, 1000)),
+        'headline': '',
+        'source': source,
+        if (thumbnail != null) 'thumb': thumbnail.toString(),
+        'author': author,
+        'author_id': authorId,
+      }),
       'msg[timestamp]': '${DateTime.now().millisecondsSinceEpoch ~/ 1000}',
       'msg[dev_id]': '0',
       'msg[new_face_version]': '1',
@@ -610,6 +679,34 @@ final class MessageClient {
     );
   }
 
+  Uri? _notificationTarget(Map<String, Object?> item, ApiInboxSection section) {
+    final target = _targetUri(item['native_uri']) ?? _targetUri(item['uri']);
+    if (target == null) return null;
+    final isComment =
+        item['type'] == 'reply' ||
+        section == ApiInboxSection.replies ||
+        section == ApiInboxSection.mentions;
+    if (!isComment ||
+        item['business'] == '弹幕' ||
+        item['danmu'] is Map<String, Object?>) {
+      return target;
+    }
+    final source =
+        _positiveDecimal(item['source_id']) ??
+        (item['type'] == 'reply'
+            ? _positiveDecimal(item['item_id'] ?? item['id'])
+            : null);
+    final root = _positiveDecimal(item['root_id']) ?? source;
+    if (root == null) return target;
+    return target.replace(
+      queryParameters: {
+        'comment_root_id': root,
+        if (source != null && source != root) 'comment_secondary_id': source,
+        ...target.queryParameters,
+      },
+    );
+  }
+
   ApiMessageReplyContext? _replyContext(
     Map<String, Object?> item,
     String author,
@@ -827,16 +924,57 @@ final class MessageClient {
     if (value is! String || value.length > 8192) return null;
     final parsed = Uri.tryParse(value);
     if (parsed?.scheme == 'bilibili' && parsed != null) {
-      final id = parsed.pathSegments.isEmpty ? null : parsed.pathSegments.last;
+      if (parsed.userInfo.isNotEmpty || parsed.hasPort) return null;
+      final parts = parsed.pathSegments
+          .where((part) => part.isNotEmpty)
+          .toList();
+      // Folded notifications carry their subject/root in path segments.
+      if (parts case [
+        'msg_fold',
+        '1',
+        final aid,
+        final root,
+        ...,
+      ] when parsed.host == 'comment') {
+        if (_positiveDecimal(aid) == null || _positiveDecimal(root) == null) {
+          return null;
+        }
+        return _videoTarget(aid).replace(
+          queryParameters: {
+            'comment_root_id': root,
+            'comment_secondary_id': ?_positiveDecimal(
+              parsed.queryParameters['anchor'],
+            ),
+          },
+        );
+      }
+      Uri withContext(Uri uri) => uri.replace(
+        queryParameters: parsed.queryParameters.isEmpty
+            ? null
+            : parsed.queryParameters,
+        fragment: parsed.fragment.isEmpty ? null : parsed.fragment,
+      );
+      final id = parts.isEmpty ? null : parts.last;
       if (parsed.host == 'video' &&
+          parts.length == 1 &&
           id != null &&
           RegExp(r'^BV[0-9A-Za-z]{10}$').hasMatch(id)) {
-        return Uri.https('www.bilibili.com', '/video/$id');
+        return withContext(Uri.https('www.bilibili.com', '/video/$id'));
       }
       final decimal = id?.startsWith('av') == true ? id?.substring(2) : id;
       if (decimal != null && _positiveDecimal(decimal) != null) {
         return switch (parsed.host) {
-          'video' => _videoTarget(decimal),
+          'video' when parts.length == 1 => withContext(_videoTarget(decimal)),
+          'pgc'
+              when parts.length == 3 &&
+                  parts[0] == 'season' &&
+                  parts[1] == 'ep' =>
+            withContext(
+              Uri.https('www.bilibili.com', '/bangumi/play/ep$decimal'),
+            ),
+          'pgc' when parts.length == 2 && parts[0] == 'season' => withContext(
+            Uri.https('www.bilibili.com', '/bangumi/play/ss$decimal'),
+          ),
           'article' => Uri.https('www.bilibili.com', '/read/cv$decimal'),
           'dynamic' => Uri.https('t.bilibili.com', '/$decimal'),
           'live' => Uri.https('live.bilibili.com', '/$decimal'),
@@ -848,6 +986,32 @@ final class MessageClient {
     final uri = _uri(value);
     if (uri == null) return null;
     final host = uri.host.toLowerCase();
+    if (const {'bilibili.com', 'www.bilibili.com'}.contains(host) &&
+        uri.userInfo.isEmpty &&
+        uri.port == 443) {
+      final parts = uri.pathSegments.where((part) => part.isNotEmpty).toList();
+      if (parts case [
+        'video',
+        final av,
+      ] when av.startsWith('av') && _positiveDecimal(av.substring(2)) != null) {
+        return _videoTarget(
+          av.substring(2),
+        ).replace(query: uri.query, fragment: uri.fragment);
+      }
+      if (parts case [
+        'h5',
+        'comment',
+        'sub',
+      ] when uri.queryParameters['pageType'] == '1') {
+        final oid = _positiveDecimal(uri.queryParameters['oid']);
+        final root = _positiveDecimal(uri.queryParameters['root']);
+        if (oid != null && root != null) {
+          return _videoTarget(oid).replace(
+            queryParameters: {...uri.queryParameters, 'comment_root_id': root},
+          );
+        }
+      }
+    }
     return host == 'bilibili.com' ||
             host.endsWith('.bilibili.com') ||
             host == 'b23.tv'

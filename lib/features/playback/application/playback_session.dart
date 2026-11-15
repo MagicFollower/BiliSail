@@ -104,9 +104,7 @@ class PlaybackSession extends ChangeNotifier {
         if (_scheduleRecovery(failure)) {
           return;
         }
-        error =
-            contentTarget is OfflinePlaybackTarget &&
-                failure.kind != PlayerFailureKind.nativeProcessExited
+        error = contentTarget is OfflinePlaybackTarget
             ? '本地视频播放失败，文件可能无法解码或已不可访问'
             : failure.message;
         _notify();
@@ -603,6 +601,8 @@ class PlaybackSession extends ChangeNotifier {
 
   void discardNextVideo() => _nextSourceIntent = null;
 
+  bool get danmakuEnabled => _settings.danmakuEnabled;
+
   String? get danmakuCid => switch (contentTarget) {
     LivePlaybackTarget() => null,
     PgcPlaybackTarget(:final cid) => cid ?? part?.cid,
@@ -672,6 +672,7 @@ class PlaybackSession extends ChangeNotifier {
     ContentPlaybackTarget? target,
     String? title,
     bool visible = true,
+    Duration? position,
   }) async {
     if (_disposed || !_owners.contains(owner)) return;
     if (identical(_activeOwner, owner) &&
@@ -680,13 +681,15 @@ class PlaybackSession extends ChangeNotifier {
         contentTarget == target &&
         _scope == accountScope() &&
         _epoch == sessionEpoch() &&
-        (media != null || _resolving)) {
+        (media != null || _resolving) &&
+        (position == null || media != null)) {
       final wasVisible = _ownerVisible;
       _ownerVisible = visible;
       if (!wasVisible && visible) _resumeCommentPresentation();
       if (wasVisible && !visible) _suspendCommentPresentation();
       if (!visible) _cancelHighEnergy();
       if (visible) unawaited(ensureHighEnergy());
+      if (position != null) await seek(position);
       return;
     }
     final sameOwner = identical(_activeOwner, owner);
@@ -744,7 +747,9 @@ class PlaybackSession extends ChangeNotifier {
               : _settings.preferredQuality),
       liveLine: restored?.liveLine,
       liveStream: restored?.liveStream,
-      position: nextPlaying != null ? nextIntent?.position : restored?.position,
+      position:
+          position ??
+          (nextPlaying != null ? nextIntent?.position : restored?.position),
       desiredPlaying:
           nextPlaying ??
           restored?.desiredPlaying ??
@@ -1103,6 +1108,9 @@ class PlaybackSession extends ChangeNotifier {
           }
         },
       );
+      // Resolution initializes the repository's source context synchronously.
+      // Fetch the preview index alongside it, without delaying playback.
+      unawaited(ensureStoryboard());
       Duration? localResume;
       late final PlaybackMedia resolved;
       // Attach handlers to every operation immediately, and settle all of them
@@ -1270,13 +1278,21 @@ class PlaybackSession extends ChangeNotifier {
                       )
                     : resolved.kind == PlaybackMediaKind.liveHls
                     ? ManifestSource(
-                        MediaTrack(uri: videoUri, requestPolicy: policy),
+                        MediaTrack(
+                          uri: videoUri,
+                          requestPolicy: policy,
+                          isHdr: resolved.isHdr,
+                        ),
                         isLive: true,
                       )
                     : resolved.kind == PlaybackMediaKind.liveFlv ||
                           resolved.kind == PlaybackMediaKind.progressive
                     ? ProgressiveSource(
-                        MediaTrack(uri: videoUri, requestPolicy: policy),
+                        MediaTrack(
+                          uri: videoUri,
+                          requestPolicy: policy,
+                          isHdr: resolved.isHdr,
+                        ),
                         isLive: isLive,
                       )
                     : DashPairSource(
@@ -1287,6 +1303,7 @@ class PlaybackSession extends ChangeNotifier {
                           requestPolicy: policy,
                           codec: resolved.video.codec,
                           bandwidth: resolved.video.bandwidth,
+                          isHdr: resolved.isHdr,
                         ),
                         audio: audio == null || audioUri == null
                             ? null
@@ -1452,8 +1469,7 @@ class PlaybackSession extends ChangeNotifier {
             ? target is OfflinePlaybackTarget
                   ? '当前设备无法正确显示此离线视频的杜比视界格式'
                   : '当前设备无法正确显示此视频格式，未取得兼容视频流'
-            : contentTarget is OfflinePlaybackTarget &&
-                  failure.kind != PlayerFailureKind.nativeProcessExited
+            : contentTarget is OfflinePlaybackTarget
             ? '无法播放本地视频，文件可能无法解码或已不可访问'
             : failure.message;
         _resolving = false;
@@ -2309,7 +2325,8 @@ class PlaybackSession extends ChangeNotifier {
     _storyboardRequested = false;
   }
 
-  /// Hover loads only metadata/images; the active engine never seeks for preview.
+  /// Preloads the preview index; later preview interactions can retry failures.
+  /// The active engine never seeks for preview.
   Future<void> ensureStoryboard() async {
     final repository = metadataRepository;
     final video = detail?.summary.id;
@@ -2317,7 +2334,8 @@ class PlaybackSession extends ChangeNotifier {
     if (_disposed ||
         _closing ||
         isLive ||
-        media == null ||
+        contentTarget is OfflinePlaybackTarget ||
+        (media == null && !_resolving) ||
         repository == null ||
         video == null ||
         cid == null ||

@@ -87,16 +87,46 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(recommendations: value));
   Future<void> setNavigationMode(WorkspaceNavigationMode value) =>
       update((current) => current.copyWith(navigationMode: value));
+  Future<void> setPredictiveBackEnabled(bool value) =>
+      update((current) => current.copyWith(predictiveBackEnabled: value));
+  Future<void> setCloseTabOnMiddleClick(bool value) =>
+      update((current) => current.copyWith(closeTabOnMiddleClick: value));
+  Future<void> setCloseTabOnRightClick(bool value) =>
+      update((current) => current.copyWith(closeTabOnRightClick: value));
+  Future<void> setCloseTabOnDoubleClick(bool value) =>
+      update((current) => current.copyWith(closeTabOnDoubleClick: value));
   Future<void> setNavigationBarMode(NavigationBarMode value) =>
       update((current) => current.copyWith(navigationBarMode: value));
   Future<void> setSidebarStyle(SidebarStyle value) =>
       update((current) => current.copyWith(sidebarStyle: value));
   Future<void> setSidebarCollapsed(bool value) =>
       update((current) => current.copyWith(sidebarCollapsed: value));
-  Future<void> setLiquidGlassDock(bool value) =>
-      update((current) => current.copyWith(liquidGlassDock: value));
-  Future<void> setLiquidVideoCards(bool value) =>
-      update((current) => current.copyWith(liquidVideoCards: value));
+  Future<void> setVideoGridMinWidths(List<int>? value) => update(
+    (current) => current.copyWith(
+      responsiveLayout: current.responsiveLayout.copyWith(
+        videoGridMinWidths: value,
+        resetVideoGrid: value == null,
+      ),
+    ),
+  );
+  Future<void> setNavigationBreakpoints(
+    int navigationBarBreakpoint,
+    int sidebarExpandedWidth,
+  ) => update(
+    (current) => current.copyWith(
+      responsiveLayout: current.responsiveLayout.copyWith(
+        navigationBarBreakpoint: navigationBarBreakpoint,
+        sidebarExpandedWidth: sidebarExpandedWidth,
+      ),
+    ),
+  );
+  Future<void> setPlaybackSideBySideWidth(int value) => update(
+    (current) => current.copyWith(
+      responsiveLayout: current.responsiveLayout.copyWith(
+        playbackSideBySideWidth: value,
+      ),
+    ),
+  );
   Future<void> setDefaultDynamicTab(DynamicPageTab value) =>
       update((current) => current.copyWith(defaultDynamicTab: value));
   Future<void> setAllowConcurrentPlayback(bool value) =>
@@ -121,6 +151,23 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(checkUpdatesOnStartup: value));
   Future<void> setWheelDampingRatio(double value) =>
       update((current) => current.copyWith(wheelDampingRatio: value));
+  Future<void> setWheelScrollAnimation(WheelScrollAnimation value) =>
+      update((current) => current.copyWith(wheelScrollAnimation: value));
+  Future<void> setChromiumScrollCurve(ChromiumScrollCurve value) =>
+      update((current) => current.copyWith(chromiumScrollCurve: value));
+  Future<void> setWheelScrollDistanceMultiplier(double value) => update(
+    (current) => current.copyWith(wheelScrollDistanceMultiplier: value),
+  );
+  Future<void> setWheelScrollDurationMultiplier(double value) => update(
+    (current) => current.copyWith(wheelScrollDurationMultiplier: value),
+  );
+  Future<void> resetWheelScrollParameters() => update(
+    (current) => current.copyWith(
+      chromiumScrollCurve: ChromiumScrollCurve.easeInOut,
+      wheelScrollDistanceMultiplier: 1,
+      wheelScrollDurationMultiplier: defaultWheelScrollDurationMultiplier,
+    ),
+  );
   Future<void> setDanmakuEnabled(bool value) =>
       update((current) => current.copyWith(danmakuEnabled: value));
   Future<void> setShowCollapsedProgress(bool value) =>
@@ -171,8 +218,6 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(mediaCdn: value));
   Future<void> setVideoDecoding(VideoDecodingPreference value) =>
       update((current) => current.copyWith(videoDecoding: value));
-  Future<void> setPlaybackBackend(PlaybackBackendPreference value) =>
-      update((current) => current.copyWith(playbackBackend: value));
   Future<void> setAndroidVideoOutput(AndroidVideoOutputPreference value) =>
       update((current) => current.copyWith(androidVideoOutput: value));
   Future<void> setDefaultPlaybackRate(double value) =>
@@ -235,6 +280,8 @@ final class SettingsController extends AsyncNotifier<AppSettings> {
       update((current) => current.copyWith(subtitleBottomPadding: value));
   Future<void> setSponsorBlockMode(SponsorBlockMode value) =>
       update((current) => current.copyWith(sponsorBlockMode: value));
+  Future<void> setSponsorBlockBottomPadding(double value) =>
+      update((current) => current.copyWith(sponsorBlockBottomPadding: value));
   Future<void> setSponsorBlockCategories(List<String> value) =>
       update((current) => current.copyWith(sponsorBlockCategories: value));
 

@@ -9,19 +9,288 @@ import 'package:bilisail/features/playback/domain/casting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xml/xml.dart';
 
+import '../../support/bilibili_cast_projection.dart';
+
 String _description({
   String base = '',
   String control = '/control',
   String type = 'MediaRenderer',
+  String? bilibiliControl,
 }) =>
     '''
 <root xmlns="urn:schemas-upnp-org:device-1-0">$base<device>
 <deviceType>urn:schemas-upnp-org:device:$type:1</deviceType>
 <friendlyName>客厅 &amp; 电视</friendlyName><UDN>uuid:fixture-tv</UDN>
 <serviceList><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
-<controlURL>$control</controlURL></service></serviceList></device></root>''';
+<controlURL>$control</controlURL></service>
+${bilibiliControl == null ? '' : '<service><serviceType>urn:app-bilibili-com:service:NirvanaControl:3</serviceType><controlURL>$bilibiliControl</controlURL></service>'}
+</serviceList></device></root>''';
 
 void main() {
+  group('legacy Lebo control URLs', () {
+    const transport = '_urn:schemas-upnp-org:service:AVTransport_control';
+    const nirvana = '_urn:schemas-upnp-org:service:NirvanaControl_control';
+    for (final (name, location, base, expectedBase) in [
+      (
+        'description root',
+        'http://192.0.2.1:49152/device.xml',
+        '',
+        'http://192.0.2.1:49152/',
+      ),
+      (
+        'description directory',
+        'http://192.0.2.1:49152/description/device.xml',
+        '',
+        'http://192.0.2.1:49152/description/',
+      ),
+      (
+        'advertised URLBase port',
+        'http://192.0.2.1:49152/description/device.xml',
+        '<URLBase>http://192.0.2.1:54321/</URLBase>',
+        'http://192.0.2.1:54321/',
+      ),
+      (
+        'advertised URLBase directory',
+        'http://192.0.2.1:49152/description/device.xml',
+        '<URLBase>http://192.0.2.1:54321/upnp/</URLBase>',
+        'http://192.0.2.1:54321/upnp/',
+      ),
+      (
+        'IPv6 interface scope',
+        'http://[fe80::abcd%2517]:49152/device.xml',
+        '<URLBase>http://[FE80:0::ABCD]:54321/upnp/</URLBase>',
+        'http://[fe80::abcd%2517]:54321/upnp/',
+      ),
+    ]) {
+      test('resolves raw and already relative paths using $name', () {
+        for (final prefix in ['', './']) {
+          final devices = DlnaCastRepository.parseDescription(
+            _description(
+              base: base,
+              control: '$prefix$transport',
+              bilibiliControl: '$prefix$nirvana',
+            ),
+            Uri.parse(location),
+          );
+          expect(devices, hasLength(1), reason: 'prefix: $prefix');
+          expect(
+            devices.single.controlUri.toString(),
+            '$expectedBase$transport',
+          );
+          expect(
+            devices.single.bilibiliService?.controlUri.toString(),
+            '$expectedBase$nirvana',
+          );
+        }
+      });
+    }
+
+    test('standard addresses retain their advertised path and port', () {
+      final location = Uri.parse(
+        'http://192.0.2.1:49152/description/device.xml',
+      );
+      for (final (path, expected) in [
+        ('control', 'http://192.0.2.1:49152/description/control'),
+        ('../control', 'http://192.0.2.1:49152/control'),
+        ('/control', 'http://192.0.2.1:49152/control'),
+        ('/$transport', 'http://192.0.2.1:49152/$transport'),
+        ('http://192.0.2.1:54321/control', 'http://192.0.2.1:54321/control'),
+        ('https://192.0.2.1:54321/control', 'https://192.0.2.1:54321/control'),
+      ]) {
+        final device = DlnaCastRepository.parseDescription(
+          _description(control: path),
+          location,
+        ).single;
+        expect(device.controlUri.toString(), expected, reason: path);
+      }
+    });
+
+    test(
+      'compatibility is limited to control paths and keeps URL restrictions',
+      () {
+        final location = Uri.parse('http://192.0.2.1:49152/device.xml');
+        for (final xml in [
+          _description(control: 'http://192.0.2.2:49152/$transport'),
+          _description(control: 'http://user:pass@192.0.2.1:49152/$transport'),
+          _description(control: 'file://192.0.2.1/$transport'),
+          _description(control: '$transport#fragment'),
+          _description(control: '_other:control'),
+          _description(
+            base: '<URLBase>http://192.0.2.2/</URLBase>',
+            control: transport,
+          ),
+          _description(
+            base: '<URLBase>$transport</URLBase>',
+            control: '/control',
+          ),
+        ]) {
+          expect(DlnaCastRepository.parseDescription(xml, location), isEmpty);
+        }
+      },
+    );
+  });
+
+  test('TV danmaku switch uses advertised Nirvana endpoint and excludes InstanceID', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final repository = DlnaCastRepository();
+    addTearDown(() async {
+      repository.dispose();
+      await server.close(force: true);
+    });
+    final device = DlnaCastRepository.parseDescription(
+      _description(bilibiliControl: '/bilibili/nirvana'),
+      Uri.parse('http://127.0.0.1:${server.port}/device.xml'),
+    ).single;
+    final switches = <String>[];
+    server.listen((request) async {
+      expect(request.uri.path, '/bilibili/nirvana');
+      expect(
+        request.headers.value('soapaction'),
+        '"urn:app-bilibili-com:service:NirvanaControl:3#SetDanmakuSwitch"',
+      );
+      final xml = XmlDocument.parse(await utf8.decoder.bind(request).join());
+      final elements = xml.descendants.whereType<XmlElement>();
+      expect(elements.where((e) => e.name.local == 'InstanceID'), isEmpty);
+      switches.add(
+        elements.singleWhere((e) => e.name.local == 'DesiredSwitch').innerText,
+      );
+      request.response.write(
+        '<Envelope><SetDanmakuSwitchResponse/></Envelope>',
+      );
+      await request.response.close();
+    });
+    for (final enabled in [true, false]) {
+      await repository.setDanmaku(
+        device,
+        enabled,
+        cancellation: RequestCancellation(),
+      );
+    }
+    expect(switches, ['1', '0']);
+  });
+
+  test(
+    'Bilibili capability requires an advertised service on the same host',
+    () {
+      final location = Uri.parse('http://192.168.1.2:9958/bilibili/device.xml');
+      final capable = DlnaCastRepository.parseDescription(
+        _description(bilibiliControl: 'NirvanaControl/action'),
+        location,
+      ).single;
+      expect(
+        capable.bilibiliService?.controlUri.toString(),
+        'http://192.168.1.2:9958/bilibili/NirvanaControl/action',
+      );
+      for (final control in [
+        null,
+        'http://other.example/nirvana',
+        'file:///nirvana',
+        '',
+      ]) {
+        final ordinary = DlnaCastRepository.parseDescription(
+          _description(bilibiliControl: control),
+          location,
+        ).single;
+        expect(ordinary.bilibiliService, isNull);
+      }
+    },
+  );
+
+  for (final request in [
+    const CastMediaRequest(
+      aid: '170001',
+      cid: '99',
+      quality: 80,
+      position: Duration(seconds: 37),
+      speed: 1.5,
+      danmakuEnabled: false,
+    ),
+    const CastMediaRequest(
+      episodeId: '123',
+      seasonId: '456',
+      cid: '789',
+      quality: 80,
+    ),
+    const CastMediaRequest.live(roomId: '42', quality: 400),
+  ]) {
+    test(
+      'Bilibili handoff identifies ${request.isLive ? 'live' : request.episodeId ?? 'UGC'} without credentials',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final repository = DlnaCastRepository();
+        addTearDown(() async {
+          repository.dispose();
+          await server.close(force: true);
+        });
+        final device = DlnaCastRepository.parseDescription(
+          _description(bilibiliControl: '/nirvana'),
+          Uri.parse('http://127.0.0.1:${server.port}/device.xml'),
+        ).single;
+        final bodies = <String>[];
+        server.listen((message) async {
+          expect(message.headers.value('cookie'), isNull);
+          expect(message.headers.value('authorization'), isNull);
+          bodies.add(await utf8.decoder.bind(message).join());
+          message.response.write(
+            '<Envelope><SetAVTransportURIResponse/></Envelope>',
+          );
+          await message.response.close();
+        });
+        await repository.setMedia(
+          device,
+          CastMedia(request: request, receiverResolves: true),
+          '测试 <电视> & 弹幕',
+          cancellation: RequestCancellation(),
+        );
+        final body = XmlDocument.parse(bodies.single);
+        String value(XmlDocument xml, String name) => xml.descendants
+            .whereType<XmlElement>()
+            .singleWhere((n) => n.name.local == name)
+            .innerText;
+        expect(
+          value(body, 'CurrentURI'),
+          'bilibili://projection?proj_source=bilibili&_nva_ext_=',
+        );
+        final metadata = XmlDocument.parse(value(body, 'CurrentURIMetaData'));
+        expect(value(metadata, 'title'), '测试 <电视> & 弹幕');
+        final payload = decodeCastProjection(
+          value(metadata, 'longDescription'),
+        );
+        expect(
+          payload['cid'],
+          request.cid == null ? 0 : int.parse(request.cid!),
+        );
+        expect(
+          payload['aid'],
+          request.aid == null ? 0 : int.parse(request.aid!),
+        );
+        expect(
+          payload['eid'],
+          request.episodeId == null ? 0 : int.parse(request.episodeId!),
+        );
+        expect(
+          payload['sid'],
+          request.seasonId == null ? 0 : int.parse(request.seasonId!),
+        );
+        expect(payload['roomId'], request.isLive ? 42 : null);
+        expect(
+          payload['ct'],
+          request.isLive
+              ? 3
+              : request.episodeId == null
+              ? 0
+              : 1,
+        );
+        expect(payload['seekTs'], request.position.inSeconds);
+        expect(payload['userDesireQn'], request.quality);
+        expect(payload['userDesireSpeed'], request.speed);
+        expect(payload['danmakuSwitchSave'], request.danmakuEnabled);
+        expect(payload.keys, isNot(anyElement(contains('key'))));
+        expect(payload.keys, isNot(anyElement(contains('token'))));
+        expect(bodies, hasLength(1));
+      },
+    );
+  }
   test(
     'description resolves relative control URL and rejects foreign endpoints',
     () {
@@ -82,22 +351,25 @@ void main() {
         .timeout(const Duration(seconds: 3));
     expect(devices.map((device) => device.id), ['uuid:fixture-tv']);
   });
-  test('SOAP preserves signed URL and Unicode title with no credentials or replay', () async {
+  test('SOAP reaches a legacy Lebo endpoint with escaped metadata and no credentials or replay', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final repository = DlnaCastRepository();
     addTearDown(() async {
       repository.dispose();
       await server.close(force: true);
     });
-    final device = CastDevice(
-      id: 'tv',
-      name: '电视',
-      controlUri: Uri.parse('http://127.0.0.1:${server.port}/control'),
-      serviceType: 'urn:schemas-upnp-org:service:AVTransport:1',
-    );
+    const control = '_urn:schemas-upnp-org:service:AVTransport_control';
+    final device = DlnaCastRepository.parseDescription(
+      _description(
+        base: '<URLBase>http://127.0.0.1:${server.port}/</URLBase>',
+        control: control,
+      ),
+      Uri.parse('http://127.0.0.1:${server.port}/description/device.xml'),
+    ).single;
     final actions = <String>[], bodies = <String>[];
     var fail = false;
     server.listen((request) async {
+      expect(request.uri.path, '/$control');
       expect(request.headers.value('cookie'), isNull);
       expect(request.headers.value('authorization'), isNull);
       final action = request.headers
@@ -118,7 +390,10 @@ void main() {
     final uri = Uri.parse('https://cdn.example/video.mp4?sign=a%2Bb&expires=1');
     await repository.setMedia(
       device,
-      uri,
+      CastMedia(
+        request: const CastMediaRequest(aid: '1', cid: '2', quality: 80),
+        uri: uri,
+      ),
       '标题 <你好> & TV',
       cancellation: RequestCancellation(),
     );
@@ -133,7 +408,21 @@ void main() {
         .singleWhere((node) => node.name.local == name)
         .innerText;
     expect(value('CurrentURI'), uri.toString());
-    final metadata = XmlDocument.parse(value('CurrentURIMetaData'));
+    expect(bodies.first, isNot(contains('bilibili://')));
+    expect(bodies.first, isNot(contains('longDescription')));
+    final metadataArgument = document.descendants
+        .whereType<XmlElement>()
+        .singleWhere((node) => node.name.local == 'CurrentURIMetaData');
+    expect(metadataArgument.childElements, isEmpty);
+    expect(bodies.first, contains('<CurrentURIMetaData>&lt;DIDL-Lite'));
+    final metadata = XmlDocument.parse(metadataArgument.innerText);
+    expect(
+      metadata.descendants
+          .whereType<XmlElement>()
+          .singleWhere((node) => node.name.local == 'res')
+          .innerText,
+      uri.toString(),
+    );
     expect(
       metadata.descendants
           .whereType<XmlElement>()

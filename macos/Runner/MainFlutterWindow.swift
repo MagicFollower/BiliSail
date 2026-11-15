@@ -10,7 +10,6 @@ final class MacOSApplication {
   private var systemFontsChannel: FlutterMethodChannel?
   private var imageExportChannel: FlutterMethodChannel?
   private var appIconChannel: FlutterMethodChannel?
-  private var passportCookies: PassportWebCookies?
   private var desktopWindows: DesktopWindowController?
   private var mainGeometry: PersistentWindowGeometry?
   private var focusObservers: [NSObjectProtocol] = []
@@ -37,6 +36,26 @@ final class MacOSApplication {
       }
       if call.method == "getWindowFocus" {
         result(self.windowFocusSnapshot())
+        return
+      }
+      if call.method == "prepareHeadlessStartup" {
+        guard ProcessInfo.processInfo.arguments.contains("--bilisail-release-smoke"),
+              ProcessInfo.processInfo.arguments.contains("startup") else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        guard self.mainGeometry == nil, self.engine.viewController == nil,
+              !NSApp.windows.contains(where: { $0.isVisible }) else {
+          result(FlutterError(code: "startup_probe_has_window",
+                              message: "Startup lifecycle probe requires a windowless engine.", details: nil))
+          return
+        }
+        // Replay the engine-side activation that caused the cold-start defect.
+        // A directly launched CI process cannot rely on AppKit granting focus.
+        // Dart must observe hidden/disabled frames before it creates a window;
+        // attachMainWindow then reconciles with the real AppKit state.
+        synchronizeApplicationLifecycle(self.engine, isActive: true)
+        result(nil)
         return
       }
       if call.method == "probeWindowSpace" {
@@ -98,6 +117,10 @@ final class MacOSApplication {
       window.center()
       self.mainGeometry = PersistentWindowGeometry(window: window, role: "main")
       self.desktopWindows?.trackPresentation(window, viewID: viewID)
+      // Activation may have reached the headless engine before this window
+      // existed, leaving Flutter hidden. Refresh the engine's own visibility
+      // and activity state; the app's input-focus snapshot cannot enable frames.
+      synchronizeApplicationLifecycle(self.engine, isActive: NSApp.isActive)
       result(nil)
     }
 
@@ -126,9 +149,6 @@ final class MacOSApplication {
     ReleaseSmokeNativeStage.pluginsRegister.emit()
     RegisterGeneratedPlugins(registry: engine)
     ReleaseSmokeNativeStage.pluginsReady.emit()
-    passportCookies = PassportWebCookies(messenger: engine.binaryMessenger) {
-      NSApp.windows.compactMap { $0.contentView }
-    }
 
     let channel = FlutterMethodChannel(
       name: "bilisail/system_fonts",
@@ -232,6 +252,21 @@ final class MacOSApplication {
     NativeLifecycleEvent.engineShutdownBegin.record()
     engine.shutDownEngine()
     NativeLifecycleEvent.engineShutdownEnd.record()
+  }
+}
+
+// Use the public lifecycle delegate API so the engine's cached activity and
+// visibility agree with AppKit, including background/hidden launches. Do not
+// force a Dart resumed state or keep rendering genuinely hidden windows.
+private func synchronizeApplicationLifecycle(_ delegate: FlutterAppLifecycleDelegate, isActive: Bool) {
+  delegate.handleDidChangeOcclusionState?(
+    Notification(name: NSApplication.didChangeOcclusionStateNotification, object: NSApp))
+  if isActive {
+    delegate.handleWillBecomeActive?(
+      Notification(name: NSApplication.willBecomeActiveNotification, object: NSApp))
+  } else {
+    delegate.handleWillResignActive?(
+      Notification(name: NSApplication.willResignActiveNotification, object: NSApp))
   }
 }
 

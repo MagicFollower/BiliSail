@@ -12,6 +12,9 @@ import '../../../domain/media_cdn.dart';
 import '../../../domain/playback_mode.dart';
 import 'shortcut_settings.dart';
 import '../../../domain/recommendation_settings.dart';
+import '../../../domain/responsive_layout_settings.dart';
+import '../../../domain/wheel_scroll_animation.dart';
+export '../../../domain/wheel_scroll_animation.dart';
 
 export '../../../domain/video_codec.dart';
 export '../../../domain/video_quality.dart';
@@ -58,7 +61,7 @@ enum DanmakuStylePreference { shadow, stroke, plain }
 
 enum SponsorBlockMode { disabled, manual, automatic }
 
-enum PlaybackBackendPreference { mediaKit, fvp }
+enum PlaybackBackendPreference { mediaKit }
 
 enum AndroidVideoOutputPreference { renderedTexture, directTexture }
 
@@ -69,11 +72,14 @@ final class AppSettings {
     this.theme = AppThemePreference.system,
     this.appIcon = AppIconPreference.bilisail,
     this.navigationMode = WorkspaceNavigationMode.dualTabs,
+    this.predictiveBackEnabled = true,
+    this.closeTabOnMiddleClick = false,
+    this.closeTabOnRightClick = false,
+    this.closeTabOnDoubleClick = false,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
-    this.liquidGlassDock = true,
-    this.liquidVideoCards = true,
+    this.responsiveLayout = const ResponsiveLayoutSettings.defaults(),
     this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.allowConcurrentPlayback = false,
     this.font = AppFontPreference.harmonyOsSans,
@@ -83,6 +89,10 @@ final class AppSettings {
     this.checkPrereleaseUpdates = false,
     this.checkUpdatesOnStartup = false,
     this.wheelDampingRatio = 1.3,
+    this.wheelScrollAnimation = defaultWheelScrollAnimation,
+    this.chromiumScrollCurve = ChromiumScrollCurve.easeInOut,
+    this.wheelScrollDistanceMultiplier = 1,
+    this.wheelScrollDurationMultiplier = defaultWheelScrollDurationMultiplier,
     this.danmakuEnabled = true,
     this.danmakuShowVip = true,
     this.danmakuOpacity = 0.8,
@@ -127,7 +137,7 @@ final class AppSettings {
     this.danmakuScrollEnabled = true,
     this.danmakuTopEnabled = true,
     this.danmakuBottomEnabled = true,
-    this.danmakuFont = DanmakuFontPreference.system,
+    this.danmakuFont = DanmakuFontPreference.harmonyOsSans,
     this.danmakuSystemFontFamily = '',
     this.danmakuBold = false,
     this.danmakuStyle = DanmakuStylePreference.shadow,
@@ -141,6 +151,7 @@ final class AppSettings {
     this.subtitleBackgroundOpacity = 0.45,
     this.subtitleBottomPadding = 24.0,
     this.sponsorBlockMode = SponsorBlockMode.manual,
+    this.sponsorBlockBottomPadding = 120.0,
     List<String> sponsorBlockCategories = supportedSponsorCategories,
   }) : playbackMode =
            playbackMode ??
@@ -158,11 +169,14 @@ final class AppSettings {
     this.recommendations = const RecommendationSettings.defaults(),
     this.shortcuts = const ShortcutSettings.defaults(),
     this.navigationMode = WorkspaceNavigationMode.dualTabs,
+    this.predictiveBackEnabled = true,
+    this.closeTabOnMiddleClick = false,
+    this.closeTabOnRightClick = false,
+    this.closeTabOnDoubleClick = false,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.sidebarStyle = SidebarStyle.automatic,
     this.sidebarCollapsed = false,
-    this.liquidGlassDock = true,
-    this.liquidVideoCards = true,
+    this.responsiveLayout = const ResponsiveLayoutSettings.defaults(),
     this.defaultDynamicTab = DynamicPageTab.dynamic,
     this.allowConcurrentPlayback = false,
     this.videoCardHoverPlayback = true,
@@ -183,6 +197,10 @@ final class AppSettings {
        checkPrereleaseUpdates = false,
        checkUpdatesOnStartup = false,
        wheelDampingRatio = 1.3,
+       wheelScrollAnimation = defaultWheelScrollAnimation,
+       chromiumScrollCurve = ChromiumScrollCurve.easeInOut,
+       wheelScrollDistanceMultiplier = 1,
+       wheelScrollDurationMultiplier = defaultWheelScrollDurationMultiplier,
        danmakuEnabled = true,
        danmakuShowVip = true,
        danmakuOpacity = 0.8,
@@ -218,7 +236,7 @@ final class AppSettings {
        danmakuScrollEnabled = true,
        danmakuTopEnabled = true,
        danmakuBottomEnabled = true,
-       danmakuFont = DanmakuFontPreference.system,
+       danmakuFont = DanmakuFontPreference.harmonyOsSans,
        danmakuSystemFontFamily = '',
        danmakuBold = false,
        danmakuStyle = DanmakuStylePreference.shadow,
@@ -231,6 +249,7 @@ final class AppSettings {
        subtitleBackgroundOpacity = 0.45,
        subtitleBottomPadding = 24.0,
        sponsorBlockMode = SponsorBlockMode.manual,
+       sponsorBlockBottomPadding = 120.0,
        _danmakuBlockedWords = const [],
        _sponsorBlockCategories = supportedSponsorCategories;
 
@@ -239,23 +258,14 @@ final class AppSettings {
   final AppThemePreference theme;
   final AppIconPreference appIcon;
   final WorkspaceNavigationMode navigationMode;
+  final bool predictiveBackEnabled;
+  final bool closeTabOnMiddleClick;
+  final bool closeTabOnRightClick;
+  final bool closeTabOnDoubleClick;
   final NavigationBarMode navigationBarMode;
   final SidebarStyle sidebarStyle;
   final bool sidebarCollapsed;
-
-  /// Whether the narrow layout's bottom bar is the liquid glass dock. Off falls
-  /// back to the Material `NavigationBar` the dock replaced, which is what a
-  /// runtime that cannot composite the glass over scrolling content needs.
-  final bool liquidGlassDock;
-
-  /// Video items as painted glass boards: a translucent rounded surface with a
-  /// lit rim, floating over the page backdrop, with the item text re-laid for
-  /// that board. Painted only, never a `BackdropFilter` - a grid of cards would
-  /// sample its backdrop on every scrolled frame. Off keeps the flat card
-  /// exactly as it was, which is what a runtime that cannot composite glass
-  /// over scrolling content needs, the same reason as [liquidGlassDock].
-  final bool liquidVideoCards;
-
+  final ResponsiveLayoutSettings responsiveLayout;
   final DynamicPageTab defaultDynamicTab;
   final bool allowConcurrentPlayback;
   bool get concurrentPlaybackEnabled =>
@@ -274,6 +284,10 @@ final class AppSettings {
 
   /// Mouse-wheel spring damping ratio; 1 is critically damped.
   final double wheelDampingRatio;
+  final WheelScrollAnimation wheelScrollAnimation;
+  final ChromiumScrollCurve chromiumScrollCurve;
+  final double wheelScrollDistanceMultiplier;
+  final double wheelScrollDurationMultiplier;
   final bool danmakuEnabled;
   final bool danmakuShowVip;
   final double danmakuOpacity;
@@ -346,6 +360,7 @@ final class AppSettings {
   final double subtitleBackgroundOpacity;
   final double subtitleBottomPadding;
   final SponsorBlockMode sponsorBlockMode;
+  final double sponsorBlockBottomPadding;
   final List<String> _sponsorBlockCategories;
   List<String> get sponsorBlockCategories => _sponsorBlockCategories;
 
@@ -355,11 +370,14 @@ final class AppSettings {
     AppThemePreference? theme,
     AppIconPreference? appIcon,
     WorkspaceNavigationMode? navigationMode,
+    bool? predictiveBackEnabled,
+    bool? closeTabOnMiddleClick,
+    bool? closeTabOnRightClick,
+    bool? closeTabOnDoubleClick,
     NavigationBarMode? navigationBarMode,
     SidebarStyle? sidebarStyle,
     bool? sidebarCollapsed,
-    bool? liquidGlassDock,
-    bool? liquidVideoCards,
+    ResponsiveLayoutSettings? responsiveLayout,
     DynamicPageTab? defaultDynamicTab,
     bool? allowConcurrentPlayback,
     AppFontPreference? font,
@@ -369,6 +387,10 @@ final class AppSettings {
     bool? checkPrereleaseUpdates,
     bool? checkUpdatesOnStartup,
     double? wheelDampingRatio,
+    WheelScrollAnimation? wheelScrollAnimation,
+    ChromiumScrollCurve? chromiumScrollCurve,
+    double? wheelScrollDistanceMultiplier,
+    double? wheelScrollDurationMultiplier,
     bool? danmakuEnabled,
     bool? danmakuShowVip,
     double? danmakuOpacity,
@@ -427,6 +449,7 @@ final class AppSettings {
     double? subtitleBackgroundOpacity,
     double? subtitleBottomPadding,
     SponsorBlockMode? sponsorBlockMode,
+    double? sponsorBlockBottomPadding,
     List<String>? sponsorBlockCategories,
   }) => AppSettings(
     shortcuts: shortcuts ?? this.shortcuts,
@@ -434,11 +457,14 @@ final class AppSettings {
     theme: theme ?? this.theme,
     appIcon: appIcon ?? this.appIcon,
     navigationMode: navigationMode ?? this.navigationMode,
+    predictiveBackEnabled: predictiveBackEnabled ?? this.predictiveBackEnabled,
+    closeTabOnMiddleClick: closeTabOnMiddleClick ?? this.closeTabOnMiddleClick,
+    closeTabOnRightClick: closeTabOnRightClick ?? this.closeTabOnRightClick,
+    closeTabOnDoubleClick: closeTabOnDoubleClick ?? this.closeTabOnDoubleClick,
     navigationBarMode: navigationBarMode ?? this.navigationBarMode,
     sidebarStyle: sidebarStyle ?? this.sidebarStyle,
     sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
-    liquidGlassDock: liquidGlassDock ?? this.liquidGlassDock,
-    liquidVideoCards: liquidVideoCards ?? this.liquidVideoCards,
+    responsiveLayout: responsiveLayout ?? this.responsiveLayout,
     defaultDynamicTab: defaultDynamicTab ?? this.defaultDynamicTab,
     allowConcurrentPlayback:
         allowConcurrentPlayback ?? this.allowConcurrentPlayback,
@@ -450,6 +476,12 @@ final class AppSettings {
         checkPrereleaseUpdates ?? this.checkPrereleaseUpdates,
     checkUpdatesOnStartup: checkUpdatesOnStartup ?? this.checkUpdatesOnStartup,
     wheelDampingRatio: wheelDampingRatio ?? this.wheelDampingRatio,
+    wheelScrollAnimation: wheelScrollAnimation ?? this.wheelScrollAnimation,
+    chromiumScrollCurve: chromiumScrollCurve ?? this.chromiumScrollCurve,
+    wheelScrollDistanceMultiplier:
+        wheelScrollDistanceMultiplier ?? this.wheelScrollDistanceMultiplier,
+    wheelScrollDurationMultiplier:
+        wheelScrollDurationMultiplier ?? this.wheelScrollDurationMultiplier,
     danmakuEnabled: danmakuEnabled ?? this.danmakuEnabled,
     danmakuShowVip: danmakuShowVip ?? this.danmakuShowVip,
     danmakuOpacity: danmakuOpacity ?? this.danmakuOpacity,
@@ -533,6 +565,8 @@ final class AppSettings {
         subtitleBackgroundOpacity ?? this.subtitleBackgroundOpacity,
     subtitleBottomPadding: subtitleBottomPadding ?? this.subtitleBottomPadding,
     sponsorBlockMode: sponsorBlockMode ?? this.sponsorBlockMode,
+    sponsorBlockBottomPadding:
+        sponsorBlockBottomPadding ?? this.sponsorBlockBottomPadding,
     sponsorBlockCategories: List.unmodifiable(
       sponsorBlockCategories ?? this.sponsorBlockCategories,
     ),
@@ -574,6 +608,18 @@ final class AppSettings {
         value.isFinite ? value.clamp(min, max) : fallback;
     return copyWith(
       wheelDampingRatio: bounded(wheelDampingRatio, .5, 2, 1.3),
+      wheelScrollDistanceMultiplier: bounded(
+        wheelScrollDistanceMultiplier,
+        .25,
+        4,
+        1,
+      ),
+      wheelScrollDurationMultiplier: bounded(
+        wheelScrollDurationMultiplier,
+        .25,
+        3,
+        defaultWheelScrollDurationMultiplier,
+      ),
       systemFontFamily: family(systemFontFamily),
       danmakuSystemFontFamily: family(danmakuSystemFontFamily),
       preferredQuality: supportedQualities.contains(preferredQuality)
@@ -621,6 +667,12 @@ final class AppSettings {
       subtitleFontScale: bounded(subtitleFontScale, .5, 2, 1),
       subtitleBackgroundOpacity: bounded(subtitleBackgroundOpacity, 0, 1, .45),
       subtitleBottomPadding: bounded(subtitleBottomPadding, 0, 240, 24),
+      sponsorBlockBottomPadding: bounded(
+        sponsorBlockBottomPadding,
+        0,
+        240,
+        120,
+      ),
       sponsorBlockCategories: sponsorBlockCategories
           .where(supportedSponsorCategories.contains)
           .toSet()

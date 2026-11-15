@@ -26,7 +26,9 @@ import 'package:bilisail/features/video/application/watch_later_queue_registry.d
 import 'package:bilisail/features/video/domain/video_playback_sequence.dart';
 import 'package:bilisail/features/video/domain/watch_later_queue.dart';
 import 'package:bilisail/features/video/presentation/video_screen.dart';
+import 'package:bilisail/features/video/presentation/watch_later_queue_panel.dart';
 import 'package:bilisail/shared/ui/app_notice.dart';
+import 'package:bilisail/shared/ui/playback_page_commands.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -92,6 +94,323 @@ final _season = PgcSeason(
 );
 
 void main() {
+  for (final width in [390.0, 1200.0]) {
+    for (final mode in [PlaybackMode.continuous, PlaybackMode.listLoop]) {
+      for (final favorite in [false, true]) {
+        testWidgets(
+          'closing queue restores standalone playback width=$width mode=$mode favorite=$favorite',
+          (tester) async {
+            tester.view.devicePixelRatio = 1;
+            tester.view.physicalSize = Size(width, 900);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            addTearDown(tester.view.resetPhysicalSize);
+            final engine = _Engine();
+            final session = _session(engine);
+            addTearDown(session.close);
+            final parts = width == 390 ? [_parts.last] : _parts;
+            final a = VideoDetail(
+              summary: _video(_a, parts).summary,
+              description: '',
+              parts: parts,
+            );
+            WatchLaterQueue? queue = WatchLaterQueue(
+              id: 'close-queue',
+              scope: 'guest',
+              sessionEpoch: 0,
+              favoriteTitle: favorite ? '测试收藏夹' : null,
+              items: [
+                WatchLaterQueueItem(video: _video(_b, [_third]).summary),
+                WatchLaterQueueItem(video: a.summary),
+                WatchLaterQueueItem(
+                  video: _video(const VideoId('BV1234567892'), [
+                    _third,
+                  ]).summary,
+                ),
+              ],
+            );
+            final originalQueue = queue;
+            final opened = <VideoId>[];
+            String? cid = '102';
+            await tester.pumpWidget(
+              ProviderScope(
+                overrides: [
+                  playbackSessionProvider.overrideWithValue(session),
+                  authControllerProvider.overrideWith(_Auth.new),
+                  videoDetailProvider(_a).overrideWith((_) => a),
+                  relatedVideosProvider(_a).overrideWith((_) => const []),
+                  videoTagsProvider(_a).overrideWith((_) => const []),
+                ],
+                child: MaterialApp(
+                  home: Scaffold(
+                    body: StatefulBuilder(
+                      builder: (_, update) => VideoScreen(
+                        id: _a,
+                        initialCid: cid,
+                        queue: queue,
+                        onCloseQueue: (part) => update(() {
+                          queue = null;
+                          cid = part.cid;
+                        }),
+                        onOpenQueueVideo: opened.add,
+                        onAdvanceVideo: (id, _) => opened.add(id),
+                        onPartChanged: (part) => update(() => cid = part.cid),
+                        playerBuilder: (_, detail, part) => PlaybackPanel(
+                          detail: detail,
+                          part: part,
+                          settings: AppSettings(
+                            playbackMode: mode,
+                            danmakuEnabled: false,
+                          ),
+                          window: _Window(),
+                          onToggleComments: () {},
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            await _frames(tester);
+            final player = tester.state(find.byType(PlaybackPanel));
+            final commands = tester.widget<PlaybackPageCommands>(
+              find.byType(PlaybackPageCommands),
+            );
+            expect(commands.hasNext, isTrue);
+            await session.pause();
+            await _frames(tester);
+            final opens = engine.opens;
+            final position = session.snapshots.value.position;
+            // The close action also remains available while folded.
+            if (favorite) {
+              await tester.tap(find.text('测试收藏夹'));
+              await tester.pumpAndSettle();
+            }
+            await tester.tap(find.byTooltip('关闭播放列表'));
+            await tester.pumpAndSettle();
+            expect(find.text('关闭播放列表？'), findsOneWidget);
+            await tester.tap(find.text('取消'));
+            await tester.pumpAndSettle();
+            expect(queue, same(originalQueue));
+            expect(find.byType(WatchLaterQueuePanel), findsOneWidget);
+            expect(
+              tester
+                  .widget<WatchLaterQueuePanel>(
+                    find.byType(WatchLaterQueuePanel),
+                  )
+                  .expanded,
+              !favorite,
+            );
+            await tester.tap(find.byTooltip('关闭播放列表'));
+            await tester.pumpAndSettle();
+            await tester.tap(find.widgetWithText(FilledButton, '关闭'));
+            await tester.pumpAndSettle();
+            expect(find.byType(WatchLaterQueuePanel), findsNothing);
+            expect(find.byTooltip('关闭播放列表'), findsNothing);
+            expect(tester.state(find.byType(PlaybackPanel)), same(player));
+            expect(engine.opens, opens);
+            expect(engine.disposals, 0);
+            expect(session.part?.cid, '102');
+            expect(session.snapshots.value.position, position);
+            expect(session.snapshots.value.desiredPlaying, isFalse);
+            final standaloneCommands = tester.widget<PlaybackPageCommands>(
+              find.byType(PlaybackPageCommands),
+            );
+            expect(standaloneCommands.hasNext, isFalse);
+            expect(standaloneCommands.onRelatedCompleted, isNotNull);
+            // Fullscreen can retain the original callbacks across a rebuild.
+            commands.nextPart();
+            await _frames(tester);
+            expect(opened, isEmpty);
+            engine.end();
+            await _frames(tester);
+            expect(opened, isEmpty);
+            expect(session.detail?.summary.id, _a);
+            expect(
+              session.part?.cid,
+              mode == PlaybackMode.listLoop ? parts.first.cid : '102',
+            );
+            expect(
+              session.snapshots.value.phase,
+              mode == PlaybackMode.listLoop
+                  ? PlaybackPhase.playing
+                  : PlaybackPhase.ended,
+            );
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+            await _frames(tester);
+          },
+        );
+      }
+    }
+  }
+
+  test(
+    'reverse collection preserves part order, boundaries and outer queues',
+    () {
+      final a = _video(_a, _parts), b = _video(_b, [_third]);
+      expect(adjacentVideoSource(a, '101', 1, reverseCollection: true), (
+        id: _a,
+        cid: '102',
+      ));
+      expect(adjacentVideoSource(a, '102', 1, reverseCollection: true), isNull);
+      expect(adjacentVideoSource(b, '103', 1, reverseCollection: true), (
+        id: _a,
+        cid: '101',
+      ));
+      expect(adjacentVideoSource(a, '101', -1, reverseCollection: true), (
+        id: _b,
+        cid: '103',
+      ));
+      expect(
+        adjacentVideoSource(b, '103', -1, reverseCollection: true),
+        isNull,
+      );
+      expect(firstVideoSource(a, reverseCollection: true), (
+        id: _b,
+        cid: '103',
+      ));
+      final queue = WatchLaterQueue(
+        id: 'queue',
+        scope: 'guest',
+        sessionEpoch: 0,
+        items: [
+          WatchLaterQueueItem(video: a.summary),
+          WatchLaterQueueItem(video: b.summary),
+        ],
+      );
+      expect(
+        adjacentVideoSource(a, '102', 1, queue: queue, reverseCollection: true),
+        (id: _b, cid: null),
+      );
+      expect(firstVideoSource(b, queue: queue, reverseCollection: true), (
+        id: _a,
+        cid: null,
+      ));
+    },
+  );
+
+  for (final (mode, control) in [
+    for (final mode in [PlaybackMode.continuous, PlaybackMode.listLoop])
+      for (final control in ['倒序播放', '倒序']) (mode, control),
+  ]) {
+    testWidgets(
+      'reverse collection uses $mode via $control without reopening the current source',
+      (tester) async {
+        final engine = _Engine();
+        final session = _session(engine);
+        addTearDown(session.close);
+        final a = _video(_a, _parts), b = _video(_b, [_third]);
+        var id = _b;
+        String? cid = '103';
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              playbackSessionProvider.overrideWithValue(session),
+              authControllerProvider.overrideWith(_Auth.new),
+              for (final video in [a, b]) ...[
+                videoDetailProvider(video.summary.id)
+                    .overrideWith((_) => video),
+                relatedVideosProvider(video.summary.id)
+                    .overrideWith((_) => const []),
+                videoTagsProvider(video.summary.id)
+                    .overrideWith((_) => const []),
+              ],
+            ],
+            child: MaterialApp(
+              home: Scaffold(
+                body: StatefulBuilder(
+                  builder: (_, update) => VideoScreen(
+                    id: id,
+                    initialCid: cid,
+                    onPartChanged: (part) => update(() => cid = part.cid),
+                    onAdvanceVideo: (next, nextCid) => update(() {
+                      id = next;
+                      cid = nextCid;
+                    }),
+                    playerBuilder: (_, detail, part) => PlaybackPanel(
+                      detail: detail,
+                      part: part,
+                      settings: AppSettings(
+                        playbackMode: mode,
+                        danmakuEnabled: false,
+                      ),
+                      window: _Window(),
+                      onToggleComments: () {},
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await _frames(tester);
+        final commands = tester.widget<PlaybackPageCommands>(
+          find.byType(PlaybackPageCommands),
+        );
+        final opens = engine.opens;
+        await tester.ensureVisible(find.byTooltip(control));
+        await tester.tap(find.byTooltip(control));
+        await _frames(tester);
+        expect(engine.opens, opens);
+        expect(session.detail?.summary.id, _b);
+        commands.previousPart();
+        await _frames(tester);
+        expect(engine.opens, opens);
+        if (control == '倒序播放') {
+          await tester.tap(find.byTooltip('倒序'));
+          await _frames(tester);
+        } else {
+          expect(
+            tester
+                .widget<PlaybackPageCommands>(find.byType(PlaybackPageCommands))
+                .hasNext,
+            isTrue,
+          );
+          await tester.tap(find.byTooltip('顺序'));
+          await _frames(tester);
+          expect(
+            tester
+                .widget<PlaybackPageCommands>(find.byType(PlaybackPageCommands))
+                .hasNext,
+            isFalse,
+          );
+          expect(find.byTooltip('倒序播放'), findsOneWidget);
+          await tester.tap(find.byTooltip('倒序'));
+          await _frames(tester);
+          expect(engine.opens, opens);
+        }
+        engine.end();
+        await _frames(tester);
+        expect(session.detail?.summary.id, _a);
+        expect(session.part?.cid, '101');
+        expect(find.byTooltip('正序播放'), findsOneWidget);
+        expect(find.byTooltip('顺序'), findsOneWidget);
+        engine.end();
+        await _frames(tester);
+        expect(session.part?.cid, '102');
+        engine.end();
+        await _frames(tester);
+        expect(
+          session.detail?.summary.id,
+          mode == PlaybackMode.listLoop ? _b : _a,
+        );
+        expect(
+          session.part?.cid,
+          mode == PlaybackMode.listLoop ? '103' : '102',
+        );
+        expect(
+          session.snapshots.value.phase,
+          mode == PlaybackMode.listLoop
+              ? PlaybackPhase.playing
+              : PlaybackPhase.ended,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _frames(tester);
+      },
+    );
+  }
+
   test(
     'video order prioritizes parts, then collection or originating queue',
     () {

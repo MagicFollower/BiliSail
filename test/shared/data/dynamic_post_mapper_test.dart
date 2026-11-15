@@ -5,6 +5,98 @@ import 'package:bilisail/shared/data/dynamic_post_mapper.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('reservation action metadata survives forwarded domain mapping', () {
+    final post = mapDynamicPost(
+      ApiDynamicPost(
+        id: '1',
+        original: ApiDynamicPost(
+          id: '2',
+          contentCards: [
+            const ApiDynamicContentCard(
+              kind: ApiDynamicCardKind.reservation,
+              title: '直播预约',
+              reservation: ApiDynamicReservation(
+                id: '9007199254740993123',
+                status: 2,
+                type: 2,
+                total: 99,
+                description: '99人预约',
+                checkedText: '取消预约',
+                uncheckedText: '立即预约',
+                disabled: true,
+                ended: true,
+                hasJump: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    final r = post.original!.contentCards.single.reservation!;
+    expect(
+      (r.id, r.checked, r.total, r.description),
+      ('9007199254740993123', true, 99, '99人预约'),
+    );
+    expect(
+      (r.checkedText, r.uncheckedText, r.disabled, r.ended, r.hasJump),
+      ('取消预约', '立即预约', true, true, true),
+    );
+  });
+  test('maps topics and typed attachments through forwarded content without losing action destinations', () {
+    final topicUrl = Uri.https('www.bilibili.com', '/v/topic/detail', {
+      'topic_id': '9007199254740993123',
+    });
+    final target = Uri.https('mall.bilibili.com', '/item/1');
+    final action = Uri.https('mall.bilibili.com', '/item/2');
+    final value = mapDynamicPost(
+      ApiDynamicPost(
+        id: '1',
+        original: ApiDynamicPost(
+          id: '2',
+          authorPendantUrl: target,
+          topic: ApiDynamicTopic(
+            id: '9007199254740993123',
+            name: '话题',
+            url: topicUrl,
+          ),
+          badge: '置顶',
+          notice: '内容声明',
+          contentCards: [
+            for (final kind in ApiDynamicCardKind.values)
+              ApiDynamicContentCard(
+                kind: kind,
+                title: '标题',
+                description: '价格',
+                detail: '详情',
+                badge: '类型',
+                coverUrl: target,
+                url: target,
+                actionLabel: '查看',
+                actionUrl: action,
+              ),
+          ],
+        ),
+      ),
+    );
+    final original = value.original!;
+    expect(value.contentCards, isEmpty);
+    expect(original.topic?.id, '9007199254740993123');
+    expect(original.topic?.url, topicUrl);
+    expect(original.authorPendantUrl, target);
+    expect(original.badge, '置顶');
+    expect(original.notice, '内容声明');
+    expect(original.contentCards.map((e) => e.kind), DynamicCardKind.values);
+    final card = original.contentCards.first;
+    expect(
+      (card.title, card.description, card.detail, card.badge),
+      ('标题', '价格', '详情', '类型'),
+    );
+    expect(
+      (card.coverUrl, card.url, card.actionLabel, card.actionUrl),
+      (target, target, '查看', action),
+    );
+    expect(() => original.contentCards.clear(), throwsUnsupportedError);
+  });
   test(
     'dynamic actions retain typed comment identity and flags across originals',
     () {

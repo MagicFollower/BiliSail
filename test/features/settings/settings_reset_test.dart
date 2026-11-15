@@ -46,12 +46,19 @@ void main() {
           theme: AppThemePreference.dark,
           defaultDynamicTab: DynamicPageTab.videoDynamic,
           navigationMode: WorkspaceNavigationMode.multipleTabs,
+          closeTabOnMiddleClick: true,
+          closeTabOnRightClick: true,
+          closeTabOnDoubleClick: true,
           allowConcurrentPlayback: true,
           font: AppFontPreference.installed,
           systemFontFamily: 'Custom font',
           cacheImages: false,
           checkPrereleaseUpdates: true,
           wheelDampingRatio: .5,
+          wheelScrollAnimation: WheelScrollAnimation.spring,
+          chromiumScrollCurve: ChromiumScrollCurve.impulse,
+          wheelScrollDistanceMultiplier: 4,
+          wheelScrollDurationMultiplier: 3,
           autoPlay: false,
           videoCardHoverPlayback: !defaults.videoCardHoverPlayback,
           continuousPlayback: true,
@@ -64,6 +71,7 @@ void main() {
           danmakuEnabled: false,
           danmakuArea: .25,
           danmakuFontScale: 1.5,
+          danmakuFont: DanmakuFontPreference.system,
           highEnergyProgressEnabled: !defaults.highEnergyProgressEnabled,
           playerControlsMode:
               defaults.playerControlsMode == PlayerControlsMode.click
@@ -72,6 +80,7 @@ void main() {
           danmakuBlockedWords: ['blocked'],
           subtitlesEnabled: true,
           sponsorBlockMode: SponsorBlockMode.disabled,
+          sponsorBlockBottomPadding: 40,
           sponsorBlockCategories: [],
           shortcuts: const ShortcutSettings.defaults()
               .withEnabled(false)
@@ -110,8 +119,13 @@ void main() {
         expect(settings.defaultDynamicTab, DynamicPageTab.dynamic);
         expect(settings.checkPrereleaseUpdates, isFalse);
         expect(settings.navigationMode, defaults.navigationMode);
+        expect(settings.closeTabOnMiddleClick, isFalse);
+        expect(settings.closeTabOnRightClick, isFalse);
+        expect(settings.closeTabOnDoubleClick, isFalse);
         expect(settings.danmakuArea, defaults.danmakuArea);
         expect(settings.danmakuFontScale, defaults.danmakuFontScale);
+        expect(settings.danmakuFont, DanmakuFontPreference.harmonyOsSans);
+        expect(settings.danmakuFontFamily, 'HarmonyOS Sans');
         expect(settings.playerControlsMode, defaults.playerControlsMode);
         expect(
           settings.videoCardHoverPlayback,

@@ -78,6 +78,12 @@ Future<void> main(List<String> arguments) async {
     yield LicenseEntryWithLineBreaks([
       'Simple Icons (Bilibili)',
     ], await rootBundle.loadString('assets/branding/bilibili_LICENSE.md'));
+    yield LicenseEntryWithLineBreaks(
+      ['scroll_animator (Chromium)'],
+      await rootBundle.loadString(
+        'assets/licenses/scroll_animator_chromium.txt',
+      ),
+    );
   });
   MacOSApplicationWindow? applicationWindow;
   void smokeStage(String stage) {
@@ -106,6 +112,11 @@ Future<void> main(List<String> arguments) async {
       await stdout.flush();
       exit(0);
     }
+    if (smoke != null) {
+      smokeStage('headless-startup');
+      await MacOSApplicationWindow.prepareHeadlessStartupProbe();
+      smokeStage('headless-hidden');
+    }
     smokeStage('window-create');
     applicationWindow = await MacOSApplicationWindow.create();
     await applicationWindow?.prepare();
@@ -132,7 +143,6 @@ Future<void> main(List<String> arguments) async {
       }
       smokeStage('first-frame-wait');
       await smoke.waitForFirstFrame(
-        activate: mainWindow.service.activate,
         rasterized: () => WidgetsBinding.instance.waitUntilFirstFrameRasterized,
       );
       smokeStage('first-frame');

@@ -1,6 +1,7 @@
 import 'dart:ui' show ViewFocusEvent, ViewFocusState;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
@@ -13,7 +14,7 @@ import '../core/presentation/workspace_activity.dart';
 import '../core/presentation/mobile_playback_status_bar.dart';
 import '../core/presentation/page_back_scope.dart';
 import '../core/presentation/predictive_back_region.dart';
-import '../core/presentation/trackpad_back_region.dart';
+import '../core/presentation/history_back_region.dart';
 import 'workspace_tabs.dart';
 import 'workspace_navigation.dart';
 import 'workspace_back_presentation.dart';
@@ -139,7 +140,13 @@ final class BiliAppShell extends StatefulWidget {
     this.shortcuts = const ShortcutSettings.defaults(),
     this.appIcon = AppIconPreference.bilisail,
     this.navigationMode,
+    this.predictiveBackEnabled = true,
+    this.closeTabOnMiddleClick = false,
+    this.closeTabOnRightClick = false,
+    this.closeTabOnDoubleClick = false,
     this.sidebarStyle = SidebarStyle.automatic,
+    this.navigationBarBreakpoint = 600,
+    this.sidebarExpandedWidth = 1600,
     this.navigationBarMode = NavigationBarMode.automatic,
     this.liquidGlassDock = true,
     this.sidebarCollapsed,
@@ -153,7 +160,13 @@ final class BiliAppShell extends StatefulWidget {
   final ShortcutSettings shortcuts;
   final AppIconPreference appIcon;
   final WorkspaceNavigationMode? navigationMode;
+  final bool predictiveBackEnabled;
+  final bool closeTabOnMiddleClick;
+  final bool closeTabOnRightClick;
+  final bool closeTabOnDoubleClick;
   final SidebarStyle sidebarStyle;
+  final int navigationBarBreakpoint;
+  final int sidebarExpandedWidth;
   final NavigationBarMode navigationBarMode;
   final bool liquidGlassDock;
   final bool? sidebarCollapsed;
@@ -207,6 +220,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
 
   bool _frameShowsBack(BuildContext context) {
     final tab = _frameTab(context);
+    if (tab.isTopic) return false;
     return (_dualTabs || _singlePage) &&
         _canGoBack &&
         (!(tab.pinned && tab.isRoot) ||
@@ -228,7 +242,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
     final compact = _compactLayout(width);
     if (_mobile && compact) return true;
     return switch (widget.navigationBarMode) {
-      NavigationBarMode.automatic => compact,
+      NavigationBarMode.automatic => width < widget.navigationBarBreakpoint,
       NavigationBarMode.bottom => true,
       NavigationBarMode.sidebar => false,
     };
@@ -259,7 +273,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
 
   bool _goBackWithinPage() => _pageBack[_displayTab.id]?.goBack() ?? false;
 
-  bool get _canTrackpadBack => !_dualTabs && !_singlePage
+  bool get _canGestureBack => !_dualTabs && !_singlePage
       ? (_pageBack[_displayTab.id]?.canGoBack ?? false) || !_displayTab.pinned
       : _canGoBack;
 
@@ -267,7 +281,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
     if (!_goBackWithinPage()) _closeTab(_workspace.activeId);
   }
 
-  void _trackpadBack() {
+  void _gestureBack() {
     // Separate tabs close just like the close command; visit history can
     // otherwise select an old player while retaining the page being left.
     if (!_dualTabs && !_singlePage) {
@@ -416,7 +430,13 @@ final class _BiliAppShellState extends State<BiliAppShell>
         return controller;
       });
   void _restoreSearch() {
-    _searchFor(_displayTab).text = _searchDrafts[_displayTab.id] ?? '';
+    final tab = _displayTab;
+    final query =
+        _searchDrafts[tab.id] ??
+        (tab.location.path == '/search'
+            ? tab.location.queryParameters['q'] ?? ''
+            : '');
+    _searchFor(tab).text = query;
   }
 
   @override
@@ -725,8 +745,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
       ),
     );
     final windowBuilder = widget.playbackWindowBuilder;
-    final presented = TrackpadBackRegion(
-      enabled: _canTrackpadBack,
+    final presented = HistoryBackRegion(
+      enabled: _canGestureBack,
       identity: (
         _backIdentity(_displayTab),
         _desktopDual
@@ -734,7 +754,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
             : _workspace.backDestination()?.location,
         _pageBack[_displayTab.id]?.canGoBack ?? false,
       ),
-      onBack: _trackpadBack,
+      onBack: _gestureBack,
       child: _withBackPreview(context, main),
     );
     if (windowBuilder == null) return presented;
@@ -750,7 +770,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
           playback != null && _pageKeys[playback.id]?.currentContext != null,
       playback: playback == null
           ? null
-          : TrackpadBackRegion(
+          : HistoryBackRegion(
               enabled: true,
               identity: (
                 _backIdentity(playback),
@@ -781,83 +801,50 @@ final class _BiliAppShellState extends State<BiliAppShell>
         // exactly the widget that is actually displayed.
         final dockPage =
             _usesBottomNavigation(
-              MediaQuery.sizeOf(context).width -
-                  MediaQuery.paddingOf(context).horizontal,
-            ) &&
-            !(_frameTab(context).isPlayback || _frameTab(context).isProfile);
-        // Only the liquid dock itself overlays content. The unselected
-        // strip keeps its old "reserve space" behavior on the messages
-        // page, which has no dock destination; history and downloads
-        // route through the dock, so they stay on the glass bar too.
-        final dockShown =
-            dockPage &&
-            sectionForLocation(
-                  _frameTab(context).location,
-                  compact: _compactChannels,
-                ) !=
-                WorkspaceSection.messages;
-        final dockVisible =
-            dockShown && MediaQuery.viewInsetsOf(context).bottom == 0;
-        final surface = videoCardSurfaceOf(context);
-        // The boards are translucent, so the wash has to sit behind the whole
-        // Scaffold rather than inside the body: inside SafeArea it would leave
-        // the status-bar strip in the flat `surface` colour and show a seam.
-        return MobilePlaybackStatusBar(
-          enabled: tab.isPlayback,
-          builder: (context) => _liquidBackdrop(
-            surface,
-            Scaffold(
-              backgroundColor: surface.hasBackdrop
-                  ? Colors.transparent
-                  : _android || _compactChannels
-                  ? Theme.of(context).colorScheme.surface
-                  : null,
-              // Edge-to-edge: the liquid dock overlays the body, so content
-              // scrolls behind it and the transparent gesture bar. extendBody
-              // injects the dock's height as MediaQuery.padding.bottom, which
-              // scrolling lists consume to keep their last items tappable.
-              // Keep the bar mounted on the pages that show it: unmounting it
-              // on keyboard open would restart its reveal animation when the
-              // keyboard closes.
-              extendBody: dockVisible,
-              bottomNavigationBar: _dockPage(context)
-                  ? _animatedBottomNavigation(context)
-                  : null,
-              floatingActionButton:
-                  _usesBottomNavigation(
-                        MediaQuery.sizeOf(context).width -
-                            MediaQuery.paddingOf(context).horizontal,
-                      ) &&
-                      _dualTabs &&
-                      !_desktopDual &&
-                      !tab.isPlayback &&
-                      _workspace.playbackId != null &&
-                      !(_gestureDestination?.id == tab.id &&
-                          (_gestureSource?.isPlayback ?? false) &&
-                          _workspace.playbackHistory.isEmpty)
-                  ? FloatingActionButton.small(
-                      tooltip: '返回播放',
-                      onPressed: () => _selectTab(_workspace.playbackId!),
-                      child: const Icon(Icons.play_arrow_rounded),
-                    )
-                  : null,
-              // Edge-to-edge: when the dock overlays the body, keep the bottom
-              // inset out of SafeArea so content reaches the screen bottom. The
-              // dock height arrives as MediaQuery.padding.bottom (extendBody) and
-              // the transparent gesture bar draws over the app's own background.
-              body: SafeArea(
-                bottom: !dockVisible,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = _usesBottomNavigation(constraints.maxWidth);
-                    final extended = switch (widget.sidebarStyle) {
-                      SidebarStyle.automatic => constraints.maxWidth >= 1600,
-                      SidebarStyle.expanded => true,
-                      SidebarStyle.compact => false,
-                    };
-                    final playback = _workspace.latestPlayback;
-                    final captionTools = workspaceHeaderVisibleForPlatform(
-                      Theme.of(context).platform,
+                  MediaQuery.sizeOf(context).width -
+                      MediaQuery.paddingOf(context).horizontal,
+                ) &&
+                _dualTabs &&
+                !_desktopDual &&
+                !tab.isPlayback &&
+                !tab.isTopic &&
+                _workspace.playbackId != null &&
+                !(_gestureDestination?.id == tab.id &&
+                    (_gestureSource?.isPlayback ?? false) &&
+                    _workspace.playbackHistory.isEmpty)
+            ? FloatingActionButton.small(
+                tooltip: '返回播放',
+                onPressed: () => _selectTab(_workspace.playbackId!),
+                child: const Icon(Icons.play_arrow_rounded),
+              )
+            : null,
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = _usesBottomNavigation(constraints.maxWidth);
+              final extended = switch (widget.sidebarStyle) {
+                SidebarStyle.automatic =>
+                  constraints.maxWidth >= widget.sidebarExpandedWidth,
+                SidebarStyle.expanded => true,
+                SidebarStyle.compact => false,
+              };
+              final playback = _workspace.latestPlayback;
+              final captionTools = workspaceHeaderVisibleForPlatform(
+                Theme.of(context).platform,
+              );
+              final navigationTools = compact
+                  ? null
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _sidebarToggle(context, caption: captionTools),
+                        if (!tab.isPlayback)
+                          _returnToPlaybackButton(
+                            context,
+                            enabled: playback != null,
+                            caption: captionTools,
+                          ),
+                      ],
                     );
                     final navigationTools = compact
                         ? null
@@ -904,79 +891,53 @@ final class _BiliAppShellState extends State<BiliAppShell>
                                 compact: compact,
                                 extended: extended,
                               ),
-                              Expanded(
-                                child: AnimatedPadding(
-                                  duration:
-                                      compact ||
-                                          MediaQuery.disableAnimationsOf(
-                                            context,
-                                          )
-                                      ? Duration.zero
-                                      : const Duration(milliseconds: 240),
-                                  curve: Curves.easeInOutCubic,
-                                  padding: compact
-                                      ? EdgeInsets.zero
-                                      : EdgeInsets.fromLTRB(
-                                          _sidebarCollapsed ? 16 : 0,
-                                          12,
-                                          16,
-                                          16,
-                                        ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(
-                                      compact ? 0 : 18,
-                                    ),
-                                    child: ColoredBox(
-                                      color: colors.surface,
-                                      // Switching a retained root restores dense image
-                                      // lists. Keep that content stationary while the
-                                      // bottom bar animates its selected destination.
-                                      child: RepaintBoundary(
-                                        key: const ValueKey(
-                                          'workspace-primary-content',
-                                        ),
-                                        child: ScrollHeaderRegion(
-                                          enabled: compact,
-                                          child: ScrollHeaderLayout(
-                                            enabled: compact,
-                                            header:
-                                                compact &&
-                                                    tab.location.path !=
-                                                        '/search' &&
-                                                    !tab.isPlayback &&
-                                                    !tab.isProfile &&
-                                                    !tab.isMessages &&
-                                                    sectionForLocation(
-                                                          tab.location,
-                                                          compact:
-                                                              _compactChannels,
-                                                        ) ==
-                                                        WorkspaceSection.home
-                                                ? _tools(context)
-                                                : const SizedBox.shrink(),
-                                            child: Column(
-                                              children: [
-                                                if (tab.location.path !=
-                                                        '/search' &&
-                                                    !tab.isPlayback &&
-                                                    !tab.isProfile &&
-                                                    !tab.isMessages)
-                                                  LayoutBuilder(
-                                                    builder:
-                                                        (context, bounds) =>
-                                                            _navigationHeader(
-                                                              context,
-                                                              bounds,
-                                                              _channelBar(
-                                                                context,
-                                                                compact:
-                                                                    compact,
-                                                              ),
-                                                              showTools: compact
-                                                                  ? false
-                                                                  : null,
-                                                              compact: compact,
-                                                            ),
+                              child: ColoredBox(
+                                color: colors.surface,
+                                // Switching a retained root restores dense image
+                                // lists. Keep that content stationary while the
+                                // bottom bar animates its selected destination.
+                                child: RepaintBoundary(
+                                  key: const ValueKey(
+                                    'workspace-primary-content',
+                                  ),
+                                  child: ScrollHeaderRegion(
+                                    enabled: compact,
+                                    child: ScrollHeaderLayout(
+                                      enabled: compact,
+                                      header:
+                                          compact &&
+                                              tab.location.path != '/search' &&
+                                              !tab.isPlayback &&
+                                              !tab.isProfile &&
+                                              !tab.isTopic &&
+                                              !tab.isMessages &&
+                                              sectionForLocation(
+                                                    tab.location,
+                                                    compact: _compactChannels,
+                                                  ) ==
+                                                  WorkspaceSection.home
+                                          ? _tools(context)
+                                          : const SizedBox.shrink(),
+                                      child: Column(
+                                        children: [
+                                          if (tab.location.path != '/search' &&
+                                              !tab.isPlayback &&
+                                              !tab.isProfile &&
+                                              !tab.isTopic &&
+                                              !tab.isMessages)
+                                            LayoutBuilder(
+                                              builder: (context, bounds) =>
+                                                  _navigationHeader(
+                                                    context,
+                                                    bounds,
+                                                    _channelBar(
+                                                      context,
+                                                      compact: compact,
+                                                    ),
+                                                    showTools: compact
+                                                        ? false
+                                                        : null,
+                                                    compact: compact,
                                                   ),
                                                 Expanded(
                                                   child: PageToolbarLeading(
@@ -1005,11 +966,16 @@ final class _BiliAppShellState extends State<BiliAppShell>
                           ),
                         ),
                       ],
-                    );
-                  },
-                ),
-              ),
-            ),
+                    ),
+                  ),
+                  if (compact &&
+                      !tab.isPlayback &&
+                      !tab.isProfile &&
+                      !tab.isTopic)
+                    _animatedBottomNavigation(context),
+                ],
+              );
+            },
           ),
         );
       },
@@ -1100,6 +1066,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
       builder: (context, constraints) => PredictiveBackRegion(
         // Match the frame's navigation layout after SafeArea consumes padding.
         enabled:
+            widget.predictiveBackEnabled &&
             supported &&
             _usesBottomNavigation(
               constraints.maxWidth - MediaQuery.paddingOf(context).horizontal,
@@ -1304,6 +1271,8 @@ final class _BiliAppShellState extends State<BiliAppShell>
                                       _desktopDual &&
                                           tab.id == _workspace.playbackId
                                       ? _playbackWindowBack
+                                      : view.isTopic
+                                      ? _gestureBack
                                       : () {
                                           _goBack();
                                         },
@@ -2140,6 +2109,7 @@ final class _BiliAppShellState extends State<BiliAppShell>
 
   Widget _tab(BuildContext context, WorkspaceTab tab) {
     final selected = tab.id == _frameTab(context).id;
+    final canCloseWithMouse = !_singlePage && !_dualTabs && !tab.pinned;
     final colors = Theme.of(context).colorScheme;
     return Padding(
       key: _tabKeys.putIfAbsent((
@@ -2148,49 +2118,61 @@ final class _BiliAppShellState extends State<BiliAppShell>
         tab.id,
       ), GlobalKey.new),
       padding: const EdgeInsets.only(left: 3, top: 4),
-      child: Material(
-        color: selected ? colors.surface : Colors.transparent,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-        child: InkWell(
-          key: ValueKey('workspace-tab-${tab.id}'),
-          onTap: () => _selectTab(tab.id),
+      child: GestureDetector(
+        supportedDevices: const {PointerDeviceKind.mouse},
+        onTertiaryTapUp: canCloseWithMouse && widget.closeTabOnMiddleClick
+            ? (_) => _closeTab(tab.id)
+            : null,
+        onSecondaryTapUp: canCloseWithMouse && widget.closeTabOnRightClick
+            ? (_) => _closeTab(tab.id)
+            : null,
+        onDoubleTap: canCloseWithMouse && widget.closeTabOnDoubleClick
+            ? () => _closeTab(tab.id)
+            : null,
+        child: Material(
+          color: selected ? colors.surface : Colors.transparent,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-          child: Semantics(
-            selected: selected,
-            button: true,
-            child: SizedBox(
-              width: tab.pinned ? 116 : 176,
-              height: 38,
-              child: Row(
-                children: [
-                  const SizedBox(width: 12),
-                  Icon(_tabIcon(tab), size: 15),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _dualTabs && !tab.isPlayback
-                          ? '浏览 · ${tab.title}'
-                          : tab.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  if (!tab.pinned && (!_dualTabs || tab.isPlayback))
-                    IconButton(
-                      key: ValueKey('close-workspace-tab-${tab.id}'),
-                      tooltip: '关闭${tab.title}',
-                      onPressed: () => _closeTab(tab.id),
-                      constraints: const BoxConstraints.tightFor(
-                        width: 30,
-                        height: 30,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.close, size: 13),
-                    )
-                  else
+          child: InkWell(
+            key: ValueKey('workspace-tab-${tab.id}'),
+            onTap: () => _selectTab(tab.id),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+            child: Semantics(
+              selected: selected,
+              button: true,
+              child: SizedBox(
+                width: tab.pinned ? 116 : 176,
+                height: 38,
+                child: Row(
+                  children: [
                     const SizedBox(width: 12),
-                ],
+                    Icon(_tabIcon(tab), size: 15),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _dualTabs && !tab.isPlayback
+                            ? '浏览 · ${tab.title}'
+                            : tab.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    if (!tab.pinned && (!_dualTabs || tab.isPlayback))
+                      IconButton(
+                        key: ValueKey('close-workspace-tab-${tab.id}'),
+                        tooltip: '关闭${tab.title}',
+                        onPressed: () => _closeTab(tab.id),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 30,
+                          height: 30,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.close, size: 13),
+                      )
+                    else
+                      const SizedBox(width: 12),
+                  ],
+                ),
               ),
             ),
           ),

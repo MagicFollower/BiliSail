@@ -24,6 +24,141 @@ import 'package:go_router/go_router.dart';
 import 'package:liquid_dock_navi/liquid_dock_navi.dart';
 
 void main() {
+  for (final method in ['middle', 'right', 'double']) {
+    for (final enabled in [false, true]) {
+      _workspaceTestWidgets('tab mouse close $method enabled=$enabled', (
+        tester,
+      ) async {
+        final disposed = <String>[];
+        final router = _router(
+          (_, tab) => _CounterPage(tab: tab, onDispose: disposed.add),
+          closeTabOnMiddleClick: enabled && method == 'middle',
+          closeTabOnRightClick: enabled && method == 'right',
+          closeTabOnDoubleClick: enabled && method == 'double',
+        );
+        addTearDown(router.dispose);
+        await tester.pumpWidget(InputTestApp.router(routerConfig: router));
+        await tester.pumpAndSettle();
+        router.go('/video/BV1234567890');
+        await tester.pumpAndSettle();
+        router.go('/video/BV1234567891');
+        await tester.pumpAndSettle();
+        final active = router.routeInformationProvider.value.uri;
+        final inactive = find.byKey(const ValueKey('workspace-tab-tab-1'));
+        await _clickTab(tester, inactive, method);
+        expect(inactive, enabled ? findsNothing : findsOneWidget);
+        expect(disposed.contains('tab-1'), enabled);
+        expect(disposed.contains('tab-2'), isFalse);
+        if (enabled || method != 'double') {
+          expect(router.routeInformationProvider.value.uri, active);
+        }
+        final current = find.byKey(const ValueKey('workspace-tab-tab-2'));
+        await _clickTab(tester, current, method);
+        expect(current, enabled ? findsNothing : findsOneWidget);
+        expect(disposed.contains('tab-2'), enabled);
+        await _clickTab(
+          tester,
+          find.byKey(const ValueKey('workspace-tab-home')),
+          method,
+        );
+        expect(
+          find.byKey(const ValueKey('workspace-tab-home')),
+          findsOneWidget,
+        );
+        expect(disposed.contains('home'), isFalse);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  for (final mode in [
+    WorkspaceNavigationMode.singlePage,
+    WorkspaceNavigationMode.dualTabs,
+  ]) {
+    _workspaceTestWidgets('tab mouse close options are inactive in $mode', (
+      tester,
+    ) async {
+      final router = _router(
+        (_, tab) => Text('page ${tab.id}'),
+        navigationMode: mode,
+        closeTabOnMiddleClick: true,
+        closeTabOnRightClick: true,
+        closeTabOnDoubleClick: true,
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(InputTestApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      router.go('/video/BV1234567890');
+      await tester.pumpAndSettle();
+      final location = router.routeInformationProvider.value.uri;
+      final tabs = find.byWidgetPredicate(
+        (widget) =>
+            widget is InkWell &&
+            widget.key.toString().contains('workspace-tab-'),
+      );
+      if (tabs.evaluate().isNotEmpty) {
+        for (final method in ['middle', 'right', 'double']) {
+          await _clickTab(tester, tabs.last, method);
+          expect(router.routeInformationProvider.value.uri, location);
+        }
+      }
+      expect(find.text('page tab-1'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  _workspaceTestWidgets(
+    'mouse close options preserve touch double tap and close button',
+    (tester) async {
+      final router = _router(
+        (_, tab) => Text('page ${tab.id}'),
+        closeTabOnMiddleClick: true,
+        closeTabOnRightClick: true,
+        closeTabOnDoubleClick: true,
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(InputTestApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      router.go('/video/BV1234567890');
+      await tester.pumpAndSettle();
+      final tab = find.byKey(const ValueKey('workspace-tab-tab-1'));
+      await tester.tap(tab);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(tab);
+      await tester.pumpAndSettle();
+      expect(tab, findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('close-workspace-tab-tab-1')));
+      await tester.pumpAndSettle();
+      expect(tab, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  _workspaceTestWidgets('all tab close mouse options work together', (
+    tester,
+  ) async {
+    final router = _router(
+      (_, tab) => Text('page ${tab.id}'),
+      closeTabOnMiddleClick: true,
+      closeTabOnRightClick: true,
+      closeTabOnDoubleClick: true,
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(InputTestApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    var index = 0;
+    for (final method in ['middle', 'right', 'double']) {
+      router.go('/video/BV123456789${index++}');
+      await tester.pumpAndSettle();
+      final tab = find.byKey(ValueKey('workspace-tab-tab-$index'));
+      expect(tab, findsOneWidget);
+      await _clickTab(tester, tab, method);
+      expect(tab, findsNothing);
+      expect(router.routeInformationProvider.value.uri.path, '/');
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   for (final mode in WorkspaceNavigationMode.values) {
     for (final path in ['/video', '/pgc', '/live', '/offline']) {
       _workspaceTestWidgets(
@@ -122,7 +257,7 @@ void main() {
   }
   for (final mode in WorkspaceNavigationMode.values) {
     _workspaceTestWidgets(
-      'submitted search clears across navigation in $mode',
+      'search query remains editable across navigation in $mode',
       (tester) async {
         tester.view.devicePixelRatio = 1;
         tester.view.physicalSize = const Size(1200, 800);
@@ -138,7 +273,7 @@ void main() {
         router.go('/search?q=existing');
         await tester.pumpAndSettle();
         final search = find.byKey(const ValueKey('workspace-search'));
-        expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+        expect(tester.widget<TextField>(search).controller!.text, 'existing');
         await tester.enterText(search, ' 新关键词 ');
         await tester.testTextInput.receiveAction(TextInputAction.search);
         await tester.pumpAndSettle();
@@ -146,8 +281,25 @@ void main() {
           router.routeInformationProvider.value.uri.queryParameters['q'],
           '新关键词',
         );
-        expect(tester.widget<TextField>(search).controller!.text, isEmpty);
-        router.go('/dynamic');
+        expect(tester.widget<TextField>(search).controller!.text, '新关键词');
+        router.go('/?channel=dynamic');
+        await tester.pumpAndSettle();
+        router.go('/search?q=新关键词');
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(search).controller!.text, '新关键词');
+        await tester.enterText(search, '新关键词 教程');
+        await tester.testTextInput.receiveAction(TextInputAction.search);
+        await tester.pumpAndSettle();
+        expect(
+          router.routeInformationProvider.value.uri.queryParameters['q'],
+          '新关键词 教程',
+        );
+        expect(tester.widget<TextField>(search).controller!.text, '新关键词 教程');
+        router.go('/search?q=新关键词');
+        await tester.pumpAndSettle();
+        // An explicitly cleared draft must not be filled from the route again.
+        await tester.enterText(search, '');
+        router.go('/?channel=dynamic');
         await tester.pumpAndSettle();
         router.go('/search?q=新关键词');
         await tester.pumpAndSettle();
@@ -2064,6 +2216,20 @@ void _workspaceTestWidgets(
   variant: variant ?? TargetPlatformVariant.only(TargetPlatform.windows),
 );
 
+Future<void> _clickTab(WidgetTester tester, Finder tab, String method) async {
+  final buttons = switch (method) {
+    'middle' => kMiddleMouseButton,
+    'right' => kSecondaryMouseButton,
+    _ => kPrimaryMouseButton,
+  };
+  await tester.tap(tab, kind: PointerDeviceKind.mouse, buttons: buttons);
+  if (method == 'double') {
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(tab, kind: PointerDeviceKind.mouse, buttons: buttons);
+  }
+  await tester.pumpAndSettle();
+}
+
 GoRouter _router(
   WorkspacePageBuilder builder, {
   bool customCaption = false,
@@ -2074,6 +2240,9 @@ GoRouter _router(
       WorkspaceNavigationMode.multipleTabs,
   String initialLocation = '/',
   DynamicPageTab defaultDynamicTab = DynamicPageTab.dynamic,
+  bool closeTabOnMiddleClick = false,
+  bool closeTabOnRightClick = false,
+  bool closeTabOnDoubleClick = false,
 }) => GoRouter(
   observers: [],
   initialLocation: initialLocation,
@@ -2084,6 +2253,9 @@ GoRouter _router(
         child: BiliAppShell(
           shortcuts: shortcuts,
           navigationMode: navigationMode,
+          closeTabOnMiddleClick: closeTabOnMiddleClick,
+          closeTabOnRightClick: closeTabOnRightClick,
+          closeTabOnDoubleClick: closeTabOnDoubleClick,
           location: state.uri.toString(),
           accountBuilder: accountBuilder,
           pageBuilder: (context, tab) => tab.location.path == '/search'

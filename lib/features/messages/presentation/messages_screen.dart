@@ -1020,6 +1020,7 @@ class _NotificationRow extends ConsumerWidget {
     final theme = Theme.of(context);
     final user = entry.userId;
     final canReply = entry.replyContext != null;
+    final target = entry.targetUrl;
     final source = [
       entry.sourceTitle,
       entry.sourceText,
@@ -1027,7 +1028,9 @@ class _NotificationRow extends ConsumerWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: !canReply
+        onTap: target != null && onOpenTarget != null
+            ? () => onOpenTarget?.call(target)
+            : !canReply
             ? null
             : () => showMessageReply(
                 context,
@@ -1384,7 +1387,7 @@ class _ConversationThread extends ConsumerWidget {
       return StateView.error(message: error, onAction: onRefresh);
     }
     if (items.isEmpty) return const StateView.empty(message: '暂无会话消息');
-    return ListView.builder(
+    final list = ListView.builder(
       reverse: true,
       padding: const EdgeInsets.all(16),
       itemCount: items.length + 1,
@@ -1470,6 +1473,14 @@ class _ConversationThread extends ConsumerWidget {
           ),
         );
       },
+    );
+    // A fling's stretch can keep animating after moving away from the edge.
+    return NotificationListener<OverscrollIndicatorNotification>(
+      onNotification: (notification) {
+        notification.disallowIndicator();
+        return false;
+      },
+      child: list,
     );
   }
 }

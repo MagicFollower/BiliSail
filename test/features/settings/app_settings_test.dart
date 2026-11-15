@@ -2,6 +2,50 @@ import 'package:bilisail/features/settings/domain/app_settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('wheel parameters default, normalize and copy independently', () {
+    for (final settings in [AppSettings(), const AppSettings.defaults()]) {
+      expect(settings.chromiumScrollCurve, ChromiumScrollCurve.easeInOut);
+      expect(settings.wheelScrollDistanceMultiplier, 1);
+      expect(settings.wheelScrollDurationMultiplier, 1.3);
+    }
+    for (final (input, distance, duration) in [
+      (-1.0, .25, .25),
+      (.25, .25, .25),
+      (1.0, 1.0, 1.0),
+      (2.5, 2.5, 2.5),
+      (10.0, 4.0, 3.0),
+      (double.nan, 1.0, 1.3),
+      (double.infinity, 1.0, 1.3),
+    ]) {
+      final settings = AppSettings(
+        wheelScrollAnimation: WheelScrollAnimation.multiplatform,
+        chromiumScrollCurve: ChromiumScrollCurve.impulse,
+        wheelDampingRatio: .75,
+        wheelScrollDistanceMultiplier: input,
+        wheelScrollDurationMultiplier: input,
+      ).normalized().copyWith(theme: AppThemePreference.dark);
+      expect(settings.wheelScrollDistanceMultiplier, distance);
+      expect(settings.wheelScrollDurationMultiplier, duration);
+      expect(settings.chromiumScrollCurve, ChromiumScrollCurve.impulse);
+      expect(settings.wheelScrollAnimation, WheelScrollAnimation.multiplatform);
+      expect(settings.wheelDampingRatio, .75);
+    }
+  });
+  test('wheel animation defaults to spring and preserves explicit modes', () {
+    expect(AppSettings().wheelScrollAnimation, WheelScrollAnimation.spring);
+    expect(
+      const AppSettings.defaults().wheelScrollAnimation,
+      WheelScrollAnimation.spring,
+    );
+    for (final mode in WheelScrollAnimation.values) {
+      final settings = AppSettings(
+        wheelScrollAnimation: mode,
+        wheelDampingRatio: .75,
+      ).normalized().copyWith(theme: AppThemePreference.dark);
+      expect(settings.wheelScrollAnimation, mode);
+      expect(settings.wheelDampingRatio, .75);
+    }
+  });
   test(
     'send style defaults, copies and validates each field independently',
     () {
@@ -221,7 +265,9 @@ void main() {
     'danmaku style defaults preserve existing behavior and clamp limits',
     () {
       final defaults = const AppSettings.defaults();
-      expect(defaults.danmakuFont, DanmakuFontPreference.system);
+      expect(defaults.danmakuFont, DanmakuFontPreference.harmonyOsSans);
+      expect(defaults.danmakuFontFamily, 'HarmonyOS Sans');
+      expect(AppSettings().danmakuFont, defaults.danmakuFont);
       expect(defaults.danmakuStyle, DanmakuStylePreference.shadow);
       expect(defaults.danmakuBold, isFalse);
       expect(defaults.danmakuMergeDuplicates, isFalse);
@@ -230,7 +276,7 @@ void main() {
       expect(defaults.danmakuOffset, Duration.zero);
       final copy = defaults
           .copyWith(
-            danmakuFont: DanmakuFontPreference.harmonyOsSans,
+            danmakuFont: DanmakuFontPreference.system,
             danmakuStyle: DanmakuStylePreference.plain,
             danmakuBold: true,
             danmakuMergeDuplicates: true,
@@ -240,7 +286,8 @@ void main() {
             danmakuOffset: const Duration(seconds: -90),
           )
           .normalized();
-      expect(copy.danmakuFont, DanmakuFontPreference.harmonyOsSans);
+      expect(copy.danmakuFont, DanmakuFontPreference.system);
+      expect(copy.danmakuFontFamily, isNull);
       expect(copy.danmakuStyle, DanmakuStylePreference.plain);
       expect(copy.danmakuBold, isTrue);
       expect(copy.danmakuMergeDuplicates, isTrue);

@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../../../domain/playback_rates.dart';
 
 import '../../../domain/recommendation_settings.dart';
+import '../../../domain/responsive_layout_settings.dart';
 
 import '../../../core/storage/app_database.dart';
 import '../domain/app_settings.dart';
@@ -90,19 +91,37 @@ class SqliteSettingsRepository implements SettingsRepository {
               .firstOrNull ??
           NavigationBarMode.automatic,
       sidebarCollapsed: boolean('sidebarCollapsed', false),
-      liquidGlassDock: boolean('liquidGlassDock', true),
-      liquidVideoCards: boolean('liquidVideoCards', true),
+      predictiveBackEnabled: boolean('predictiveBackEnabled', true),
+      responsiveLayout: _responsiveLayout(decoded['responsiveLayout']),
       defaultDynamicTab:
           DynamicPageTab.values
               .where((item) => item.name == decoded['defaultDynamicTab'])
               .firstOrNull ??
           DynamicPageTab.dynamic,
       allowConcurrentPlayback: boolean('allowConcurrentPlayback', false),
+      closeTabOnMiddleClick: boolean('closeTabOnMiddleClick', false),
+      closeTabOnRightClick: boolean('closeTabOnRightClick', false),
+      closeTabOnDoubleClick: boolean('closeTabOnDoubleClick', false),
       cacheImages: boolean('cacheImages', true),
       recordSearchHistory: boolean('recordSearchHistory', true),
       checkPrereleaseUpdates: boolean('checkPrereleaseUpdates', false),
       checkUpdatesOnStartup: boolean('checkUpdatesOnStartup', false),
       wheelDampingRatio: number('wheelDampingRatio', 1.3),
+      wheelScrollAnimation:
+          WheelScrollAnimation.values
+              .where((item) => item.name == decoded['wheelScrollAnimation'])
+              .firstOrNull ??
+          defaultWheelScrollAnimation,
+      chromiumScrollCurve:
+          ChromiumScrollCurve.values
+              .where((item) => item.name == decoded['chromiumScrollCurve'])
+              .firstOrNull ??
+          ChromiumScrollCurve.easeInOut,
+      wheelScrollDistanceMultiplier: number('wheelScrollDistanceMultiplier', 1),
+      wheelScrollDurationMultiplier: number(
+        'wheelScrollDurationMultiplier',
+        defaultWheelScrollDurationMultiplier,
+      ),
       systemFontFamily: decoded['systemFontFamily'] is String
           ? decoded['systemFontFamily'] as String
           : '',
@@ -198,6 +217,7 @@ class SqliteSettingsRepository implements SettingsRepository {
               .where((item) => item.name == decoded['videoDecoding'])
               .firstOrNull ??
           VideoDecodingPreference.automatic,
+      // Unknown or retired backends fall back without resetting the snapshot.
       playbackBackend:
           PlaybackBackendPreference.values
               .where((item) => item.name == decoded['playbackBackend'])
@@ -242,7 +262,7 @@ class SqliteSettingsRepository implements SettingsRepository {
           DanmakuFontPreference.values
               .where((v) => v.name == decoded['danmakuFont'])
               .firstOrNull ??
-          DanmakuFontPreference.system,
+          defaults.danmakuFont,
       danmakuBold: boolean('danmakuBold', false),
       danmakuStyle:
           DanmakuStylePreference.values
@@ -273,6 +293,10 @@ class SqliteSettingsRepository implements SettingsRepository {
         'sponsorBlockCategories',
         AppSettings.supportedSponsorCategories,
       ),
+      sponsorBlockBottomPadding: number(
+        'sponsorBlockBottomPadding',
+        defaults.sponsorBlockBottomPadding,
+      ),
     ).normalized();
   }
 
@@ -282,29 +306,40 @@ class SqliteSettingsRepository implements SettingsRepository {
     return database.writeSetting(
       'preferences.v1',
       jsonEncode({
-        // 45 carries upstream's mobile background-playback key next to this
-        // branch's dock/liquid-card keys; the reader never branches on this
-        // number, it only states what the payload holds (F73 口径).
-        'schemaVersion': 45,
+        'schemaVersion': 52,
         'appIcon': value.appIcon.name,
         'recommendations': value.recommendations.toJson(),
         'navigationBarMode': value.navigationBarMode.name,
         'sidebarStyle': value.sidebarStyle.name,
         'sidebarCollapsed': value.sidebarCollapsed,
-        'liquidGlassDock': value.liquidGlassDock,
-        'liquidVideoCards': value.liquidVideoCards,
+        'responsiveLayout': {
+          'videoGridMinWidths': value.responsiveLayout.videoGridMinWidths,
+          'navigationBarBreakpoint':
+              value.responsiveLayout.navigationBarBreakpoint,
+          'sidebarExpandedWidth': value.responsiveLayout.sidebarExpandedWidth,
+          'playbackSideBySideWidth':
+              value.responsiveLayout.playbackSideBySideWidth,
+        },
         'defaultDynamicTab': value.defaultDynamicTab.name,
         'fullscreenSwipeControls': value.fullscreenSwipeControls,
         'playerFullscreenGestureReverse': value.playerFullscreenGestureReverse,
         'playerFullscreenGesture': value.playerFullscreenGesture,
         'playerShrinkVideo': value.playerShrinkVideo,
         'navigationMode': value.navigationMode.name,
+        'predictiveBackEnabled': value.predictiveBackEnabled,
+        'closeTabOnMiddleClick': value.closeTabOnMiddleClick,
+        'closeTabOnRightClick': value.closeTabOnRightClick,
+        'closeTabOnDoubleClick': value.closeTabOnDoubleClick,
         'allowConcurrentPlayback': value.allowConcurrentPlayback,
         'cacheImages': value.cacheImages,
         'recordSearchHistory': value.recordSearchHistory,
         'checkPrereleaseUpdates': value.checkPrereleaseUpdates,
         'checkUpdatesOnStartup': value.checkUpdatesOnStartup,
         'wheelDampingRatio': value.wheelDampingRatio,
+        'wheelScrollAnimation': value.wheelScrollAnimation.name,
+        'chromiumScrollCurve': value.chromiumScrollCurve.name,
+        'wheelScrollDistanceMultiplier': value.wheelScrollDistanceMultiplier,
+        'wheelScrollDurationMultiplier': value.wheelScrollDurationMultiplier,
         'shortcuts': value.shortcuts.toJson(),
         'theme': value.theme.name,
         'font': value.font.name,
@@ -365,8 +400,30 @@ class SqliteSettingsRepository implements SettingsRepository {
         'subtitleBackgroundOpacity': value.subtitleBackgroundOpacity,
         'subtitleBottomPadding': value.subtitleBottomPadding,
         'sponsorBlockMode': value.sponsorBlockMode.name,
+        'sponsorBlockBottomPadding': value.sponsorBlockBottomPadding,
         'sponsorBlockCategories': value.sponsorBlockCategories,
       }),
+    );
+  }
+
+  static ResponsiveLayoutSettings _responsiveLayout(Object? value) {
+    if (value is! Map<String, Object?>) {
+      return const ResponsiveLayoutSettings.defaults();
+    }
+    final widths = value['videoGridMinWidths'];
+    return ResponsiveLayoutSettings(
+      videoGridMinWidths: widths is List && widths.every((item) => item is int)
+          ? widths.cast<int>()
+          : null,
+      navigationBarBreakpoint: value['navigationBarBreakpoint'] is int
+          ? value['navigationBarBreakpoint'] as int
+          : 600,
+      sidebarExpandedWidth: value['sidebarExpandedWidth'] is int
+          ? value['sidebarExpandedWidth'] as int
+          : 1600,
+      playbackSideBySideWidth: value['playbackSideBySideWidth'] is int
+          ? value['playbackSideBySideWidth'] as int
+          : 1000,
     );
   }
 

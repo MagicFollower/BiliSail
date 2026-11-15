@@ -12,6 +12,142 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   late AppDatabase database;
   late SqliteSettingsRepository repository;
+  test('wheel parameter legacy defaults, invalid values and every mode round trip', () async {
+    for (final invalid in ['null', '"invalid"', 'true', '1e999']) {
+      await database.writeSetting(
+        'preferences.v1',
+        '{"schemaVersion":51,"wheelScrollAnimation":"spring","wheelDampingRatio":0.75,"chromiumScrollCurve":$invalid,"wheelScrollDistanceMultiplier":$invalid,"wheelScrollDurationMultiplier":$invalid}',
+      );
+      final settings = await repository.load();
+      expect(settings.chromiumScrollCurve, ChromiumScrollCurve.easeInOut);
+      expect(settings.wheelScrollDistanceMultiplier, 1);
+      expect(settings.wheelScrollDurationMultiplier, 1.3);
+      expect(settings.wheelScrollAnimation, WheelScrollAnimation.spring);
+      expect(settings.wheelDampingRatio, .75);
+    }
+    await database.writeSetting(
+      'preferences.v1',
+      '{"schemaVersion":51,"wheelScrollAnimation":"spring","wheelDampingRatio":0.75}',
+    );
+    final legacy = await repository.load();
+    expect(legacy.wheelScrollDistanceMultiplier, 1);
+    expect(legacy.wheelScrollDurationMultiplier, 1.3);
+    await database.writeSetting(
+      'preferences.v1',
+      '{"schemaVersion":52,"wheelScrollAnimation":"chromium","wheelScrollDurationMultiplier":1.0}',
+    );
+    expect((await repository.load()).wheelScrollDurationMultiplier, 1.0);
+    expect(
+      (await repository.load()).wheelScrollAnimation,
+      WheelScrollAnimation.chromium,
+    );
+    for (final mode in WheelScrollAnimation.values) {
+      for (final curve in ChromiumScrollCurve.values) {
+        await repository.save(
+          legacy.copyWith(
+            wheelScrollAnimation: mode,
+            chromiumScrollCurve: curve,
+            wheelScrollDistanceMultiplier: 1.75,
+            wheelScrollDurationMultiplier: 2.5,
+          ),
+        );
+        final settings = await SqliteSettingsRepository(database).load();
+        expect(settings.wheelScrollAnimation, mode);
+        expect(settings.chromiumScrollCurve, curve);
+        expect(settings.wheelScrollDistanceMultiplier, 1.75);
+        expect(settings.wheelScrollDurationMultiplier, 2.5);
+        expect(settings.wheelDampingRatio, .75);
+      }
+    }
+    expect(database.schemaVersion, 3);
+  });
+  test(
+    'wheel animation migrates and persists without changing spring damping',
+    () async {
+      for (final value in [null, 'invalid', true, 123]) {
+        await database.writeSetting(
+          'preferences.v1',
+          jsonEncode({
+            'schemaVersion': 50,
+            'wheelScrollAnimation': value,
+            'wheelDampingRatio': .75,
+            'theme': 'dark',
+          }),
+        );
+        final legacy = await repository.load();
+        expect(legacy.wheelScrollAnimation, WheelScrollAnimation.spring);
+        expect(legacy.wheelDampingRatio, .75);
+        expect(legacy.theme, AppThemePreference.dark);
+      }
+      await database.writeSetting(
+        'preferences.v1',
+        '{"schemaVersion":50,"wheelDampingRatio":0.75}',
+      );
+      final legacy = await repository.load();
+      expect(legacy.wheelScrollAnimation, WheelScrollAnimation.spring);
+      for (final mode in WheelScrollAnimation.values) {
+        await repository.save(legacy.copyWith(wheelScrollAnimation: mode));
+        final loaded = await SqliteSettingsRepository(database).load();
+        expect(loaded.wheelScrollAnimation, mode);
+        expect(loaded.wheelDampingRatio, .75);
+        final snapshot = jsonDecode(
+          (await database.readSetting('preferences.v1'))!,
+        ) as Map<String, Object?>;
+        expect(snapshot['schemaVersion'], 52);
+        expect(snapshot['wheelScrollAnimation'], mode.name);
+      }
+      expect(database.schemaVersion, 3);
+    },
+  );
+  test('tab close mouse options migrate with safe defaults', () async {
+    for (final legacy in [
+      <String, Object?>{},
+      {
+        'closeTabOnMiddleClick': 'true',
+        'closeTabOnRightClick': 1,
+        'closeTabOnDoubleClick': null,
+      },
+    ]) {
+      await database.writeSetting(
+        'preferences.v1',
+        jsonEncode({'schemaVersion': 46, 'theme': 'dark', ...legacy}),
+      );
+      final loaded = await repository.load();
+      expect(loaded.closeTabOnMiddleClick, isFalse);
+      expect(loaded.closeTabOnRightClick, isFalse);
+      expect(loaded.closeTabOnDoubleClick, isFalse);
+      expect(loaded.theme, AppThemePreference.dark);
+    }
+    expect(database.schemaVersion, 3);
+  });
+
+  test(
+    'tab close mouse options persist every independent combination',
+    () async {
+      for (var mask = 0; mask < 8; mask++) {
+        await repository.save(
+          AppSettings(
+            closeTabOnMiddleClick: (mask & 1) != 0,
+            closeTabOnRightClick: (mask & 2) != 0,
+            closeTabOnDoubleClick: (mask & 4) != 0,
+          ).copyWith(cacheImages: false).normalized(),
+        );
+        for (final mode in WorkspaceNavigationMode.values) {
+          final settings = (await repository.load()).copyWith(
+            navigationMode: mode,
+          );
+          await repository.save(settings);
+          final restored = await repository.load();
+          expect(restored.closeTabOnMiddleClick, (mask & 1) != 0);
+          expect(restored.closeTabOnRightClick, (mask & 2) != 0);
+          expect(restored.closeTabOnDoubleClick, (mask & 4) != 0);
+          expect(restored.cacheImages, isFalse);
+          expect(restored.navigationMode, mode);
+        }
+      }
+    },
+  );
+
   test(
     'picture gesture preferences migrate, validate, persist and reset',
     () async {
@@ -639,6 +775,40 @@ void main() {
       );
     },
   );
+  test(
+    'sponsor button distance migrates, normalizes and survives reload',
+    () async {
+      expect((await repository.load()).sponsorBlockBottomPadding, 120);
+      for (final invalid in ['null', '"invalid"', 'true', '1e999']) {
+        await database.writeSetting(
+          'preferences.v1',
+          '{"theme":"dark","sponsorBlockBottomPadding":$invalid}',
+        );
+        final loaded = await repository.load();
+        expect(loaded.sponsorBlockBottomPadding, 120);
+        expect(loaded.theme, AppThemePreference.dark);
+      }
+      await database.writeSetting('preferences.v1', '{"theme":"dark"}');
+      expect((await repository.load()).sponsorBlockBottomPadding, 120);
+      for (final (chosen, expected) in [
+        (-1.0, 0.0),
+        (0.0, 0.0),
+        (80.0, 80.0),
+        (120.0, 120.0),
+        (240.0, 240.0),
+        (999.0, 240.0),
+        (double.nan, 120.0),
+      ]) {
+        await repository.save(
+          (await repository.load()).copyWith(sponsorBlockBottomPadding: chosen),
+        );
+        final reloaded = await SqliteSettingsRepository(database).load();
+        expect(reloaded.sponsorBlockBottomPadding, expected);
+        expect(reloaded.theme, AppThemePreference.dark);
+      }
+      expect(database.schemaVersion, 3);
+    },
+  );
   test('wheel damping migrates and survives save and reload', () async {
     expect((await repository.load()).wheelDampingRatio, 1.3);
     for (final invalid in ['null', '"invalid"', 'true', '1e999']) {
@@ -1031,6 +1201,8 @@ void main() {
       expect(settings.danmakuEnabled, isFalse);
       expect(settings.danmakuOpacity, .7);
       expect(settings.danmakuFontScale, 1.2);
+      expect(settings.danmakuFont, DanmakuFontPreference.harmonyOsSans);
+      expect(settings.danmakuFontFamily, 'HarmonyOS Sans');
       expect(settings.danmakuTopMargin, 0);
       expect(settings.danmakuLineSpacing, 5);
       expect(settings.autoPlay, isTrue);
@@ -1134,6 +1306,12 @@ void main() {
           loaded.copyWith(font: AppFontPreference.system).fontFamily,
           isNull,
         );
+        await repository.save(
+          loaded.copyWith(danmakuFont: DanmakuFontPreference.system),
+        );
+        final systemFont = await repository.load();
+        expect(systemFont.danmakuFont, DanmakuFontPreference.system);
+        expect(systemFont.danmakuFontFamily, isNull);
       }
     },
   );
@@ -1156,8 +1334,8 @@ void main() {
       final loaded = await repository.load();
       expect(loaded.font, AppFontPreference.harmonyOsSans);
       expect(loaded.fontFamily, 'HarmonyOS Sans');
-      expect(loaded.danmakuFont, DanmakuFontPreference.system);
-      expect(loaded.danmakuFontFamily, isNull);
+      expect(loaded.danmakuFont, DanmakuFontPreference.harmonyOsSans);
+      expect(loaded.danmakuFontFamily, 'HarmonyOS Sans');
       expect(loaded.systemFontFamily, 'Microsoft YaHei');
       expect(loaded.danmakuSystemFontFamily, 'Segoe UI');
       expect(loaded.theme, AppThemePreference.dark);
@@ -1168,7 +1346,7 @@ void main() {
         (await database.readSetting('preferences.v1')) ?? '{}',
       ) as Map<String, Object?>;
       expect(snapshot['font'], 'harmonyOsSans');
-      expect(snapshot['danmakuFont'], 'system');
+      expect(snapshot['danmakuFont'], 'harmonyOsSans');
       final reloaded = await repository.load();
       expect(reloaded.font, loaded.font);
       expect(reloaded.danmakuFont, loaded.danmakuFont);
@@ -1319,7 +1497,7 @@ void main() {
     expect(s.danmakuTopMargin, 0);
     expect(s.danmakuLineSpacing, 5);
     expect(s.danmakuMaxPerSecond, 0);
-    expect(s.danmakuFont, DanmakuFontPreference.system);
+    expect(s.danmakuFont, DanmakuFontPreference.harmonyOsSans);
     expect(s.danmakuBold, isFalse);
     expect(s.danmakuStyle, DanmakuStylePreference.shadow);
     expect(s.danmakuMinimumWeight, 10);

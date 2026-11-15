@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart' hide SearchController;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -19,6 +20,9 @@ import '../features/messages/domain/message_target.dart';
 import '../features/messages/presentation/messages_screen.dart';
 import '../features/profile/application/profile_controller.dart';
 import '../features/profile/presentation/profile_screen.dart';
+import '../features/dynamic/application/dynamic_topic_controller.dart';
+import '../features/dynamic/domain/dynamic_link.dart';
+import '../features/dynamic/presentation/dynamic_topic_screen.dart';
 import '../core/input/input_stroke.dart';
 import '../core/input/shortcut_dispatcher.dart';
 import '../core/presentation/input_scope.dart';
@@ -35,6 +39,8 @@ import '../features/playback/application/playback_session.dart';
 import '../features/playback/application/playback_manager.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/comments/application/comment_link_resolver.dart';
+import '../domain/content_link.dart';
+import '../shared/ui/content_link_scope.dart';
 import '../features/auth/presentation/account_button.dart';
 import '../features/auth/presentation/account_screen.dart';
 import '../features/feed/application/feed_controller.dart';
@@ -123,11 +129,18 @@ GoRouter createBiliRouter({
                     ),
                   ),
             navigationMode: settings.navigationMode,
+            closeTabOnMiddleClick: settings.closeTabOnMiddleClick,
+            closeTabOnRightClick: settings.closeTabOnRightClick,
+            closeTabOnDoubleClick: settings.closeTabOnDoubleClick,
             defaultDynamicTab: settings.defaultDynamicTab,
             appIcon: settings.appIcon,
             navigationBarMode: settings.navigationBarMode,
-            liquidGlassDock: settings.liquidGlassDock,
+            predictiveBackEnabled: settings.predictiveBackEnabled,
             sidebarStyle: settings.sidebarStyle,
+            navigationBarBreakpoint:
+                settings.responsiveLayout.navigationBarBreakpoint,
+            sidebarExpandedWidth:
+                settings.responsiveLayout.sidebarExpandedWidth,
             sidebarCollapsed: settings.sidebarCollapsed,
             onSidebarCollapsedChanged: (collapsed) async {
               try {
@@ -186,6 +199,7 @@ GoRouter createBiliRouter({
           '/pgc/episode/:id',
           '/live/:roomId',
           '/user/:mid',
+          '/topic/:id',
           '/history',
           '/messages',
           '/settings',
@@ -260,6 +274,7 @@ final class _WorkspacePageScope extends ConsumerWidget {
         feedControllerProvider.overrideWith(FeedController.new),
         homeControllerProvider.overrideWith2(HomeController.new),
         profileControllerProvider.overrideWith2(ProfileController.new),
+        dynamicTopicProvider.overrideWith2(DynamicTopicController.new),
         liveControllerProvider.overrideWith2(LiveController.new),
         pgcControllerProvider.overrideWith2(PgcController.new),
         searchControllerProvider.overrideWith(SearchController.new),
@@ -450,7 +465,23 @@ final class _WorkspacePage extends ConsumerWidget {
     onOpenTarget: (target) {
       final location = messageWorkspaceLocation(target);
       if (location != null) {
-        context.go(location);
+        final uri = Uri.parse(location);
+        final hasPosition =
+            uri.queryParameters.containsKey('comment_root_id') ||
+            uri.queryParameters.containsKey('start_progress');
+        context.go(
+          hasPosition
+              ? uri
+                    .replace(
+                      queryParameters: {
+                        ...uri.queryParameters,
+                        'message_request':
+                            '${DateTime.now().microsecondsSinceEpoch}',
+                      },
+                    )
+                    .toString()
+              : location,
+        );
       } else {
         ProviderScope.containerOf(
           context,
@@ -571,6 +602,14 @@ final class _WorkspacePage extends ConsumerWidget {
       final id = UserId(uri.pathSegments.last);
       if (!id.isValid) return CommandOutcome.noOp;
       await container.read(profileControllerProvider(id).notifier).refresh();
+    } else if (tab.isTopic) {
+      await container
+          .read(dynamicTopicProvider(uri.pathSegments.last).notifier)
+          .refresh();
+      if (container.read(dynamicTopicProvider(uri.pathSegments.last)).error !=
+          null) {
+        return CommandOutcome.failed;
+      }
     } else if (tab.isLive) {
       final id = RoomId(uri.pathSegments.last);
       if (!id.isValid) return CommandOutcome.noOp;
@@ -634,12 +673,14 @@ final class _WorkspacePage extends ConsumerWidget {
         : (false, null, null, 0);
     return Builder(
       builder: (context) => _PageCommandTarget(
+        link: ContentLink.fromUri(tab.location),
         commands: {
           if (!tab.isRoot &&
               !tab.isPgc &&
               (tab.isVideo ||
                   tab.isLive ||
                   tab.isProfile ||
+                  tab.isTopic ||
                   tab.isOffline ||
                   tab.location.path == '/search'))
             ShortcutAction.refresh: (stroke) => _refresh(context, stroke),
@@ -658,6 +699,60 @@ final class _WorkspacePage extends ConsumerWidget {
                   ),
                 );
               default:
+                if (tab.isTopic) {
+                  return DynamicTopicScreen(
+                    key: PageStorageKey('topic-${tab.id}'),
+                    id: uri.pathSegments.last,
+                    onOpenUser: (user) => context.go('/user/${user.value}'),
+                    onOpenVideo: (video) =>
+                        context.go('/video/${video.id.value}'),
+                    onOpenLink: (target) async {
+                      final query = dynamicSearchQuery(target);
+                      if (query != null) {
+                        context.go(
+                          Uri(
+                            path: '/search',
+                            queryParameters: {'q': query},
+                          ).toString(),
+                        );
+                        return;
+                      }
+                      final topic = dynamicTopicId(target),
+                          video = dynamicVideo(target),
+                          room = dynamicLiveRoom(target);
+                      final pgc = dynamicPgcRoute(target);
+                      if (topic != null) {
+                        context.go('/topic/$topic');
+                        return;
+                      }
+                      if (video != null) {
+                        context.go('/video/${video.value}');
+                        return;
+                      }
+                      if (room != null) {
+                        context.go('/live/${room.value}');
+                        return;
+                      }
+                      if (pgc != null) {
+                        context.go(pgc);
+                        return;
+                      }
+                      var opened = false;
+                      try {
+                        opened = await ref.read(webLinkOpenerProvider)(target);
+                      } on PlatformException {
+                        opened = false;
+                      }
+                      if (context.mounted && !opened) {
+                        showAppNotice(context, '无法打开链接，请稍后重试');
+                      }
+                    },
+                    onLogin: () => showAppDialog<void>(
+                      context: context,
+                      builder: (_) => const AccountDialog(),
+                    ),
+                  );
+                }
                 if (tab.isOffline) {
                   return OfflineScreen(
                     key: PageStorageKey('offline-${tab.id}'),
@@ -679,6 +774,10 @@ final class _WorkspacePage extends ConsumerWidget {
                   }
                   return PgcScreen(
                     key: PageStorageKey('pgc-${tab.id}'),
+                    onLogin: () => showAppDialog<void>(
+                      context: context,
+                      builder: (_) => const AccountDialog(),
+                    ),
                     defaultShowComments: defaultShowComments,
                     seasonId: uri.pathSegments[1] == 'season' ? id : null,
                     episodeId: uri.pathSegments[1] == 'episode'
@@ -767,6 +866,14 @@ final class _WorkspacePage extends ConsumerWidget {
                           onOpenLiveRoom: (room) =>
                               context.go('/live/${room.value}'),
                           onOpenSeason: (id) => context.go('/pgc/season/$id'),
+                          onOpenEpisode: (id) => context.go('/pgc/episode/$id'),
+                          onOpenTopic: (id) => context.go('/topic/$id'),
+                          onSearchQuery: (query) => context.go(
+                            Uri(
+                              path: '/search',
+                              queryParameters: {'q': query},
+                            ).toString(),
+                          ),
                           onLogin: () => showAppDialog<void>(
                             context: context,
                             builder: (_) => const AccountDialog(),
@@ -837,6 +944,33 @@ final class _WorkspacePage extends ConsumerWidget {
                           ),
                           onOpenVideo: (video) =>
                               context.go('/video/${video.id.value}'),
+                          onCloseQueue: (part) {
+                            final target = uri.replace(
+                              queryParameters: {
+                                for (final entry in uri.queryParameters.entries)
+                                  if (entry.key != 'queue')
+                                    entry.key: entry.value,
+                                'cid': part.cid,
+                              },
+                            );
+                            final navigation = WorkspacePageNavigation.maybeOf(
+                              context,
+                            );
+                            if (navigation != null) {
+                              navigation.navigate(target);
+                            } else {
+                              context.go(
+                                target
+                                    .replace(
+                                      queryParameters: {
+                                        ...target.queryParameters,
+                                        'tab': tab.id,
+                                      },
+                                    )
+                                    .toString(),
+                              );
+                            }
+                          },
                           onAdvanceVideo: (video, cid) {
                             final target = Uri(
                               path: '/video/${video.value}',
@@ -933,7 +1067,12 @@ Widget _workspacePlayer(BuildContext context, Widget Function() build) =>
 
 /// Visibility updates only the input registration, not the page factory.
 class _PageCommandTarget extends StatelessWidget {
-  const _PageCommandTarget({required this.commands, required this.child});
+  const _PageCommandTarget({
+    required this.commands,
+    required this.child,
+    this.link = const ContentLink(),
+  });
+  final ContentLink link;
   final Map<Object, InputCommand> commands;
   final Widget child;
 
@@ -943,6 +1082,6 @@ class _PageCommandTarget extends StatelessWidget {
     active: WorkspaceActivity.isActive(context),
     merge: const {ShortcutAction.refresh},
     commands: commands,
-    child: child,
+    child: ContentLinkScope(link: link, child: child),
   );
 }

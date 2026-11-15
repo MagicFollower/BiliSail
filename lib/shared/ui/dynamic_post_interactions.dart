@@ -11,7 +11,15 @@ import '../../domain/video.dart';
 import 'app_notice.dart';
 import 'dynamic_post_card.dart';
 import 'comments_panel.dart';
+import 'dynamic_detail_layout.dart';
 import '../../features/dynamic/application/dynamic_actions_controller.dart';
+import '../../features/dynamic/application/dynamic_content_state.dart';
+import '../../features/dynamic/application/dynamic_management_controller.dart';
+import '../../features/dynamic/domain/dynamic_link.dart';
+import 'dynamic_post_menu.dart';
+import 'dynamic_poll_dialog.dart';
+import 'dynamic_content_card.dart';
+import 'dynamic_reservation_card.dart';
 
 class InteractiveDynamicPostCard extends ConsumerWidget {
   const InteractiveDynamicPostCard({
@@ -22,6 +30,7 @@ class InteractiveDynamicPostCard extends ConsumerWidget {
     this.onOpenLink,
     this.onLogin,
     this.expansionState,
+    this.inDetail = false,
   });
   final DynamicPost post;
   final ValueChanged<UserId>? onOpenUser;
@@ -29,70 +38,88 @@ class InteractiveDynamicPostCard extends ConsumerWidget {
   final ValueChanged<Uri>? onOpenLink;
   final VoidCallback? onLogin;
   final DynamicPostExpansionState? expansionState;
+  final bool inDetail;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final provider = dynamicActionsProvider(post.id);
     final state = ref.watch(provider);
     final controller = ref.read(provider.notifier);
-    final current = state.detail ?? post;
+    final content = ref.watch(dynamicContentProvider);
+    final management = ref.watch(dynamicManagementProvider(post.id));
+    final current = content.posts[post.id] ?? state.detail ?? post;
+    if (content.hidden(current)) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          content.removed.contains(current.id) ? '动态已删除' : '该UP主已临时屏蔽',
+        ),
+      );
+    }
+    void share() {
+      final container = ProviderScope.containerOf(context);
+      unawaited(
+        showAppDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => UncontrolledProviderScope(
+            container: container,
+            child: _ShareDialog(post: current, onLogin: onLogin),
+          ),
+        ),
+      );
+    }
+
     void login() =>
         onLogin != null ? onLogin!() : showAppNotice(context, '请先登录后操作');
+    void link(Uri url) {
+      final poll = dynamicPollId(url);
+      if (poll != null) {
+        unawaited(
+          showDynamicPollDialog(
+            context,
+            poll,
+            dynamicId:
+                url.queryParameters['dynamic_id'] ??
+                _pollDynamicId(current, poll),
+            onLogin: login,
+            onOpenUser: onOpenUser,
+          ),
+        );
+      } else {
+        onOpenLink?.call(url);
+      }
+    }
+
     void message() {
       if (!context.mounted) return;
       final message = ref.read(provider).message;
       if (message != null) showAppNotice(context, message);
     }
 
-    Future<void> comments() async {
+    Future<void> details({bool focusComments = false}) async {
       var value = current;
-      if (value.commentTarget == null) {
-        if (!await controller.refresh() || !context.mounted) {
-          message();
-          return;
-        }
+      if (value.commentTarget == null &&
+          !value.commentForbidden &&
+          !value.unavailable) {
+        final refreshed = await controller.refresh();
+        if (!context.mounted) return;
+        if (!refreshed) message();
         value = ref.read(provider).detail ?? current;
       }
-      final target = value.commentTarget;
       if (!context.mounted) return;
-      if (target == null || value.commentForbidden || value.unavailable) {
-        showAppNotice(
-          context,
-          value.commentForbidden ? '该动态已关闭评论' : '该动态暂不支持评论，请在官方页面查看',
-        );
-        return;
-      }
       final container = ProviderScope.containerOf(context);
       await showAppDialog<void>(
         context: context,
         builder: (context) => UncontrolledProviderScope(
           container: container,
-          child: Dialog(
-            insetPadding: const EdgeInsets.all(12),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 680, maxHeight: 800),
-              child: SizedBox(
-                width: 680,
-                child: Column(
-                  children: [
-                    _DialogHeader(title: '动态评论'),
-                    Expanded(
-                      child: CommentsPanel(
-                        target: target,
-                        replyCount: value.commentCount,
-                        onOpenUser: onOpenUser == null
-                            ? null
-                            : (id) {
-                                Navigator.pop(context);
-                                onOpenUser!(id);
-                              },
-                        onLogin: onLogin,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          child: _DynamicDetailDialog(
+            post: value,
+            focusComments: focusComments,
+            onOpenUser: onOpenUser,
+            onOpenVideo: onOpenVideo,
+            onOpenLink: onOpenLink,
+            onLogin: onLogin,
           ),
         ),
       );
@@ -103,30 +130,35 @@ class InteractiveDynamicPostCard extends ConsumerWidget {
       children: [
         DynamicPostCard(
           post: current,
+          contentCardBuilder: (owner, card) => card.reservation == null
+              ? DynamicContentCardView(card: card, onOpenLink: link)
+              : DynamicReservationCard(
+                  post: owner,
+                  card: card,
+                  onOpenLink: link,
+                  onLogin: login,
+                ),
+          inDetail: inDetail,
           expansionState: expansionState,
           onOpenUser: onOpenUser,
           onOpenVideo: onOpenVideo,
-          onOpenLink: onOpenLink,
+          onOpenLink: link,
           liked: state.liked,
           likeCount: state.likeCount,
           repostCount: state.repostCount,
-          busy: state.busy,
-          onShare: () {
-            final container = ProviderScope.containerOf(context);
-            unawaited(
-              showAppDialog<void>(
-                context: context,
-                barrierDismissible: false,
-                builder: (_) => UncontrolledProviderScope(
-                  container: container,
-                  child: _ShareDialog(post: current, onLogin: onLogin),
-                ),
-              ),
-            );
-          },
-          onComment: current.unavailable || current.commentForbidden
+          busy: state.busy || management.busy,
+          onMore: () => showDynamicPostMenu(
+            context,
+            current,
+            onShare: share,
+            onOpenLink: onOpenLink,
+            onLogin: onLogin,
+          ),
+          onOpenDetail: inDetail ? null : () => unawaited(details()),
+          onShare: share,
+          onComment: inDetail || current.unavailable || current.commentForbidden
               ? null
-              : () => unawaited(comments()),
+              : () => unawaited(details(focusComments: true)),
           onLike:
               current.unavailable ||
                   current.likeForbidden ||
@@ -153,6 +185,124 @@ class InteractiveDynamicPostCard extends ConsumerWidget {
             label: const Text('点赞结果未确认，刷新状态'),
           ),
       ],
+    );
+  }
+}
+
+String? _pollDynamicId(DynamicPost post, String pollId) {
+  if (post.contentCards.any(
+        (card) => card.url != null && dynamicPollId(card.url!) == pollId,
+      ) ||
+      post.spans.any(
+        (span) =>
+            span.linkUrl != null && dynamicPollId(span.linkUrl!) == pollId,
+      )) {
+    return post.id;
+  }
+  final original = post.original;
+  return original == null ? null : _pollDynamicId(original, pollId);
+}
+
+class _DynamicDetailDialog extends ConsumerStatefulWidget {
+  const _DynamicDetailDialog({
+    required this.post,
+    required this.focusComments,
+    this.onOpenUser,
+    this.onOpenVideo,
+    this.onOpenLink,
+    this.onLogin,
+  });
+  final DynamicPost post;
+  final bool focusComments;
+  final ValueChanged<UserId>? onOpenUser;
+  final ValueChanged<VideoSummary>? onOpenVideo;
+  final ValueChanged<Uri>? onOpenLink;
+  final VoidCallback? onLogin;
+
+  @override
+  ConsumerState<_DynamicDetailDialog> createState() =>
+      _DynamicDetailDialogState();
+}
+
+class _DynamicDetailDialogState extends ConsumerState<_DynamicDetailDialog> {
+  final _expansion = DynamicPostExpansionState();
+
+  @override
+  void initState() {
+    super.initState();
+    _expansion.setExpanded(widget.post.id, true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final post =
+        ref.watch(dynamicActionsProvider(widget.post.id)).detail ?? widget.post;
+    final target = post.commentTarget;
+    final onUser = widget.onOpenUser == null
+        ? null
+        : (UserId id) {
+            Navigator.pop(context);
+            widget.onOpenUser!(id);
+          };
+    return Dialog(
+      insetPadding: const EdgeInsets.all(12),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1280, maxHeight: 1000),
+        child: SizedBox(
+          width: 1280,
+          child: Column(
+            children: [
+              const _DialogHeader(title: '动态详情'),
+              const Divider(height: 1),
+              Expanded(
+                child: DynamicDetailLayout(
+                  focusComments: widget.focusComments,
+                  content: InteractiveDynamicPostCard(
+                    post: post,
+                    inDetail: true,
+                    expansionState: _expansion,
+                    onOpenUser: onUser,
+                    onOpenVideo: widget.onOpenVideo == null
+                        ? null
+                        : (video) {
+                            Navigator.pop(context);
+                            widget.onOpenVideo!(video);
+                          },
+                    onOpenLink: widget.onOpenLink == null
+                        ? null
+                        : (url) {
+                            Navigator.pop(context);
+                            widget.onOpenLink!(url);
+                          },
+                    onLogin: widget.onLogin,
+                  ),
+                  comments:
+                      target == null ||
+                          post.commentForbidden ||
+                          post.unavailable
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(
+                              post.commentForbidden
+                                  ? '该动态已关闭评论'
+                                  : '该动态暂不支持评论，请在官方页面查看',
+                            ),
+                          ),
+                        )
+                      : CommentsPanel(
+                          target: target,
+                          replyCount: post.commentCount,
+                          onOpenUser: onUser,
+                          onLogin: widget.onLogin,
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

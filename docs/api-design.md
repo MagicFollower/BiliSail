@@ -1,5 +1,19 @@
 # API、鉴权与数据边界
 
+2026-11-15 密码／短信登录接入 App Passport：RSA 密码、App 短信、极验与安全中心手机号验证，成功后由 SessionRepository 校验并原子保存 Cookie／App token。具体 method、签名、端点和重试边界见[密码／短信 App 登录](validation/password-sms-app-login-2026-11-15.md)。明确的官网登录仍可保存 Web-only 会话，已有会话不自动转换。
+
+同日安全中心 captcha/pre 单独使用无 Cookie／签名及 App buvid 的 Web 注册上下文，并校验 recaptcha_type；实测携带 App buvid 返回第四代注册，不能交给第三代 fullpage。安全中心短信及授权码交换仍使用 App 签名；来源、在线对照及验证见上述记录。
+
+2026-11-12 番剧、国创与放映厅接入 Web Cookie GET `/pgc/view/web/season/user/status` 及 CSRF 单次 POST `/pgc/web/follow/add`、`/del`。状态按季编号共享，账号／epoch／取消隔离，写入结果不明须读取核对，来源与验证见[PGC 追番](validation/pgc-follow.md)。
+
+2026-11-11 共享请求管线补齐 Web 设备上下文、安全持久化、风控／验证码识别与端点冷却；热门精选增加 WBI 和页面上下文。业务拒绝不自动重试，账户写入继续单次提交；协议、PiliPlus 来源、离线回归与线上未验收边界见[请求风控](validation/api-risk-control-2026-11-11.md)。
+
+2026-11-11 动态增加管理和应用内投票：Web Cookie／CSRF 单次删除、置顶、可见性、互动和举报，WBI 单次编辑，Web IM 卡片分享与投票参与；游客可见性检查使用独立空 CookieJar。端点、容量、账号隔离与验证见[动态操作菜单与投票](validation/dynamic-operations-and-voting-2026-11-11.md)。
+
+2026-11-11 动态投票补齐 Web GET `/x/vote/vote_info` 与 JSON POST `/x/vote/do_vote`，复用 Cookie／CSRF、25 秒 deadline 和单次写入通道。卡片及正文保留投票身份，在应用内查看和参与；服务端选项索引、本人选择、账号隔离及结果不明处理见[动态投票查看与参与](validation/dynamic-poll-viewing-2026-11-11.md)。
+
+2026-11-11 动态投稿补齐B站表情、@用户、18图、标题／评论／私密／定时设置及投票／直播预约。新增 Web Cookie 用户候选读取、单次投票JSON与预约form创建，富文本保留type及biz_id；附件创建不明与动态创建不明共用显式核对锁定。端点、参数、容量及验证边界见[动态发布能力](validation/dynamic-publishing-parity-2026-11-11.md)。
+
 2026-11-08 我的关注增加 Web Cookie 全量搜索（WBI `/x/relation/followings/search`）、黑名单分页、关注排序及分组新建／重命名／删除／排序。写入沿用 Web Cookie／CSRF 单次提交，结果不明需刷新，管理端口只允许本人账号。端点、字段、取消与验证边界见[关注／粉丝卡片与管理](validation/profile-relations-2026-11-08.md)。
 
 2026-11-05 空间反馈修复复用 `api.bilibili.com` Web JSON 端点：基本资料 GET `/x/web-interface/card` 增加 `photo=true`，解析响应中的 `space.l_img/s_img` 作为头图；GET `/x/space/setting?mid=...` 读取 `privacy.fav_video/bangumi`，区分收藏夹及追番／追剧隐藏状态，本人查看不受访客隐私限制。两项读取 Cookie 可选，无签名、CSRF 或分页，沿用取消、25 秒总 deadline 与有界只读重试。黑名单状态使用当前 Web Cookie GET `/x/relation?fid=...`，无签名、CSRF 或分页；显式确认后 POST `/x/relation/modify`，字段 `fid/act=5或6/re_src=11`，使用当前 Web Cookie／CSRF，仅尝试一次。账号 scope/session epoch 及页面生命周期隔离迟到结果；细节、参考与线上未验收项见[空间修复](validation/profile-fixes-2026-11-05.md)。
@@ -61,6 +75,10 @@ lib/src/
 
 2026-10-31 新增 TV 投屏只读端点：`GET https://api.bilibili.com/x/tv/playurl`，App profile MD5 签名，游客可请求，已有且未过期的 App token 同时用于 `access_key`／`mobile_access_key`，不携带 Web Cookie。`object_id` 为 UGC aid 或 PGC episode ID，`cid` 保留真实内容身份，`playurl_type` 分别为 1／2；`is_proj=1`、`protocol=0`、`fourk=1`，清晰度沿用本地已选值。无分页；单次总预算 25 秒内最多两次只读尝试，取消／账号 epoch 隔离沿用 `ApiRequests`。JSON 仅接受一个完整 `durl` 段，不将 DASH 单轨或试看作为完整投屏成功。设备发现和 SOAP 操作独立于账号 HTTP 通道，写命令不自动重放；详情见 [DLNA 投屏](validation/dlna-casting.md)。
 
+2026-11-13 直播投屏复用现有 `LiveClient.getPlayInfo` 和 WBI 请求上下文，按规范房间 ID／开播状态交接，普通设备选择 AVC HLS／FLV 签名地址。声明 B站服务的接收端只接收内容身份与播放／弹幕偏好，自行使用电视账号取流；点播不再要求先取得 TV `durl`。局域网 SOAP 元数据不携带 Cookie、App access／refresh token，不新增账号转换、远端授权或自动写请求重试。
+
+2026-11-14 纠正上述自动取流分流：默认对包括云视听在内的所有设备保留 TV `durl`／直播媒体地址解析。仅用户主动开启“电视弹幕（实验）”且设备声明 B站服务时才跳过直链，不能因发现服务就假定接收端版本／专有取流会话兼容；不新增接口、鉴权转换或自动写请求回退。见[回归修复](validation/casting-compatibility-regression-2026-11-14.md)。
+
 MVP 优先 **Web REST + Web Cookie + 按端点配置 WBI/CSRF**，视频弹幕使用 HTTP 返回的 Protobuf，直播消息使用 WebSocket。收到 Protobuf 字节并不意味着必须使用 gRPC。
 
 App/TV token 按功能独立接入，gRPC 仍延后。App 推荐可使用游客身份；个性化推荐和反馈只使用正常登录取得的 App token。参考项目的 App/TV 参数不能直接与 Web Cookie 登录拼接，缺少 token 不允许提交 App 反馈。
@@ -113,11 +131,12 @@ ApiPage<T> { items, nextCursor, hasMore }
 | 密码/短信登录（提前实现） | 内嵌 `https://passport.bilibili.com/login`；应用调用 `/x/web-interface/nav` 验证 | U AccountApi、LoginVM、LoginDialog；dart_simple_live Web 登录页 | Platform WebView → 会话控制器；保留 Cookie 作用域、账号校验和安全存储；不在 API 包维护官网表单 POST；见 [登录验证](validation/password-sms-login.md) |
 | 统一 Web/App 扫码登录 | `passport.bilibili.com` POST `/x/passport-tv-login/qrcode/auth_code`、`/poll` | PiliPlus `lib/http/login.dart` | HD profile/签名，不带 Cookie；用户点击后有界轮询，成功同时返回 token 和 Cookie，经 nav 验证后一起保存 |
 | 会话与 WBI M0/M2 | `/x/web-interface/nav`、cookie info/refresh/confirm | K `BiliKernel.Abstractions/Bili/BiliApis.cs`、Core Authenticator；U AccountApi | SessionStore；刷新要取得所需 refresh 数据，缺失则重新登录 |
-| 推荐 | Web `/x/web-interface/index/top/feed/rcmd`；App `app.bilibili.com` GET `/x/v2/feed/index` | K VideoDiscoveryClient；PiliPlus `lib/http/video.dart` | App 签名、稳定 buvid、可选 access_key，idx 从 0 开始、首请求 pull=true；Web `fresh_idx`/`fresh_idx_1h` 由 `ApiFeedRepository` 按拉取轮次递增，刷新（回到第 1 页）无论上一批成功、为空还是失败都继续前进；只有尚未完成的深页请求沿用同一序号，便于原地重试且不跳过一页；25 秒总 deadline、读最多三次、2 MiB/100 卡片、双空页预算 |
+| 推荐 | Web `/x/web-interface/index/top/feed/rcmd`；桌面端 `/x/web-interface/wbi/index/top/feed/rcmd`；App `app.bilibili.com` GET `/x/v2/feed/index` | K VideoDiscoveryClient；PiliPlus `lib/http/video.dart`、[PR #3463](https://github.com/bggRGjQaUbCoE/PiliPlus/pull/3463) | Web/桌面端为 `api.bilibili.com` GET、可选 Web Cookie、WBI 签名；桌面端 `plat=1`、`feed_version=V1`、`ps=30`、`fresh_type=0/3/4`，从 0 开始的独立采样序号；App 签名、稳定 buvid、可选 access_key，idx 从 0 开始、首请求 pull=true；25 秒总 deadline、读最多三次、2 MiB/100 卡片、双空页预算；失败页显式重试复用采样序号，不重放反馈写入 |
 | App 推荐反馈/撤销 | `app.bilibili.com` GET `/x/feed/dislike`、`/x/feed/dislike/cancel` | PiliPlus `lib/http/video.dart`、`video_popup_menu.dart` | token 必需；使用服务端 three_point_v2 的 reason_id/feedback_id，撤销携带 aid/goto；虽为 GET，仍按单次写入处理，未知结果不重放 |
 | 热门/排行 | `/x/web-interface/popular`、`popular/series/list`、`popular/series/one`、`popular/precious`、`ranking/v2` | 官网热门脚本；PiliPlus VideoHttp；U RankAPI；K VideoDiscoveryClient | Web 综合热门分页、每周期数选择、入站及榜单单份列表；不混用 App gRPC 或旧 newlist 分区，见[协议记录](validation/popular-tabs.md) |
 | 搜索 M2 | `/x/web-interface/wbi/search/type`、`/all/v2` | K `Services/Services.Search/Core/SearchClient.cs` | SearchClient；WBI、Cookie、排序及分页 |
 | 视频详情 M0/M2 | `/x/web-interface/view/detail`、`GetVideoPageDetailWithRestAsync` | K `Services/Services.Media/Core/PlayerClient.cs` | VideoRepository；bvid/aid 解析、cid、分 P、合集 |
+| 消息评论定位 | `GET https://api.bilibili.com/x/v2/reply/jump`，`oid/type/rpid`；再按返回 `rt_num` 直接读取 `/x/v2/reply/reply` | PiliPlus `DetailList(root,rpid)` 的交互职责、官方 Web 只读样本（独立实现） | 可选 Web Cookie，无 WBI／CSRF；两次逻辑读取共享 15 秒总期限与账号／epoch；有界读重试，无扫描或 500 条定位限制，见 [消息定位](validation/message-content-navigation-2026-11-14.md) |
 | 评论视频链接 M2 | `GET https://b23.tv/<path>`；`GET https://api.bilibili.com/x/web-interface/view?aid=…` | U `MessageCenter.HandelUrl`、`BiliExtensions.GetShortLinkLocation` | Comments application → CommentVideoLinkRepository；短链无鉴权/签名，读取 Location，不解析正文、不重试；AV 转 BV 为 Web JSON、可选 Cookie、无签名，复用 API 有界读重试（最多 3 次）；均无分页、总解析期限 8 秒，见 [评论验证](validation/video-comments.md) |
 | 视频标签 M2 | `/x/tag/archive/tags` | U `Models/Requests/Api/VideoAPI.cs`、VideoDetailPageViewModel | VideoExtrasRepository；独立只读、BV 身份隔离和点击关键词搜索，见 [视频标签与搜索](validation/video-tags.md) |
 | 视频播放 M0/M2 | `/x/player/playurl`、`GetVideoPlayDetailWithRestAsync` | K PlayerClient | PlaybackResolver；参考调用混有 App 参数，须独立验证 Web profile |
@@ -129,6 +148,7 @@ ApiPage<T> { items, nextCursor, hasMore }
 | 视频悬停缩略图 M2 | `/x/player/videoshot` → `pvdata` CDN 二进制 | 官网大端 uint16 时间索引；来源/采用范围见 [实现验证](validation/playback-timeline.md) | PlaybackMetadataRepository；移入／拖动懒加载，失败在新交互补试、每步单次请求，共用 deadline／epoch；索引上限 40002 字节、公开 CDN 无凭据 |
 | 视频弹幕 M0/M2 | `/x/v2/dm/web/view`、`/x/v2/dm/web/seg.so` | K `Services/Services.Media/Core/DanmakuClient.cs` | DanmakuRepository；Protobuf、分段数、毫秒进度、空分段 |
 | 直播播放 M0/M3 | `/xlive/web-room/v2/index/getRoomPlayInfo` | K PlayerClient；PiliPlus LiveHttp | Web GET、Cookie 可选、WBI 签名；protocol=0,1、format=0,1,2、codec=0,1,2、ptype=8、dolby=5、panorama=1、web_location=444.8；真实 roomId、组合／线路与 current_qn，见[直播流偏好](validation/live-stream-audio-preferences-2026-10-30.md) |
+| 直播卡悬停预览 | `api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo` | 官方直播首页当前脚本，独立读取配置 | Web GET、Cookie 可选、不加 WBI／CSRF；room_id、no_playurl=0、mask=1、qn=0、platform=web、protocol=0,1、format=0,1,2、codec=0,1、special_scenario=2；JSON，无分页，沿用 API 总次数／deadline；只在有效悬停时请求，移开或账号 epoch 改变取消，最多打开三个服务端媒体地址；见[实现与验证](validation/live-card-hover-preview-2026-11-14.md) |
 | 直播消息 M0/M3 | `/xlive/web-room/v1/index/getDanmuInfo`、EnterLiveRoomAsync | K PlayerClient | LiveChatSession；token/host、鉴权、分包/合包、心跳 |
 | 直播 SC M3 | `/av/v1/SuperChat/getMessageList` | U `LiveRoomAPI.RoomSuperChat` | Web GET、Cookie 可选、无签名；LiveRepository 读取快照，20 秒有界刷新与本地过期清理 |
 | 直播在看人数 M3 | `/xlive/general-interface/v1/rank/getOnlineGoldRank` | GitHub qydysky/biliApi + 本机游客响应 | Web GET、Cookie 可选、无签名；独立精确 `onlineNum` 快照、20 秒可见页面刷新；不从人气或累计看过补值，见 [人数精度](validation/live-viewer-precision.md) |
@@ -139,6 +159,8 @@ ApiPage<T> { items, nextCursor, hasMore }
 | 评论发送扩展 | Web `mention/search`、`upload_bfs`、`reply/add` | PiliPlus 指定提交的发布页与 HTTP 字段 | 共享 CommentsController；@映射、图片 multipart 单次上传、显式同步动态，见 [协议与验证](validation/comment-composer-2026-10-31.md) |
 | 动态/用户 M3 | MomentClient、MyClient、RelationshipService | K Services.Moment、Services.User | 各模块单独登记可用协议，MVP 不承诺完整 gRPC 迁移 |
 | 动态 UP 主筛选 | Web `portal`、`uplist`、`feed/all` 的 `host_mid` | PiliPlus `4fce4bb5a35c425aee759ef9263352316a29e355` HTTP 动态接口及官网脚本 | Cookie JSON 只读，目录／内容游标独立、账号与工作区隔离，见 [协议与验证](validation/dynamic-author-filter-2026-11-08.md) |
+| 应用内话题页 | Web `/x/topic/web/details/top`、`/x/polymer/web-dynamic/v1/feed/topic`、`/x/topic/web/details/fold` | PiliPlus 同一固定提交的话题页、HTTP 端点与模型 | 简介使用 `app.bilibili.com` 的单路径白名单，动态／折叠使用 `api.bilibili.com`；Cookie JSON 只读、服务端排序／游标、500 条上限及会话隔离，见[话题协议登记](validation/dynamic-topics-and-text-2026-11-09.md) |
+| 动态发布与话题操作 | Web `topic/pub/search`、`upload_bfs`、`create/dyn`、`topic/fav/sub/*`、`topic/report` | PiliPlus 同一固定提交的发布／话题页面及官方 H5 举报脚本 | 具体 host/path 白名单；文字／图片／话题草稿、显式单次写、结果不明锁定与账号隔离，见[协议和验证](validation/dynamic-publishing-and-topic-page-2026-11-10.md) |
 | 动态分享/评论/点赞（提前实现） | Web `/x/dynamic/feed/dyn/thumb`、`/x/dynamic/feed/create/dyn`，复用 `/x/v2/reply/*` | U DynamicAPI / 动态详情；K MomentAdapter / CommentTargetType；官网动态 Web 脚本 | 独立 DynamicRepository、共用 CommentsRepository；按 basic 评论身份隔离，JSON query CSRF 单次写，见 [动态交互登记](validation/dynamic-interactions.md) |
 | 账号摘要与消息（提前实现） | `/x/web-interface/nav/stat`、`/x/msgfeed/*`、VC 会话/私信、`/x/sys-msg/query_user_notify` | U HomePage、MessageApi；K MessageService、MyClient | AccountClient/MessageClient；Web Cookie、十进制游标、CSRF 单次写、账号隔离；见 [实测登记](validation/account-messages.md) |
 | PGC M4 | GetPgcPageDetailAsync / GetPgcPlayDetailAsync | K PlayerClient、PgcClient | PgcRepository；season/episode、权益和区域结果 |
@@ -150,6 +172,8 @@ ApiPage<T> { items, nextCursor, hasMore }
 我的收藏现有五类子标签和主页收藏视频读取，仍由现有 HomeRepository/ProfileRepository 编排。自建收藏夹元信息与编辑由 FavoriteFolderRepository 编排，Web Cookie/CSRF 单次提交，未知结果通过读取核对。默认收藏夹 ID、收藏/订阅合集类型、Web 追番/追剧、私密/创建日期及读写验证边界见 [收藏子标签与视频卡片](validation/favorites-tabs.md)。
 
 “我的收藏与订阅”的卡片支持用户确认后取消普通收藏夹收藏或 UGC 合集订阅，分别使用 `/x/v3/fav/folder/unfav` 与 `/x/v3/fav/season/unfav` 的 Web Cookie/CSRF 单次 POST。写操作不自动重试，成功后隔离迟到列表响应并重新协调分页；协议、确认交互及未实测边界见 [收藏与订阅取消操作](validation/favorites-unsubscribe.md)。
+
+2026-11-12 自有收藏夹内视频支持确认后取消收藏，使用 `/x/v3/fav/resource/batch-deal`，仅移除当前夹；自建收藏夹支持通过 `/x/v3/fav/folder/del` 删除。两者沿用 Web Cookie/CSRF 单次写入，重新校验拥有者，结果不明需刷新核对；端点参数、PiliPlus 固定来源和验证边界见 [收藏管理](validation/favorite-management-2026-11-12.md)。
 
 推荐与稍后再看的视频卡标题菜单分别接入 Web POST `/x/web-interface/feedback/dislike`（内容不感兴趣，`reason_id=1`）与 `/x/v2/history/toview/del`（按 `aid` 删除），添加沿用 `/x/v2/history/toview/add`。反馈使用本次推荐响应的内容身份和 `track_id`，没有对应上下文时明确提示不可反馈。推荐反馈成功保留原卡片位置并显示遮罩，用户可显式调用 `/x/web-interface/feedback/dislike/cancel`，携带原成功反馈上下文；撤销确认成功才恢复卡片。稍后再看删除成功才移除卡片。四项操作只由明确点击触发，沿用 Cookie/CSRF、账号 scope/session epoch、取消与单次写入，未知结果不重放。端点参数、来源及实际验证边界见 [视频卡操作菜单](validation/video-card-menus.md)。
 

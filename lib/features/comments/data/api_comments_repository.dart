@@ -1,5 +1,7 @@
 import '../../../domain/user.dart';
 import '../../../domain/comment_target.dart';
+import '../../../domain/content_link.dart';
+import '../../../domain/app_failure.dart';
 
 import 'package:bili_api/bili_api.dart';
 
@@ -11,6 +13,7 @@ import '../domain/comment_composer.dart';
 final class ApiCommentsRepository
     implements
         CommentsRepository,
+        CommentLocationRepository,
         CommentEmotesRepository,
         CommentComposerRepository {
   ApiCommentsRepository(
@@ -44,6 +47,7 @@ final class ApiCommentsRepository
     nicknameColor: v.nicknameColor,
     medalName: v.medalName,
     medalLevel: v.medalLevel,
+    pendantUrl: v.pendantUrl,
     decorationImageUrl: v.decorationImageUrl,
     decorationName: v.decorationName,
     decorationFanNumber: v.decorationFanNumber,
@@ -59,6 +63,10 @@ final class ApiCommentsRepository
     ipLocation: v.ipLocation,
     likeCount: v.likeCount,
     liked: v.liked,
+    isPinned: v.isPinned,
+    isUpAuthor: v.isUpAuthor,
+    upLiked: v.upLiked,
+    upReplied: v.upReplied,
     replyCount: v.replyCount,
     rootId: v.rootId,
     parentId: v.parentId,
@@ -133,6 +141,49 @@ final class ApiCommentsRepository
     ),
     cancellation: cancellation,
   );
+
+  @override
+  Future<LocatedCommentThread> locate(
+    String oid,
+    CommentLocation location,
+    RequestCancellation cancellation,
+  ) async {
+    // Both direct reads share cancellation, account identity and one deadline.
+    final untrack = requests.trackLifetime(cancellation);
+    try {
+      return await _locate(oid, location, cancellation).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          cancellation.cancel();
+          throw const AppFailure(AppFailureKind.timeout, '评论定位超时，请稍后重试');
+        },
+      );
+    } finally {
+      untrack();
+    }
+  }
+
+  Future<LocatedCommentThread> _locate(
+    String oid,
+    CommentLocation location,
+    RequestCancellation cancellation,
+  ) async {
+    return requests.run((ctx) async {
+      final result = await api.getVideoCommentLocation(
+        oid,
+        location.rootId,
+        replyId: location.replyId,
+        commentType: type.value,
+        context: ctx,
+      );
+      return LocatedCommentThread(
+        root: _entry(result.root),
+        page: _page(result.page),
+        pageNumber: result.pageNumber,
+      );
+    }, cancellation: cancellation);
+  }
+
   Future<T> _write<T>(
     Future<T> Function(ApiRequestContext) operation,
     RequestCancellation c,

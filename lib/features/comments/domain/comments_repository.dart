@@ -1,6 +1,7 @@
 import '../../../domain/user.dart';
 import '../../../domain/request_cancellation.dart';
 import 'comment_composer.dart';
+import '../../../domain/content_link.dart';
 
 enum CommentSort { hot, latest }
 
@@ -17,6 +18,10 @@ final class CommentEntry {
     this.ipLocation,
     this.likeCount = 0,
     this.liked = false,
+    this.isPinned = false,
+    this.isUpAuthor = false,
+    this.upLiked = false,
+    this.upReplied = false,
     this.replyCount = 0,
     this.rootId,
     this.parentId,
@@ -27,6 +32,7 @@ final class CommentEntry {
     this.nicknameColor,
     this.medalName,
     this.medalLevel,
+    this.pendantUrl,
     this.decorationImageUrl,
     this.decorationName,
     this.decorationFanNumber,
@@ -43,7 +49,7 @@ final class CommentEntry {
   final String? vipLabel, medalName;
   // Optional 24-bit RGB; presentation supplies the opaque alpha channel.
   final int? nicknameColor;
-  final Uri? decorationImageUrl;
+  final Uri? pendantUrl, decorationImageUrl;
   final String? decorationName, decorationFanNumber;
 
   /// 24-bit RGB; Flutter colors are constructed only in presentation.
@@ -58,6 +64,7 @@ final class CommentEntry {
   final String? ipLocation;
   final int likeCount, replyCount;
   final bool liked;
+  final bool isPinned, isUpAuthor, upLiked, upReplied;
   final String? rootId, parentId;
   final List<CommentEntry> replies;
   CommentEntry withLike(bool value) => CommentEntry(
@@ -72,6 +79,7 @@ final class CommentEntry {
     nicknameColor: nicknameColor,
     medalName: medalName,
     medalLevel: medalLevel,
+    pendantUrl: pendantUrl,
     decorationImageUrl: decorationImageUrl,
     decorationName: decorationName,
     decorationFanNumber: decorationFanNumber,
@@ -85,6 +93,10 @@ final class CommentEntry {
     ipLocation: ipLocation,
     likeCount: (likeCount + (value ? 1 : -1)).clamp(0, 1 << 31),
     liked: value,
+    isPinned: isPinned,
+    isUpAuthor: isUpAuthor,
+    upLiked: upLiked,
+    upReplied: upReplied,
     replyCount: replyCount,
     rootId: rootId,
     parentId: parentId,
@@ -103,6 +115,7 @@ final class CommentEntry {
         nicknameColor: nicknameColor,
         medalName: medalName,
         medalLevel: medalLevel,
+        pendantUrl: pendantUrl,
         decorationImageUrl: decorationImageUrl,
         decorationName: decorationName,
         decorationFanNumber: decorationFanNumber,
@@ -116,6 +129,10 @@ final class CommentEntry {
         ipLocation: ipLocation,
         likeCount: likeCount,
         liked: liked,
+        isPinned: isPinned,
+        isUpAuthor: isUpAuthor,
+        upLiked: upLiked,
+        upReplied: upReplied,
         replyCount: count ?? replyCount,
         rootId: rootId,
         parentId: parentId,
@@ -172,6 +189,25 @@ abstract interface class CommentsRepository {
     bool syncToDynamic = false,
     required RequestCancellation cancellation,
   });
+}
+
+final class LocatedCommentThread {
+  const LocatedCommentThread({
+    required this.root,
+    required this.page,
+    required this.pageNumber,
+  });
+  final CommentEntry root;
+  final CommentPage page;
+  final int pageNumber;
+}
+
+abstract interface class CommentLocationRepository {
+  Future<LocatedCommentThread> locate(
+    String oid,
+    CommentLocation location,
+    RequestCancellation cancellation,
+  );
 }
 
 final class CommentEmotePackage {

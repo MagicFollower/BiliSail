@@ -11,6 +11,7 @@ import 'package:bilisail/features/comments/domain/comments_repository.dart';
 import 'package:bilisail/shared/ui/comments_panel.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -18,6 +19,61 @@ const _video = CommentTarget('42', CommentTargetType.video);
 const _dynamic = CommentTarget('43', CommentTargetType.dynamic);
 
 void main() {
+  final binding = _PaginationBinding();
+  for (final replies in [false, true]) {
+    for (final more in [false, true]) {
+      testWidgets(
+        '${replies ? 'replies' : 'comments'} scrolling far from the end '
+        'does not schedule pagination with more=$more',
+        (tester) async {
+          final repo = _Comments();
+          repo.onLoad = (_) async => _page(1, more: more);
+          repo.onReplies = (_) async => _page(1, more: more);
+          final container = await _mount(tester, repo);
+          if (replies) {
+            final provider = commentsProviderFor(_video);
+            await container
+                .read(provider.notifier)
+                .openReplies(container.read(provider).items.first);
+            await tester.pumpAndSettle();
+          }
+          final list = tester.widget<ListView>(find.byType(ListView));
+          final metrics = list.controller!.position;
+          expect(metrics.extentAfter, greaterThan(240));
+          binding.paginationChecks = 0;
+          for (var frame = 0; frame < 20; frame++) {
+            ScrollUpdateNotification(
+              metrics: metrics,
+              context: tester.element(find.byType(ListView)),
+              scrollDelta: 1,
+            ).dispatch(tester.element(find.byType(ListView)));
+            await tester.pump();
+          }
+          expect(binding.paginationChecks, 0);
+          if (!more) {
+            list.controller!.jumpTo(metrics.maxScrollExtent);
+            await tester.pumpAndSettle();
+            binding.paginationChecks = 0;
+            for (var frame = 0; frame < 20; frame++) {
+              OverscrollNotification(
+                metrics: metrics,
+                context: tester.element(find.byType(ListView)),
+                overscroll: 1,
+              ).dispatch(tester.element(find.byType(ListView)));
+              await tester.pump();
+            }
+            expect(
+              binding.paginationChecks,
+              0,
+              reason: 'a finished list needs no checks even at the bottom',
+            );
+          }
+          expect(replies ? repo.replyPages : repo.pages, [1]);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
   for (final target in [_video, _dynamic]) {
     for (final replies in [false, true]) {
       testWidgets(
@@ -76,7 +132,7 @@ void main() {
         } else {
           repo.onLoad = shortPage;
         }
-        final container = await _mount(tester, repo);
+        final container = await _mount(tester, repo, height: 900);
         if (replies) {
           await container
               .read(commentsProviderFor(_video).notifier)
@@ -87,6 +143,14 @@ void main() {
         }
         expect(replies ? repo.replyPages : repo.pages, [1, 2, 3]);
         expect(find.text('没有更多了'), findsOneWidget);
+        expect(
+          tester
+              .widget<ListView>(find.byType(ListView))
+              .controller!
+              .position
+              .maxScrollExtent,
+          0,
+        );
         expect(tester.takeException(), isNull);
       },
     );
@@ -214,14 +278,28 @@ void main() {
   );
 }
 
+class _PaginationBinding extends AutomatedTestWidgetsFlutterBinding {
+  int paginationChecks = 0;
+
+  @override
+  void addPostFrameCallback(
+    FrameCallback callback, {
+    String debugLabel = 'callback',
+  }) {
+    if (debugLabel == 'CommentsPanel.loadMore') paginationChecks++;
+    super.addPostFrameCallback(callback, debugLabel: debugLabel);
+  }
+}
+
 Future<ProviderContainer> _mount(
   WidgetTester tester,
   _Comments repo, {
   CommentTarget target = _video,
   ValueNotifier<bool>? active,
+  double height = 700,
 }) async {
   tester.view.devicePixelRatio = 1;
-  tester.view.physicalSize = const Size(390, 700);
+  tester.view.physicalSize = Size(390, height);
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.view.resetPhysicalSize);
   final panel = CommentsPanel(target: target);

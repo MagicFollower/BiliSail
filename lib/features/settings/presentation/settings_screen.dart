@@ -23,6 +23,7 @@ import '../domain/settings_category.dart';
 import 'shortcut_settings_section.dart';
 import 'app_icon_settings.dart';
 import 'recommendation_settings_section.dart';
+import 'responsive_layout_settings_controls.dart';
 import 'cdn_settings_tile.dart';
 import 'log_export_button.dart';
 
@@ -274,6 +275,7 @@ final class _SettingsCategoryPageState
     String suffix = '',
     bool continuous = false,
     bool enabled = true,
+    int? divisions,
   ]) => _SettingSlider(
     title: title,
     value: value,
@@ -282,6 +284,7 @@ final class _SettingsCategoryPageState
     suffix: suffix,
     continuous: continuous,
     enabled: enabled,
+    divisions: divisions,
     save: (v) => _save(() => save(v)),
   );
   Widget _section(String title, List<Widget> children) => Padding(
@@ -342,6 +345,59 @@ final class _SettingsCategoryPageState
                             WorkspaceNavigationMode.dualTabs: '双标签页',
                             WorkspaceNavigationMode.multipleTabs: '多标签页',
                           }, controller.setNavigationMode),
+                          if (defaultTargetPlatform == TargetPlatform.android)
+                            _toggle(
+                              '预测式返回动画',
+                              s.predictiveBackEnabled,
+                              controller.setPredictiveBackEnabled,
+                              '返回手势时预览上一页，仅底栏布局生效；关闭后仍可正常返回。',
+                            ),
+                          if (s.navigationMode ==
+                              WorkspaceNavigationMode.multipleTabs)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('关闭标签页（可多选）'),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (final (label, selected, save) in [
+                                        (
+                                          '鼠标中键',
+                                          s.closeTabOnMiddleClick,
+                                          controller.setCloseTabOnMiddleClick,
+                                        ),
+                                        (
+                                          '鼠标右键',
+                                          s.closeTabOnRightClick,
+                                          controller.setCloseTabOnRightClick,
+                                        ),
+                                        (
+                                          '鼠标双击',
+                                          s.closeTabOnDoubleClick,
+                                          controller.setCloseTabOnDoubleClick,
+                                        ),
+                                      ])
+                                        FilterChip(
+                                          label: Text(label),
+                                          selected: selected,
+                                          onSelected: (value) =>
+                                              _save(() => save(value)),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    '使用所选方式点击顶部标签页即可关闭该页；固定标签页无法关闭。',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
                           const Text(
                             'Android 默认单标签页，按访问顺序返回；从播放页进入 UP 主空间等页面后，返回原播放页并保留状态。其他平台默认双标签页：Windows 和 macOS 使用独立播放窗口；Android 在应用内切换浏览与播放页面。多标签页可分别保留多个页面。切换模式保留未关闭页面。macOS 切换到双标签页模式后，需要重启应用。',
                             style: TextStyle(fontSize: 12),
@@ -373,8 +429,17 @@ final class _SettingsCategoryPageState
                             SidebarStyle.compact: '图标文字上下',
                           }, controller.setSidebarStyle),
                           const Text(
-                            '使用侧边栏时生效；随窗口宽度模式在 1600 起展开。可用左上角按钮完全收起或展开，保留当前页面和侧栏样式。',
+                            '使用侧边栏时生效；随窗口宽度模式按下方导航栏阈值展开。可用左上角按钮完全收起或展开，保留当前页面和侧栏样式。',
                             style: TextStyle(fontSize: 12),
+                          ),
+                          ResponsiveLayoutSettingsControls(
+                            settings: s.responsiveLayout,
+                            onVideoGridChanged:
+                                controller.setVideoGridMinWidths,
+                            onNavigationChanged:
+                                controller.setNavigationBreakpoints,
+                            onPlaybackChanged:
+                                controller.setPlaybackSideBySideWidth,
                           ),
                           _choices('动态页默认标签', s.defaultDynamicTab, const {
                             DynamicPageTab.dynamic: '动态',
@@ -405,26 +470,98 @@ final class _SettingsCategoryPageState
                             style: TextStyle(fontFamily: s.fontFamily),
                           ),
                           const SizedBox(height: 20),
-                          _slider(
-                            '滚轮阻尼比',
-                            s.wheelDampingRatio,
-                            .5,
-                            2,
-                            controller.setWheelDampingRatio,
-                          ),
+                          _choices('滚动动画', s.wheelScrollAnimation, const {
+                            WheelScrollAnimation.spring: '原有弹簧',
+                            WheelScrollAnimation.chromium: 'Chromium 平滑',
+                            WheelScrollAnimation.multiplatform: '多平台平滑',
+                          }, controller.setWheelScrollAnimation),
                           const Text(
-                            '用于桌面鼠标滚轮，释放滑块后生效，默认 1.30。小于 1 更有弹性，大于 1 收尾更缓和。',
+                            '用于桌面鼠标滚轮，切换时保留当前滚动位置。',
                             style: TextStyle(fontSize: 12),
                           ),
+                          if (s.wheelScrollAnimation ==
+                              WheelScrollAnimation.chromium)
+                            _choices(
+                              'Chromium 动画类型',
+                              s.chromiumScrollCurve,
+                              const {
+                                ChromiumScrollCurve.easeInOut: 'EaseInOut',
+                                ChromiumScrollCurve.impulse: 'Impulse',
+                              },
+                              controller.setChromiumScrollCurve,
+                            ),
+                          if (s.wheelScrollAnimation ==
+                              WheelScrollAnimation.multiplatform)
+                            const Text(
+                              'smooth_scroll_multiplatform：基础时长 380 毫秒、距离 2 倍；下方倍率在此基础上调整。',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          _slider(
+                            '滚动距离倍率',
+                            s.wheelScrollDistanceMultiplier,
+                            .25,
+                            4,
+                            controller.setWheelScrollDistanceMultiplier,
+                            '×',
+                            false,
+                            true,
+                            75,
+                          ),
+                          if (s.wheelScrollAnimation !=
+                              WheelScrollAnimation.spring) ...[
+                            _slider(
+                              '动画时长倍率',
+                              s.wheelScrollDurationMultiplier,
+                              .25,
+                              3,
+                              controller.setWheelScrollDurationMultiplier,
+                              '×',
+                            ),
+                            const Text(
+                              '默认倍率 1.30；1.00 为原始动画时长。数值越大，过渡越舒缓。只影响鼠标滚轮。',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ],
                           TextButton(
-                            key: const ValueKey('reset-wheel-damping-ratio'),
-                            onPressed: s.wheelDampingRatio == 1.3
+                            key: const ValueKey(
+                              'reset-wheel-scroll-parameters',
+                            ),
+                            onPressed:
+                                s.chromiumScrollCurve ==
+                                        ChromiumScrollCurve.easeInOut &&
+                                    s.wheelScrollDistanceMultiplier == 1 &&
+                                    s.wheelScrollDurationMultiplier ==
+                                        defaultWheelScrollDurationMultiplier
                                 ? null
                                 : () => _save(
-                                    () => controller.setWheelDampingRatio(1.3),
+                                    controller.resetWheelScrollParameters,
                                   ),
-                            child: const Text('恢复默认阻尼比'),
+                            child: const Text('恢复默认滚动参数'),
                           ),
+                          if (s.wheelScrollAnimation ==
+                              WheelScrollAnimation.spring) ...[
+                            _slider(
+                              '滚轮阻尼比',
+                              s.wheelDampingRatio,
+                              .5,
+                              2,
+                              controller.setWheelDampingRatio,
+                            ),
+                            const Text(
+                              '用于原有弹簧动画，释放滑块后生效，默认 1.30。小于 1 更有弹性，大于 1 收尾更缓和。',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                            TextButton(
+                              key: const ValueKey('reset-wheel-damping-ratio'),
+                              onPressed: s.wheelDampingRatio == 1.3
+                                  ? null
+                                  : () => _save(
+                                      () =>
+                                          controller.setWheelDampingRatio(1.3),
+                                    ),
+                              child: const Text('恢复默认阻尼比'),
+                            ),
+                          ],
                         ]),
                       if (widget.category == SettingsCategory.shortcuts)
                         _section('快捷键', [
@@ -521,10 +658,10 @@ final class _SettingsCategoryPageState
                             '允许移动端在后台继续播放；关闭后切到后台自动暂停，回到前台后需手动继续',
                           ),
                           _toggle(
-                            '视频卡悬停播放',
+                            '卡片悬停播放',
                             s.videoCardHoverPlayback,
                             controller.setVideoCardHoverPlayback,
-                            '鼠标停留在视频卡上时静音播放预览，关闭可减少资源和流量占用',
+                            '鼠标停留在视频卡或直播卡上时静音播放预览，关闭可减少资源和流量占用',
                           ),
                           _toggle(
                             '高能进度条',
@@ -676,13 +813,9 @@ final class _SettingsCategoryPageState
                           Text(
                             s.videoDecoding == VideoDecodingPreference.automatic
                                 ? '优先使用硬件解码，不支持当前编码时回退软件解码。'
-                                : '使用所选后端进行软件解码，可能增加 CPU 占用和耗电。',
+                                : '使用 media_kit 进行软件解码，可能增加 CPU 占用和耗电。',
                             style: const TextStyle(fontSize: 12),
                           ),
-                          _choices('播放后端', s.playbackBackend, const {
-                            PlaybackBackendPreference.mediaKit: 'media_kit（默认）',
-                            PlaybackBackendPreference.fvp: 'fvp（实验性）',
-                          }, controller.setPlaybackBackend),
                           if (defaultTargetPlatform ==
                               TargetPlatform.android) ...[
                             _choices(
@@ -703,7 +836,7 @@ final class _SettingsCategoryPageState
                               s.videoDecoding ==
                                       VideoDecodingPreference.software
                                   ? '软件解码使用兼容渲染；切回硬件解码后恢复已保存的输出偏好。'
-                                  : 'media_kit 和 fvp 均保留弹幕、字幕和控件。解码直出需要设备硬解支持；画面异常时切回兼容渲染。',
+                                  : '保留弹幕、字幕和控件。解码直出需要设备硬解支持；HDR／杜比视界自动使用兼容渲染，其他画面异常时也可切回。',
                               style: const TextStyle(fontSize: 12),
                             ),
                           ],
@@ -780,6 +913,14 @@ final class _SettingsCategoryPageState
                             SponsorBlockMode.manual: '手动提示',
                             SponsorBlockMode.automatic: '自动跳过',
                           }, controller.setSponsorBlockMode),
+                          _slider(
+                            '跳过按钮底部距离',
+                            s.sponsorBlockBottomPadding,
+                            0,
+                            240,
+                            controller.setSponsorBlockBottomPadding,
+                            ' px',
+                          ),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
@@ -919,12 +1060,14 @@ final class _SettingSlider extends StatefulWidget {
     required this.save,
     this.continuous = false,
     this.enabled = true,
+    this.divisions,
   });
   final String title, suffix;
   final double value, min, max;
   final Future<void> Function(double) save;
   final bool continuous;
   final bool enabled;
+  final int? divisions;
   @override
   State<_SettingSlider> createState() => _SettingSliderState();
 }
@@ -946,8 +1089,9 @@ final class _SettingSliderState extends State<_SettingSlider> {
           max: widget.max,
           divisions: widget.continuous
               ? null
-              : ((widget.max - widget.min) * (widget.max <= 3 ? 20 : 1))
-                    .round(),
+              : widget.divisions ??
+                    ((widget.max - widget.min) * (widget.max <= 3 ? 20 : 1))
+                        .round(),
           onChanged: widget.enabled ? (v) => setState(() => _draft = v) : null,
           onChangeEnd: widget.enabled
               ? (v) async {

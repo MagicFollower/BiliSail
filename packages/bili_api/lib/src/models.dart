@@ -26,6 +26,7 @@ final class ApiFailure implements Exception {
     this.businessCode,
     this.retryAfter,
     this.videoAccessKind,
+    this.requiresVerification = false,
   });
 
   final ApiFailureCategory category;
@@ -34,6 +35,7 @@ final class ApiFailure implements Exception {
   final int? businessCode;
   final Duration? retryAfter;
   final ApiVideoAccessKind? videoAccessKind;
+  final bool requiresVerification;
 
   @override
   String toString() =>
@@ -166,6 +168,10 @@ final class ApiVideoComment {
     required this.publishedAt,
     this.ipLocation,
     this.liked = false,
+    this.isPinned = false,
+    this.isUpAuthor = false,
+    this.upLiked = false,
+    this.upReplied = false,
     this.replyCount = 0,
     this.rootId,
     this.parentId,
@@ -176,6 +182,7 @@ final class ApiVideoComment {
     this.nicknameColor,
     this.medalName,
     this.medalLevel,
+    this.pendantUrl,
     this.decorationImageUrl,
     this.decorationName,
     this.decorationFanNumber,
@@ -195,7 +202,7 @@ final class ApiVideoComment {
   final String? vipLabel, medalName;
   // Optional 24-bit RGB nickname color supplied by the response.
   final int? nicknameColor;
-  final Uri? decorationImageUrl;
+  final Uri? pendantUrl, decorationImageUrl;
   final String? decorationName, decorationFanNumber;
 
   /// Optional 24-bit RGB color of the decoration's fan serial number.
@@ -206,6 +213,7 @@ final class ApiVideoComment {
   final Map<String, String> mentionedUsers;
   final List<Uri> pictures;
   final bool liked;
+  final bool isPinned, isUpAuthor, upLiked, upReplied;
   final int replyCount;
   final String? rootId;
   final String? parentId;

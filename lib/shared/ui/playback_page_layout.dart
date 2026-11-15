@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:bili_player/bili_player.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/presentation/workspace_activity.dart';
 import 'playback_sidebar_toggle.dart';
 import 'scroll_collapsing_header.dart';
 
@@ -62,10 +63,21 @@ class _PlaybackPageLayoutState extends State<PlaybackPageLayout> {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, bounds) {
-      final collapsed = widget.collapsedHeight;
+      // Scaffold already consumes the keyboard inset from the body constraints
+      // and clears MediaQuery.viewInsets there. Read the view only to switch
+      // layout policy; never subtract the inset a second time.
+      final keyboardVisible = View.of(context).viewInsets.bottom > 0;
+      final editingInfo = keyboardVisible && widget.showInfo && !widget.wide;
+      final collapsed = editingInfo
+          ? math.min(
+              widget.collapsedHeight,
+              math.max(0.0, bounds.maxHeight - 240),
+            )
+          : widget.collapsedHeight;
       final dimensions = widget.dimensions;
       var expanded = collapsed;
       if (!widget.wide &&
+          !editingInfo &&
           !widget.listening &&
           dimensions != null &&
           dimensions.width > 0 &&
@@ -86,7 +98,8 @@ class _PlaybackPageLayoutState extends State<PlaybackPageLayout> {
           ? math.max(0.0, bounds.maxWidth - infoWidth)
           : bounds.maxWidth;
       final scrollRange = expanded - collapsed;
-      final pageHeight = widget.wide || !widget.showInfo || scrollRange > 0
+      final pageHeight =
+          widget.wide || !widget.showInfo || scrollRange > 0 || editingInfo
           ? bounds.maxHeight
           : math.max(bounds.maxHeight, collapsed + widget.minimumInfoHeight);
       return AnimatedBuilder(
@@ -115,17 +128,33 @@ class _PlaybackPageLayoutState extends State<PlaybackPageLayout> {
                       excluding: !widget.showInfo,
                       child: Offstage(
                         offstage: !widget.showInfo,
-                        child: NestedScrollView(
-                          controller: _scroll,
-                          physics: const ClampingScrollPhysics(),
-                          headerSliverBuilder: (context, _) => [
-                            SliverToBoxAdapter(
-                              child: SizedBox(
-                                height: widget.wide ? 0 : scrollRange,
-                              ),
+                        // Offstage retains layout and State, but does not
+                        // stop tickers or visibility-driven image/preview work.
+                        child: WorkspaceActivity(
+                          active:
+                              widget.showInfo &&
+                              WorkspaceActivity.isActive(context),
+                          previewing:
+                              widget.showInfo &&
+                              WorkspaceActivity.isVisible(context) &&
+                              !WorkspaceActivity.isActive(context),
+                          child: TickerMode(
+                            enabled:
+                                widget.showInfo &&
+                                WorkspaceActivity.isVisible(context),
+                            child: NestedScrollView(
+                              controller: _scroll,
+                              physics: const ClampingScrollPhysics(),
+                              headerSliverBuilder: (context, _) => [
+                                SliverToBoxAdapter(
+                                  child: SizedBox(
+                                    height: widget.wide ? 0 : scrollRange,
+                                  ),
+                                ),
+                              ],
+                              body: HeaderScrollBody(child: widget.info),
                             ),
-                          ],
-                          body: HeaderScrollBody(child: widget.info),
+                          ),
                         ),
                       ),
                     ),

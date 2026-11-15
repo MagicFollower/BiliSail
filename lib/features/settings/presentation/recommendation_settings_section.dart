@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import '../../../domain/recommendation_settings.dart';
 import '../../../shared/ui/app_dialog.dart';
 import '../../../shared/ui/app_notice.dart';
-import 'app_recommendation_identity_settings.dart';
 
 final class RecommendationSettingsSection extends StatefulWidget {
   const RecommendationSettingsSection({
@@ -131,20 +130,17 @@ final class _RecommendationSettingsSectionState
           children: [
             for (final source in RecommendationSource.values)
               ChoiceChip(
-                label: Text(
-                  source == RecommendationSource.web ? 'Web 推荐' : 'App 推荐',
-                ),
+                label: Text(switch (source) {
+                  RecommendationSource.web => 'Web 推荐',
+                  RecommendationSource.app => 'App 推荐',
+                  RecommendationSource.desktop => '桌面端 / PC',
+                }),
                 selected: s.source == source,
                 onSelected: (_) =>
                     _save((current) => current.copyWith(source: source)),
               ),
           ],
         ),
-        const Text(
-          'Web 推荐使用当前网页登录；App 推荐可游客浏览，正常登录后自动使用账号推荐。',
-          style: TextStyle(fontSize: 12),
-        ),
-        const AppRecommendationIdentitySettings(),
         _toggle(
           '保留首页推荐刷新',
           '刷新后新内容在前，保留最多 200 条上次内容。',

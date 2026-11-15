@@ -11,6 +11,7 @@ import 'package:liquid_dock_navi/liquid_dock_navi.dart';
 import 'package:path/path.dart' as path;
 
 import '../shared/ui/app_dialog.dart';
+import '../shared/ui/responsive_layout_scope.dart';
 import '../core/platform/desktop_window_chrome.dart';
 import '../core/platform/detached_playback_window.dart';
 import '../core/platform/window_service.dart';
@@ -43,6 +44,8 @@ import '../features/settings/presentation/app_update_host.dart';
 import '../features/settings/domain/app_settings.dart';
 import '../shared/ui/app_notice.dart';
 import '../shared/ui/video_card_interaction_scope.dart';
+import '../shared/ui/live_card_preview_scope.dart';
+import '../features/live/application/live_card_preview_controller.dart';
 import '../shared/ui/smooth_scroll_behavior.dart';
 import '../core/presentation/app_input_host.dart';
 import '../core/presentation/android_system_ui.dart';
@@ -120,6 +123,29 @@ class _BiliAppState extends ConsumerState<BiliApp> {
                   ? null
                   : WorkspacePlaybackWindow(
                       theme: Theme.of(context),
+                      wheelScrollAnimation: SmoothScrollScope.animationOf(
+                        context,
+                      ),
+                      wheelDampingRatio: SmoothScrollScope.dampingRatioOf(
+                        context,
+                      ),
+                      chromiumScrollCurve:
+                          SmoothScrollScope.maybeOf(context)?.chromiumCurve ??
+                          ChromiumScrollCurve.easeInOut,
+                      wheelScrollDistanceMultiplier:
+                          SmoothScrollScope.maybeOf(context)
+                              ?.distanceMultiplier ??
+                          1,
+                      wheelScrollDurationMultiplier:
+                          SmoothScrollScope.maybeOf(context)
+                              ?.durationMultiplier ??
+                          defaultWheelScrollDurationMultiplier,
+                      responsiveLayout:
+                          (ref.read(settingsControllerProvider).value ??
+                                  ref.read<AppSettings>(
+                                    settingsDefaultsProvider,
+                                  ))
+                              .responsiveLayout,
                       shortcuts:
                           (ref.read(settingsControllerProvider).value ??
                                   ref.read<AppSettings>(
@@ -432,6 +458,7 @@ class _BiliAppState extends ConsumerState<BiliApp> {
         ref.watch(settingsControllerProvider).value ??
         ref.watch<AppSettings>(settingsDefaultsProvider);
     final cardInteractions = ref.watch(videoCardControllerProvider);
+    final liveCardPreviews = ref.watch(liveCardPreviewControllerProvider);
     _input.configure(settings.shortcuts);
     widget.dependencies.playbackRateMemory.configure(
       enabled: settings.rememberPlaybackRate,
@@ -451,7 +478,11 @@ class _BiliAppState extends ConsumerState<BiliApp> {
           child: VideoCompositionScope(
             adapter: widget.videoComposition,
             child: SmoothScrollScope(
+              animation: settings.wheelScrollAnimation,
               dampingRatio: settings.wheelDampingRatio,
+              chromiumCurve: settings.chromiumScrollCurve,
+              distanceMultiplier: settings.wheelScrollDistanceMultiplier,
+              durationMultiplier: settings.wheelScrollDurationMultiplier,
               child: AppInputHost<Object>(
                 dispatcher: _input,
                 routes: _input.routes,
@@ -463,8 +494,15 @@ class _BiliAppState extends ConsumerState<BiliApp> {
                       interactions: cardInteractions,
                       onNotice: showAppNotice,
                       hoverPlaybackEnabled: settings.videoCardHoverPlayback,
-                      child: AndroidSystemUi(
-                        child: child ?? const SizedBox.shrink(),
+                      child: LiveCardPreviewScope(
+                        controller: liveCardPreviews,
+                        enabled: settings.videoCardHoverPlayback,
+                        child: ResponsiveLayoutScope(
+                          settings: settings.responsiveLayout,
+                          child: AndroidSystemUi(
+                            child: child ?? const SizedBox.shrink(),
+                          ),
+                        ),
                       ),
                     ),
                   ),
